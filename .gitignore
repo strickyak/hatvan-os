@@ -2,6 +2,7 @@
 *~
 .*.un~
 *.swp
+_*
 RCS/
 
 # Binaries & build artifacts

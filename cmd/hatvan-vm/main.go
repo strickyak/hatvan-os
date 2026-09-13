@@ -139,7 +139,7 @@ func main() {
 
 		if *traceFlag {
 			src := lookupSource(pc, decb, listings)
-			fmt.Printf("PC=%04X  A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X CC=%s  %s\n",
+			fmt.Fprintf(os.Stderr, "PC=%04X  A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X CC=%s  %s\n",
 				pc, cpu.A, cpu.B, cpu.X, cpu.Y, cpu.U, cpu.S, formatCC(cpu.CC), src)
 		}
 
@@ -163,7 +163,7 @@ func main() {
 	}
 
 	if *traceFlag {
-		fmt.Printf("[hatvan-vm finished: %d total cycles executed]\n", cpu.Cycles)
+		fmt.Fprintf(os.Stderr, "[hatvan-vm finished: %d total cycles executed]\n", cpu.Cycles)
 		printRegisters(cpu)
 	}
 }
@@ -228,6 +228,6 @@ func formatCC(cc byte) string {
 }
 
 func printRegisters(cpu *vm.CPU) {
-	fmt.Printf("CPU State: PC=%04X A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X DP=%02X CC=%02X %s MD=%02X\n",
+	fmt.Fprintf(os.Stderr, "CPU State: PC=%04X A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X DP=%02X CC=%02X %s MD=%02X\n",
 		cpu.PC, cpu.A, cpu.B, cpu.X, cpu.Y, cpu.U, cpu.S, cpu.DP, cpu.CC, formatCC(cpu.CC), cpu.MD)
 }
