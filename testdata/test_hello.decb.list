@@ -1,0 +1,22 @@
+                      (   test_hello.asm):00001         * Test program for hatvan-vm
+                      (   test_hello.asm):00002         * Prints 'Hello World!' to $FF00 and enters CWAI / sync loop
+                      (   test_hello.asm):00003         
+     FF00             (   test_hello.asm):00004         TermOut  equ $FF00
+                      (   test_hello.asm):00005         
+                      (   test_hello.asm):00006                  org $2000
+                      (   test_hello.asm):00007         
+2000 308D000C         (   test_hello.asm):00008         start    leax msg,pcr
+2004 A680             (   test_hello.asm):00009         loop     lda ,x+
+2006 2705             (   test_hello.asm):00010                  beq done
+2008 B7FF00           (   test_hello.asm):00011                  sta TermOut
+200B 20F7             (   test_hello.asm):00012                  bra loop
+                      (   test_hello.asm):00013         
+200D 13               (   test_hello.asm):00014         done     sync
+200E 20FD             (   test_hello.asm):00015                  bra done
+                      (   test_hello.asm):00016         
+2010 48656C6C6F206672 (   test_hello.asm):00017         msg      fcc "Hello from Hatvan-VM!"
+     6F6D204861747661
+     6E2D564D21
+2025 0A00             (   test_hello.asm):00018                  fcb 10,0
+                      (   test_hello.asm):00019         
+                      (   test_hello.asm):00020                  end start

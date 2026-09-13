@@ -1,0 +1,5 @@
+Symbol: done (test_hello.decb) = 200D
+Symbol: loop (test_hello.decb) = 2004
+Symbol: msg (test_hello.decb) = 2010
+Symbol: start (test_hello.decb) = 2000
+Symbol: TermOut (test_hello.decb) = FF00

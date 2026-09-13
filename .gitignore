@@ -1,0 +1,15 @@
+# Editor backup files & RCS
+*~
+.*.un~
+*.swp
+RCS/
+
+# Binaries & build artifacts
+/hatvan-vm
+/bin/
+*.o
+*.a
+*.img
+*.rom
+*.decb
+!testdata/*.decb
