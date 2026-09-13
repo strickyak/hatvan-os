@@ -38,6 +38,7 @@ The emulator accepts a primary `.decb` file or raw 64KB `.img` system image, and
 | `--trace` | `false` | Enables full instruction execution tracing (PC, registers, CC, source line). |
 | `--input <str>` | `""` | Pre-enqueues console input string (e.g. `--input="mdir\n"`). `\n` is translated to OS-9 `\r`. |
 | `--max-cycles <N>`| `0` | Halts simulation after $N$ CPU cycles (0 = unlimited). Ideal for non-interactive tests. |
+| `--max-seconds <N>`| `300` | Halts simulation after $N$ real-time seconds (0 = unlimited). |
 | `--tick-hz <N>` | `60` | Frequency in Hz for hardware timer ticks (sets `Timer.Ready` in `$FF02`). Set to `0` to disable. |
 | `--cpu-hz <N>` | `2000000` | Simulated CPU clock frequency in Hz (default 2 MHz). Used to scale timer ticks per cycle. |
 | `--disk0 <path>` | `""` | Attaches a raw disk image file (256 bytes/sector) to `/d0` (`$FF10 = 0`). |

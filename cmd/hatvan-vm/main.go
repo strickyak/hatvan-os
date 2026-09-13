@@ -7,20 +7,22 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/strickyak/hatvan-os/vm"
 )
 
 var (
-	traceFlag     = flag.Bool("trace", false, "print instruction execution trace")
-	maxCyclesFlag = flag.Uint64("max-cycles", 0, "stop after maximum CPU cycles (0 = unlimited)")
-	tickHzFlag    = flag.Int("tick-hz", 60, "timer tick rate in Hz (0 = disabled)")
-	cpuClockHz    = flag.Int("cpu-hz", 2000000, "simulated CPU clock speed in Hz (default 2MHz)")
-	inputFlag     = flag.String("input", "", "initial console input to feed to the VM (e.g. \"mdir\\n\")")
-	disk0Flag     = flag.String("disk0", "", "disk image file for /d0")
-	disk1Flag     = flag.String("disk1", "", "disk image file for /d1")
-	disk2Flag     = flag.String("disk2", "", "disk image file for /d2")
-	disk3Flag     = flag.String("disk3", "", "disk image file for /d3")
+	traceFlag      = flag.Bool("trace", false, "print instruction execution trace")
+	maxCyclesFlag  = flag.Uint64("max-cycles", 0, "stop after maximum CPU cycles (0 = unlimited)")
+	maxSecondsFlag = flag.Float64("max-seconds", 300, "stop after maximum real-time seconds (0 = unlimited)")
+	tickHzFlag     = flag.Int("tick-hz", 60, "timer tick rate in Hz (0 = disabled)")
+	cpuClockHz     = flag.Int("cpu-hz", 2000000, "simulated CPU clock speed in Hz (default 2MHz)")
+	inputFlag      = flag.String("input", "", "initial console input to feed to the VM (e.g. \"mdir\\n\")")
+	disk0Flag      = flag.String("disk0", "", "disk image file for /d0")
+	disk1Flag      = flag.String("disk1", "", "disk image file for /d1")
+	disk2Flag      = flag.String("disk2", "", "disk image file for /d2")
+	disk3Flag      = flag.String("disk3", "", "disk image file for /d3")
 )
 
 func main() {
@@ -156,6 +158,12 @@ func main() {
 		cyclesPerTick = uint64(*cpuClockHz / *tickHzFlag)
 	}
 
+	startTime := time.Now()
+	var maxDuration time.Duration
+	if *maxSecondsFlag > 0 {
+		maxDuration = time.Duration(*maxSecondsFlag * float64(time.Second))
+	}
+
 	for !cpu.Halted {
 		pc := cpu.PC
 
@@ -181,6 +189,10 @@ func main() {
 		cyclesSinceInputCheck += uint64(c)
 		if cyclesSinceInputCheck >= 1024 {
 			cyclesSinceInputCheck = 0
+			if maxDuration > 0 && time.Since(startTime) >= maxDuration {
+				fmt.Fprintf(os.Stderr, "\n[hatvan-vm: reached maximum realtime limit of %.1f seconds]\n", *maxSecondsFlag)
+				break
+			}
 			if initialInputPending {
 				if bus.ConsoleInEmpty() {
 					initialInputPending = false
