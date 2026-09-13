@@ -441,7 +441,7 @@ func (c *CPU) executePage0(op byte) int {
 	case 0xCB, 0xDB, 0xEB, 0xFB: // ADDB
 		c.B = c.add8(c.B, c.getOperand8(op))
 		return 2
-	case 0xCC, 0xCD, 0xCE, 0xCF: // LDD
+	case 0xCC, 0xDC, 0xEC, 0xFC: // LDD
 		c.SetD(c.getOperand16(op))
 		c.updateNZ16(c.GetD())
 		c.CC &^= FlagV
@@ -452,7 +452,7 @@ func (c *CPU) executePage0(op byte) int {
 		c.updateNZ16(c.GetD())
 		c.CC &^= FlagV
 		return 4
-	case 0xDE, 0xEE, 0xFE: // LDU (0xCE is immediate)
+	case 0xCE, 0xDE, 0xEE, 0xFE: // LDU
 		c.U = c.getOperand16(op)
 		c.updateNZ16(c.U)
 		c.CC &^= FlagV

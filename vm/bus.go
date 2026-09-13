@@ -208,6 +208,9 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 
 	case 0xFF02: // Reg.Stat: writing a 1 clears corresponding flag
 		b.RegStat &^= (val & 0x03)
+		if len(b.ConsoleIn) > 0 {
+			b.RegStat |= 0x02
+		}
 		b.evalIRQ()
 
 	case 0xFF03: // Reg.Ctrl: update control bits
@@ -272,9 +275,42 @@ func (b *Bus) EnqueueKey(ch byte) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if ch == '\n' {
+		ch = '\r'
+	}
 	b.ConsoleIn = append(b.ConsoleIn, ch)
 	b.RegStat |= 0x02 // Term.RxReady
 	b.evalIRQ()
+}
+
+// EnqueueString enqueues characters into ConsoleIn, translating '\n' to '\r' (OS-9 carriage return).
+func (b *Bus) EnqueueString(s string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch == '\n' {
+			ch = '\r'
+		}
+		b.ConsoleIn = append(b.ConsoleIn, ch)
+	}
+	if len(b.ConsoleIn) > 0 {
+		b.RegStat |= 0x02 // Term.RxReady
+		b.evalIRQ()
+	}
+}
+
+// LoadRawImage zeroes Task 0 memory and loads a 64KB raw image directly into Task 0.
+func (b *Bus) LoadRawImage(data []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for i := range b.Memory[0] {
+		b.Memory[0][i] = 0
+	}
+	copy(b.Memory[0][:], data)
+	return nil
 }
 
 // TimerTick signals a 60Hz timer tick.

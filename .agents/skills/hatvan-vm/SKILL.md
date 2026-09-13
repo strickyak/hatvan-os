@@ -25,10 +25,10 @@ go build -o hatvan-vm ./cmd/hatvan-vm
 
 ## Running Binaries
 
-The emulator takes a primary `.decb` file and optional `lwasm` `.list` assembly listings for symbolic trace annotation:
+The emulator accepts a primary `.decb` file or raw 64KB `.img` system image, and optional `lwasm` `.list` assembly listings for symbolic trace annotation:
 
 ```bash
-./hatvan-vm [options] <program.decb> [program.list ...]
+./hatvan-vm [options] <program.decb|system.img> [listing.list ...]
 ```
 
 ### Command-Line Options
@@ -36,11 +36,15 @@ The emulator takes a primary `.decb` file and optional `lwasm` `.list` assembly 
 | Flag | Default | Description |
 | :--- | :--- | :--- |
 | `--trace` | `false` | Enables full instruction execution tracing (PC, registers, CC, source line). |
+| `--input <str>` | `""` | Pre-enqueues console input string (e.g. `--input="mdir\n"`). `\n` is translated to OS-9 `\r`. |
 | `--max-cycles <N>`| `0` | Halts simulation after $N$ CPU cycles (0 = unlimited). Ideal for non-interactive tests. |
 | `--tick-hz <N>` | `60` | Frequency in Hz for hardware timer ticks (sets `Timer.Ready` in `$FF02`). Set to `0` to disable. |
 | `--cpu-hz <N>` | `2000000` | Simulated CPU clock frequency in Hz (default 2 MHz). Used to scale timer ticks per cycle. |
 | `--disk0 <path>` | `""` | Attaches a raw disk image file (256 bytes/sector) to `/d0` (`$FF10 = 0`). |
 | `--disk1`..`--disk3` | `""` | Attaches disk images to `/d1`, `/d2`, and `/d3`. |
+
+> [!NOTE]
+> When loading a raw 64KB OS-9/TurbOS image (`.img`), `hatvan-vm` automatically scans memory for valid OS-9 module headers. Any `.list` files passed on the command line that match module names (`kernel`, `shell`, `mdir`, etc.) are automatically shifted by the module's in-memory base address for seamless source tracing.
 
 ### End-to-End Workflow Example
 

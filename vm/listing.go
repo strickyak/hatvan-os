@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,19 +15,37 @@ var listLineRegex = regexp.MustCompile(`^([0-9A-Fa-f]{4})\s+([0-9A-Fa-f]{2,})?\s
 
 // Listing represents parsed assembly listing information.
 type Listing struct {
+	Path        string
+	ModuleName  string
 	LinesByAddr map[uint16]SourceLine
 }
 
 // NewListing returns an initialized Listing.
-func NewListing() *Listing {
+func NewListing(path string) *Listing {
+	base := strings.ToLower(filepath.Base(path))
+	modName := strings.TrimSuffix(base, ".list")
+	modName = strings.TrimSuffix(modName, ".lst")
+	modName = strings.TrimSuffix(modName, ".listing")
+	if strings.HasPrefix(modName, "kernel") {
+		modName = "kernel"
+	} else if strings.HasPrefix(modName, "tkt9sim") {
+		modName = "tk"
+	} else if strings.HasPrefix(modName, "ioman") {
+		modName = "ioman"
+	} else if strings.HasPrefix(modName, "go_") {
+		modName = "go"
+	}
+
 	return &Listing{
+		Path:        path,
+		ModuleName:  modName,
 		LinesByAddr: make(map[uint16]SourceLine),
 	}
 }
 
 // LoadListing parses an lwasm assembly listing from a reader.
-func LoadListing(r io.Reader) (*Listing, error) {
-	l := NewListing()
+func LoadListing(r io.Reader, path string) (*Listing, error) {
+	l := NewListing(path)
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		line := sc.Text()
@@ -65,5 +84,18 @@ func LoadListingFile(path string) (*Listing, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return LoadListing(f)
+	return LoadListing(f, path)
+}
+
+// OffsetCopy returns a new Listing with all line addresses shifted by baseAddr.
+func (l *Listing) OffsetCopy(baseAddr uint16) *Listing {
+	nl := &Listing{
+		Path:        l.Path,
+		ModuleName:  l.ModuleName,
+		LinesByAddr: make(map[uint16]SourceLine, len(l.LinesByAddr)),
+	}
+	for off, line := range l.LinesByAddr {
+		nl.LinesByAddr[baseAddr+off] = line
+	}
+	return nl
 }
