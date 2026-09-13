@@ -112,9 +112,30 @@ func main() {
 		}
 	}
 
-	// 5. Pre-enqueue console input if requested
+	// 5. Setup console input
+	stdinCh := make(chan byte, 1024)
+	go func() {
+		buf := make([]byte, 256)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 {
+				for i := 0; i < n; i++ {
+					stdinCh <- buf[i]
+				}
+			}
+			if err != nil {
+				close(stdinCh)
+				return
+			}
+		}
+	}()
+
+	initialInputPending := false
 	if *inputFlag != "" {
+		initialInputPending = true
 		bus.EnqueueString(unescapeString(*inputFlag))
+	} else {
+		bus.StdinChan = stdinCh
 	}
 
 	// Catch SIGINT cleanly
@@ -130,6 +151,7 @@ func main() {
 	// 6. Execution loop
 	var cyclesSinceTick uint64
 	var cyclesPerTick uint64
+	var cyclesSinceInputCheck uint64
 	if *tickHzFlag > 0 && *cpuClockHz > 0 {
 		cyclesPerTick = uint64(*cpuClockHz / *tickHzFlag)
 	}
@@ -153,6 +175,20 @@ func main() {
 			if cyclesSinceTick >= cyclesPerTick {
 				cyclesSinceTick -= cyclesPerTick
 				bus.TimerTick()
+			}
+		}
+
+		cyclesSinceInputCheck += uint64(c)
+		if cyclesSinceInputCheck >= 1024 {
+			cyclesSinceInputCheck = 0
+			if initialInputPending {
+				if bus.ConsoleInEmpty() {
+					initialInputPending = false
+					bus.StdinChan = stdinCh
+					bus.PollStdin()
+				}
+			} else {
+				bus.PollStdin()
 			}
 		}
 

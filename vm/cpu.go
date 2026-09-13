@@ -105,8 +105,11 @@ func (c *CPU) Step() int {
 
 	// Check FIRQ
 	if c.firqLine && (c.CC&FlagF) == 0 {
+		wasWaiting := c.Waiting
 		c.Waiting = false
-		c.PushInterruptFrame(false)
+		if !wasWaiting {
+			c.PushInterruptFrame(false)
+		}
 		c.CC |= FlagI | FlagF
 		c.triggerVector(0xFFF6)
 		c.Cycles += 10
@@ -115,8 +118,11 @@ func (c *CPU) Step() int {
 
 	// Check IRQ
 	if c.irqLine && (c.CC&FlagI) == 0 {
+		wasWaiting := c.Waiting
 		c.Waiting = false
-		c.PushInterruptFrame(true)
+		if !wasWaiting {
+			c.PushInterruptFrame(true)
+		}
 		c.CC |= FlagI
 		c.triggerVector(0xFFF8)
 		c.Cycles += 19

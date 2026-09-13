@@ -31,6 +31,7 @@ type Bus struct {
 	ConsoleIn  []byte
 	ConsoleOut io.Writer
 	LogOut     io.Writer
+	StdinChan  <-chan byte
 
 	// Hatvan Disk I/O ($FF10..$FF17)
 	DiskDrive   byte     // $FF10
@@ -123,18 +124,26 @@ func (b *Bus) readIO(addr uint16) byte {
 		return 0
 
 	case 0xFF01: // Term.In
+		if len(b.ConsoleIn) == 0 && b.StdinChan != nil {
+			b.pollStdinLocked()
+		}
 		if len(b.ConsoleIn) > 0 {
 			ch := b.ConsoleIn[0]
 			b.ConsoleIn = b.ConsoleIn[1:]
 			if len(b.ConsoleIn) == 0 {
 				b.RegStat &^= 0x02 // Clear Term.RxReady
-				b.evalIRQ()
+			} else {
+				b.RegStat |= 0x02
 			}
+			b.evalIRQ()
 			return ch
 		}
 		return 0 // Non-blocking: returns 0 if no character ready
 
 	case 0xFF02: // Reg.Stat
+		if len(b.ConsoleIn) == 0 && b.StdinChan != nil {
+			b.pollStdinLocked()
+		}
 		return b.RegStat
 
 	case 0xFF03: // Reg.Ctrl
@@ -298,6 +307,51 @@ func (b *Bus) EnqueueString(s string) {
 	if len(b.ConsoleIn) > 0 {
 		b.RegStat |= 0x02 // Term.RxReady
 		b.evalIRQ()
+	}
+}
+
+// ConsoleInEmpty returns true if ConsoleIn has no pending characters.
+func (b *Bus) ConsoleInEmpty() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.ConsoleIn) == 0
+}
+
+// PollStdin non-blockingly drains available characters from StdinChan into ConsoleIn.
+func (b *Bus) PollStdin() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.pollStdinLocked()
+}
+
+func (b *Bus) pollStdinLocked() {
+	if b.StdinChan == nil {
+		return
+	}
+	added := false
+	for {
+		select {
+		case ch, ok := <-b.StdinChan:
+			if !ok {
+				b.StdinChan = nil
+				if added || len(b.ConsoleIn) > 0 {
+					b.RegStat |= 0x02
+					b.evalIRQ()
+				}
+				return
+			}
+			if ch == '\n' {
+				ch = '\r'
+			}
+			b.ConsoleIn = append(b.ConsoleIn, ch)
+			added = true
+		default:
+			if added || len(b.ConsoleIn) > 0 {
+				b.RegStat |= 0x02 // Term.RxReady
+				b.evalIRQ()
+			}
+			return
+		}
 	}
 }
 

@@ -299,3 +299,45 @@ func TestUserPageProtection(t *testing.T) {
 
 	bus.ReadByte(0xFF00)
 }
+
+func TestBusPollStdin(t *testing.T) {
+	bus := NewBus()
+	if !bus.ConsoleInEmpty() {
+		t.Fatalf("expected initial ConsoleIn to be empty")
+	}
+
+	bus.EnqueueString("hi\n")
+	if bus.ConsoleInEmpty() {
+		t.Fatalf("expected ConsoleIn not empty after EnqueueString")
+	}
+
+	// Drain
+	c1 := bus.ReadByte(0xFF01)
+	c2 := bus.ReadByte(0xFF01)
+	c3 := bus.ReadByte(0xFF01)
+	if c1 != 'h' || c2 != 'i' || c3 != '\r' {
+		t.Fatalf("expected 'h', 'i', '\\r', got %q, %q, %q", c1, c2, c3)
+	}
+	if !bus.ConsoleInEmpty() {
+		t.Fatalf("expected ConsoleIn empty after drain")
+	}
+
+	// Attach StdinChan
+	stdinCh := make(chan byte, 10)
+	bus.StdinChan = stdinCh
+	stdinCh <- 'o'
+	stdinCh <- 'k'
+	stdinCh <- '\n'
+
+	bus.PollStdin()
+	if bus.ConsoleInEmpty() {
+		t.Fatalf("expected ConsoleIn populated from StdinChan")
+	}
+
+	r1 := bus.ReadByte(0xFF01)
+	r2 := bus.ReadByte(0xFF01)
+	r3 := bus.ReadByte(0xFF01)
+	if r1 != 'o' || r2 != 'k' || r3 != '\r' {
+		t.Fatalf("expected 'o', 'k', '\\r', got %q, %q, %q", r1, r2, r3)
+	}
+}
