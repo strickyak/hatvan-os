@@ -21,7 +21,12 @@ func (c *CPU) executeInstruction() int {
 func (c *CPU) executePage0(op byte) int {
 	switch op {
 	// Inherent & System
-	case 0x12: // NOP
+	case 0x12: // NOP (or HyperCall if EnableHypercalls and followed by 0x21)
+		if c.EnableHypercalls && c.Bus.ReadByte(c.PC) == 0x21 {
+			c.fetchByte()        // consume 0x21
+			hop := c.fetchByte() // consume hop
+			return c.executeHyperOp(hop)
+		}
 		return 2
 	case 0x13: // SYNC
 		c.Waiting = true

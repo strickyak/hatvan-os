@@ -54,6 +54,10 @@ type Bus struct {
 
 	// Callback when IRQ line state changes
 	OnIRQChanged func(asserted bool)
+
+	// Exit / Halt ($FF05)
+	ExitCode int
+	OnHalt   func(exitCode int)
 }
 
 // NewBus constructs an initialized Bus with all memory zeroed.
@@ -152,6 +156,9 @@ func (b *Bus) readIO(addr uint16) byte {
 	case 0xFF04: // logchar
 		return 0
 
+	case 0xFF05: // exit code
+		return byte(b.ExitCode)
+
 	case 0xFF10:
 		return b.DiskDrive
 	case 0xFF11:
@@ -229,6 +236,12 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 	case 0xFF04: // logchar
 		if b.LogOut != nil {
 			b.LogOut.Write([]byte{val})
+		}
+
+	case 0xFF05: // exit code
+		b.ExitCode = int(val)
+		if b.OnHalt != nil {
+			b.OnHalt(int(val))
 		}
 
 	case 0xFF10:

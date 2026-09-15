@@ -341,3 +341,95 @@ func TestBusPollStdin(t *testing.T) {
 		t.Fatalf("expected 'o', 'k', '\\r', got %q, %q, %q", r1, r2, r3)
 	}
 }
+
+func TestExitPortFF05(t *testing.T) {
+	bus := NewBus()
+	cpu := NewCPU(bus)
+
+	// LDA #42; STA $FF05 (extended: $B7 $FF $05)
+	code := []byte{0x86, 42, 0xB7, 0xFF, 0x05, 0x12}
+	for i, b := range code {
+		bus.WriteByte(uint16(0x1000+i), b)
+	}
+	cpu.PC = 0x1000
+
+	for !cpu.Halted {
+		c := cpu.Step()
+		if c == 0 {
+			break
+		}
+	}
+
+	if !cpu.Halted {
+		t.Fatalf("expected CPU to be halted after writing $FF05")
+	}
+	if cpu.ExitCode != 42 {
+		t.Fatalf("expected ExitCode 42, got %d", cpu.ExitCode)
+	}
+	if bus.ReadByte(0xFF05) != 42 {
+		t.Fatalf("expected read $FF05 to return 42, got %d", bus.ReadByte(0xFF05))
+	}
+}
+
+func TestHyperCalls(t *testing.T) {
+	bus := NewBus()
+	outBuf := new(bytes.Buffer)
+	bus.ConsoleOut = outBuf
+	cpu := NewCPU(bus)
+	cpu.EnableHypercalls = true
+
+	// 1. PutChar (hop 132): LDB #'A' ($C6 $41); FCB $12,$21,132
+	code := []byte{0xC6, 'A', 0x12, 0x21, 132}
+	for i, b := range code {
+		bus.WriteByte(uint16(0x1000+i), b)
+	}
+	cpu.PC = 0x1000
+	cpu.Step() // LDB
+	cpu.Step() // Hyper PutChar
+	if outBuf.String() != "A" {
+		t.Fatalf("expected 'A', got %q", outBuf.String())
+	}
+	outBuf.Reset()
+
+	// 2. Printf (hop 111):
+	// Format string at $2000: "num=%d str=%s\n\0"
+	fmtStr := "num=%d str=%s\n\x00"
+	for i := 0; i < len(fmtStr); i++ {
+		bus.WriteByte(uint16(0x2000+i), fmtStr[i])
+	}
+	// Target string at $2020: "minigolf\0"
+	targetStr := "minigolf\x00"
+	for i := 0; i < len(targetStr); i++ {
+		bus.WriteByte(uint16(0x2020+i), targetStr[i])
+	}
+	// Stack frame at $1100:
+	bus.WriteWord(0x1100, 0x2000) // format string ptr
+	bus.WriteWord(0x1102, 999)    // %d
+	bus.WriteWord(0x1104, 0x2020) // %s
+	// Code: LDX #$1100 ($8E $11 $00); FCB $12,$21,111
+	pCode := []byte{0x8E, 0x11, 0x00, 0x12, 0x21, 111}
+	for i, b := range pCode {
+		bus.WriteByte(uint16(0x1010+i), b)
+	}
+	cpu.PC = 0x1010
+	cpu.Step() // LDX
+	cpu.Step() // Hyper Printf
+	if outBuf.String() != "num=999 str=minigolf\n" {
+		t.Fatalf("expected 'num=999 str=minigolf\\n', got %q", outBuf.String())
+	}
+
+	// 3. Exit (hop 107): LDD #15 ($CC $00 $0F); FCB $12,$21,107
+	eCode := []byte{0xCC, 0x00, 0x0F, 0x12, 0x21, 107}
+	for i, b := range eCode {
+		bus.WriteByte(uint16(0x1020+i), b)
+	}
+	cpu.PC = 0x1020
+	cpu.Step() // LDD
+	cpu.Step() // Hyper Exit
+	if !cpu.Halted {
+		t.Fatalf("expected CPU to be halted after Hyper Exit")
+	}
+	if cpu.ExitCode != 15 {
+		t.Fatalf("expected ExitCode 15, got %d", cpu.ExitCode)
+	}
+}

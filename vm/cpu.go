@@ -28,9 +28,11 @@ type CPU struct {
 
 	Bus *Bus
 
-	Halted  bool
-	Waiting bool
-	Cycles  uint64
+	Halted           bool
+	Waiting          bool
+	Cycles           uint64
+	ExitCode         int
+	EnableHypercalls bool
 
 	irqLine  bool
 	firqLine bool
@@ -44,6 +46,10 @@ func NewCPU(bus *Bus) *CPU {
 	bus.OnIRQChanged = func(asserted bool) {
 		c.irqLine = asserted
 	}
+	bus.OnHalt = func(exitCode int) {
+		c.Halted = true
+		c.ExitCode = exitCode
+	}
 	return c
 }
 
@@ -53,6 +59,7 @@ func (c *CPU) Reset() {
 	c.CC = FlagI | FlagF
 	c.MD = 0 // Boot in 6809 Emulation mode
 	c.Halted = false
+	c.ExitCode = 0
 	c.Waiting = false
 	c.PC = c.Bus.ReadWord(0xFFFE)
 }
