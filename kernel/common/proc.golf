@@ -1,0 +1,410 @@
+package proc
+
+import "hal"
+import "klib"
+import "rbf"
+import "dev"
+import "path"
+import "loader"
+
+const MAX_PROCS = 16
+const PROC_MAX_PATHS = 16
+
+const PROC_FREE    = 0
+const PROC_READY   = 1
+const PROC_RUNNING = 2
+const PROC_WAITING = 3
+const PROC_ZOMBIE  = 4
+
+// OS-9 Error codes
+const E_PNNF      = 216 // Path name not found
+const E_BPNUM     = 217 // Bad path number
+const E_PTHFUL    = 218 // Path table full
+const E_NOCHILD   = 222 // No children
+const E_NOTREADY  = 223 // Child not ready
+const E_PROCUNDEF = 224 // Process undefined / bad PID
+const E_PROCFUL   = 225 // Process table full
+
+type Process struct {
+	PID         byte
+	State       byte
+	ParentPID   byte
+	TaskID      byte
+	ExitStatus  byte
+	SavedSP     word
+	SavedPC     word
+	SavedU      word
+	Paths       [PROC_MAX_PATHS]byte
+	CwdDrive    byte
+	CwdFDLSN    word
+	CxdDrive    byte
+	CxdFDLSN    word
+	LineMode    byte // 0 = '\n' (Unix), 1 = '\r' (OS-9)
+	CodeStart   word
+	CodeSize    word
+	DataTop     word
+	StackBottom word
+}
+
+var ProcTable [MAX_PROCS]Process
+var CurrentPID byte
+
+// ProcInit initializes the process subsystem
+func ProcInit() {
+	for i := word(0); i < MAX_PROCS; i++ {
+		p := &ProcTable[i]
+		p.PID = byte(i)
+		p.State = PROC_FREE
+		p.ParentPID = 0
+		p.TaskID = byte(i)
+		p.ExitStatus = 0
+		p.SavedSP = 0
+		p.SavedPC = 0
+		p.SavedU = 0
+		p.LineMode = 0
+		p.CwdDrive = 0
+		p.CwdFDLSN = 0
+		p.CxdDrive = 0
+		p.CxdFDLSN = 0
+		p.CodeStart = 0
+		p.CodeSize = 0
+		p.DataTop = 0
+		p.StackBottom = 0
+		for k := word(0); k < PROC_MAX_PATHS; k++ {
+			p.Paths[k] = 0xFF
+		}
+	}
+
+	// Process 0 is Task 0 (Kernel)
+	ProcTable[0].State = PROC_RUNNING
+	CurrentPID = 0
+}
+
+// ProcAlloc finds a free process slot and initializes it,
+// inheriting cwd, cxd, lineMode, and standard paths 0, 1, 2, 3 (stdin, stdout, stderr, stdlog).
+func ProcAlloc(parentPID byte) (byte, *Process) {
+	for i := word(1); i < MAX_PROCS; i++ {
+		if ProcTable[i].State == PROC_FREE {
+			p := &ProcTable[i]
+			p.State = PROC_READY
+			p.ParentPID = parentPID
+			p.TaskID = byte(i)
+			p.ExitStatus = 0
+			p.SavedSP = 0xFE00
+			p.SavedPC = 0
+			p.SavedU = 0
+			p.LineMode = 0
+			p.CwdDrive = 0
+			p.CwdFDLSN = 0
+			p.CxdDrive = 0
+			p.CxdFDLSN = 0
+			p.CodeStart = 0
+			p.CodeSize = 0
+			p.DataTop = 0
+			p.StackBottom = 0
+
+			for k := word(0); k < PROC_MAX_PATHS; k++ {
+				p.Paths[k] = 0xFF
+			}
+
+			if parentPID < MAX_PROCS && ProcTable[parentPID].State != PROC_FREE {
+				parent := &ProcTable[parentPID]
+				p.CwdDrive = parent.CwdDrive
+				p.CwdFDLSN = parent.CwdFDLSN
+				p.CxdDrive = parent.CxdDrive
+				p.CxdFDLSN = parent.CxdFDLSN
+				p.LineMode = parent.LineMode
+
+				// Inherit standard paths 0, 1, 2, 3 (stdin, stdout, stderr, stdlog)
+				for sp := word(0); sp < 4; sp++ {
+					parentPathId := parent.Paths[sp]
+					if parentPathId != 0xFF && parentPathId < path.MAX_PATHS {
+						p.Paths[sp] = parentPathId
+						path.PathTable[parentPathId].RefCount++
+					}
+				}
+			}
+
+			return byte(i), p
+		}
+	}
+	return 0xFF, (*Process)(0)
+}
+
+// ProcFree terminates a process slot and closes all associated paths
+func ProcFree(pid byte) {
+	if pid == 0 || pid >= MAX_PROCS {
+		return
+	}
+	p := &ProcTable[pid]
+	for k := word(0); k < PROC_MAX_PATHS; k++ {
+		pathId := p.Paths[k]
+		if pathId != 0xFF {
+			path.SysClose(pathId)
+			p.Paths[k] = 0xFF
+		}
+	}
+	p.State = PROC_FREE
+}
+
+// ProcOpen opens a path for the given process and assigns a per-process path descriptor
+func ProcOpen(pid byte, pathStr *byte, mode byte) (byte, byte) {
+	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+		return 0xFF, E_PROCUNDEF
+	}
+	p := &ProcTable[pid]
+
+	// Find available per-process path slot
+	slot := byte(0xFF)
+	for k := word(0); k < PROC_MAX_PATHS; k++ {
+		if p.Paths[k] == 0xFF {
+			slot = byte(k)
+			break
+		}
+	}
+	if slot == 0xFF {
+		return 0xFF, E_PTHFUL
+	}
+
+	pathId, err := path.SysOpen(pid, pathStr, mode, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN)
+	if err != 0 {
+		return 0xFF, err
+	}
+
+	p.Paths[slot] = pathId
+	return slot, 0
+}
+
+// ProcCreate creates or opens a path for writing for the given process
+func ProcCreate(pid byte, pathStr *byte, mode byte) (byte, byte) {
+	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+		return 0xFF, E_PROCUNDEF
+	}
+	p := &ProcTable[pid]
+
+	slot := byte(0xFF)
+	for k := word(0); k < PROC_MAX_PATHS; k++ {
+		if p.Paths[k] == 0xFF {
+			slot = byte(k)
+			break
+		}
+	}
+	if slot == 0xFF {
+		return 0xFF, E_PTHFUL
+	}
+
+	pathId, err := path.SysCreate(pid, pathStr, mode, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN)
+	if err != 0 {
+		return 0xFF, err
+	}
+
+	p.Paths[slot] = pathId
+	return slot, 0
+}
+
+// ProcClose closes a per-process path descriptor
+func ProcClose(pid byte, procPath byte) byte {
+	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+		return E_PROCUNDEF
+	}
+	if procPath >= PROC_MAX_PATHS {
+		return E_BPNUM
+	}
+	p := &ProcTable[pid]
+	pathId := p.Paths[procPath]
+	if pathId == 0xFF {
+		return E_BPNUM
+	}
+
+	path.SysClose(pathId)
+	p.Paths[procPath] = 0xFF
+	return 0
+}
+
+// ProcRead reads from a per-process path into user buffer
+func ProcRead(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
+	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+		return 0, E_PROCUNDEF
+	}
+	if procPath >= PROC_MAX_PATHS {
+		return 0, E_BPNUM
+	}
+	pathId := ProcTable[pid].Paths[procPath]
+	if pathId == 0xFF {
+		return 0, E_BPNUM
+	}
+	return path.SysRead(pathId, pid, ubuf, count)
+}
+
+// ProcWrite writes to a per-process path from user buffer
+func ProcWrite(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
+	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+		return 0, E_PROCUNDEF
+	}
+	if procPath >= PROC_MAX_PATHS {
+		return 0, E_BPNUM
+	}
+	pathId := ProcTable[pid].Paths[procPath]
+	if pathId == 0xFF {
+		return 0, E_BPNUM
+	}
+	return path.SysWrite(pathId, pid, ubuf, count)
+}
+
+// ProcReadLn reads a line of text using the process's lineMode setting
+func ProcReadLn(pid byte, procPath byte, ubuf *byte, maxLen word) (word, byte) {
+	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+		return 0, E_PROCUNDEF
+	}
+	if procPath >= PROC_MAX_PATHS {
+		return 0, E_BPNUM
+	}
+	p := &ProcTable[pid]
+	pathId := p.Paths[procPath]
+	if pathId == 0xFF {
+		return 0, E_BPNUM
+	}
+	return path.SysReadLn(pathId, pid, ubuf, maxLen, p.LineMode)
+}
+
+// ProcWritLn writes a line of text using the process's lineMode setting
+func ProcWritLn(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
+	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+		return 0, E_PROCUNDEF
+	}
+	if procPath >= PROC_MAX_PATHS {
+		return 0, E_BPNUM
+	}
+	p := &ProcTable[pid]
+	pathId := p.Paths[procPath]
+	if pathId == 0xFF {
+		return 0, E_BPNUM
+	}
+	return path.SysWritLn(pathId, pid, ubuf, count, p.LineMode)
+}
+
+// SysFork spawns a child process, loads the binary executable from cmdPath,
+// marshalls command parameters onto the child stack, and prepares it for execution.
+func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
+	childPID, childProc := ProcAlloc(CurrentPID)
+	if childPID == 0xFF {
+		return 0xFF, E_PROCFUL
+	}
+
+	// Open binary from cxd (execution directory) or absolute path
+	binPathId, err := path.SysOpen(CurrentPID, cmdPath, path.MODE_READ | path.MODE_EXEC, childProc.CxdDrive, childProc.CwdFDLSN, childProc.CxdFDLSN)
+	if err != 0 {
+		ProcFree(childPID)
+		return 0xFF, err
+	}
+
+	// Load binary into child task space starting at base address $0200
+	entryPC, binSize, lerr := loader.LoadBinary(binPathId, childProc.TaskID, 0x0200)
+	path.SysClose(binPathId)
+	if lerr != 0 {
+		ProcFree(childPID)
+		return 0xFF, lerr
+	}
+
+	// Setup child stack at $FE00
+	sp := word(0xFE00)
+	if paramStr != (*byte)(0) && paramLen > 0 {
+		sp -= (paramLen + 1)
+		hal.DMACopy(CurrentPID, word(paramStr), childProc.TaskID, sp, paramLen)
+		cr := byte('\r')
+		hal.DMACopy(0, word(&cr), childProc.TaskID, sp + paramLen, 1)
+	}
+
+	childProc.SavedSP = sp
+	childProc.SavedPC = entryPC
+	childProc.CodeStart = 0x0200
+	childProc.CodeSize = binSize
+	childProc.State = PROC_READY
+
+	return childPID, 0
+}
+
+// SysExit terminates the current process and records its exit status
+func SysExit(status byte) {
+	if CurrentPID == 0 {
+		hal.Exit(status)
+		return
+	}
+
+	p := &ProcTable[CurrentPID]
+
+	// Close all open paths
+	for k := word(0); k < PROC_MAX_PATHS; k++ {
+		pathId := p.Paths[k]
+		if pathId != 0xFF {
+			path.SysClose(pathId)
+			p.Paths[k] = 0xFF
+		}
+	}
+
+	p.ExitStatus = status
+	p.State = PROC_ZOMBIE
+
+	// Wake parent if waiting
+	if p.ParentPID < MAX_PROCS && ProcTable[p.ParentPID].State == PROC_WAITING {
+		ProcTable[p.ParentPID].State = PROC_READY
+	}
+}
+
+// SysWait waits for any child process to terminate and returns (childPID, status, errCode)
+func SysWait() (byte, byte, byte) {
+	hasChildren := false
+
+	for i := word(1); i < MAX_PROCS; i++ {
+		p := &ProcTable[i]
+		if p.ParentPID == CurrentPID && p.State != PROC_FREE {
+			hasChildren = true
+			if p.State == PROC_ZOMBIE {
+				cpid := byte(i)
+				st := p.ExitStatus
+				ProcFree(cpid)
+				return cpid, st, 0
+			}
+		}
+	}
+
+	if hasChildren {
+		return 0, 0, E_NOTREADY
+	}
+	return 0, 0, E_NOCHILD
+}
+
+// SysChgDir changes the current working directory (cwd) or execution directory (cxd)
+func SysChgDir(pathStr *byte, mode byte) byte {
+	p := &ProcTable[CurrentPID]
+	devType, drive, remPath := dev.ParsePathDevice(pathStr, p.CwdDrive)
+	if devType != dev.DEV_DISK {
+		return path.E_BMODE
+	}
+
+	isExec := byte(0)
+	if (mode & path.MODE_EXEC) != 0 {
+		isExec = 1
+	}
+
+	finalDrive, fdLSN := rbf.RBFResolvePath(remPath, drive, p.CwdFDLSN, p.CxdFDLSN, isExec)
+	if finalDrive == 0xFF || fdLSN == 0 {
+		return path.E_PNNF
+	}
+
+	var fd rbf.RBFFileDescriptor
+	st := rbf.RBFReadFD(finalDrive, fdLSN, &fd)
+	if st != 1 || (fd.Attributes & 0x80) == 0 {
+		return path.E_BMODE
+	}
+
+	if isExec != 0 {
+		p.CxdDrive = finalDrive
+		p.CxdFDLSN = fdLSN
+	} else {
+		p.CwdDrive = finalDrive
+		p.CwdFDLSN = fdLSN
+	}
+
+	return 0
+}

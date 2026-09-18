@@ -24,5 +24,3 @@ f_prelude__mul_byte:
     mul
     tfr d,x
     rts
-
-    end cstart

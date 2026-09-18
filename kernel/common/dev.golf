@@ -76,14 +76,16 @@ func TermRead(task byte, dstAddr word, count word) word {
 
 // TermWrite writes raw binary bytes to the console
 func TermWrite(task byte, srcAddr word, count word) word {
-	for i := word(0); i < count; i++ {
-		c := byte(0)
-		if task == 0 {
-			c = peekb(srcAddr + i)
-		} else {
-			hal.DMACopy(task, srcAddr+i, 0, word(&c), 1)
+	if task == 0 {
+		for i := word(0); i < count; i++ {
+			hal.PutChar(peekb(srcAddr + i))
 		}
-		hal.PutChar(c)
+	} else {
+		for i := word(0); i < count; i++ {
+			c := byte(0)
+			hal.DMACopy(task, srcAddr+i, 0, word(&c), 1)
+			hal.PutChar(c)
+		}
 	}
 	return count
 }
@@ -149,14 +151,16 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 
 // LogWrite writes bytes to diagnostic stderr (port $FF04)
 func LogWrite(task byte, srcAddr word, count word) word {
-	for i := word(0); i < count; i++ {
-		c := byte(0)
-		if task == 0 {
-			c = peekb(srcAddr + i)
-		} else {
-			hal.DMACopy(task, srcAddr+i, 0, word(&c), 1)
+	if task == 0 {
+		for i := word(0); i < count; i++ {
+			hal.LogChar(peekb(srcAddr + i))
 		}
-		hal.LogChar(c)
+	} else {
+		for i := word(0); i < count; i++ {
+			c := byte(0)
+			hal.DMACopy(task, srcAddr+i, 0, word(&c), 1)
+			hal.LogChar(c)
+		}
 	}
 	return count
 }

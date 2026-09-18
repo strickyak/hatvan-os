@@ -5,6 +5,7 @@ import "klib"
 import "rbf"
 import "dev"
 import "path"
+import "proc"
 
 var bootSB rbf.RBFSuperblock
 
@@ -62,5 +63,104 @@ func main() {
 		path.SysClose(pTerm)
 	}
 
+	// 4. Test Process Management & 4 Standard Paths Inheritance (Phase 4)
+	proc.ProcInit()
+
+	// Allocate root Process 1 (e.g. Shell)
+	p1PID, p1 := proc.ProcAlloc(0)
+	if p1PID == 1 && p1 != (*proc.Process)(0) {
+		// Open 4 standard paths for Process 1:
+		// 0: stdin (/term)
+		// 1: stdout (/term)
+		// 2: stderr (/term)
+		// 3: stdlog (/log)
+		pIn, _ := proc.ProcOpen(1, termPath, path.MODE_READ)
+		pOut, _ := proc.ProcOpen(1, termPath, path.MODE_WRITE)
+		pErr, _ := proc.ProcOpen(1, termPath, path.MODE_WRITE)
+		pLogProc, _ := proc.ProcOpen(1, logPath, path.MODE_WRITE)
+
+		if pIn == 0 && pOut == 1 && pErr == 2 && pLogProc == 3 {
+			// Now fork/allocate child Process 2 from parent Process 1
+			p2PID, p2 := proc.ProcAlloc(1)
+			if p2PID == 2 && p2 != (*proc.Process)(0) {
+				// Verify child inherited all 4 standard paths
+				if p2.Paths[0] == p1.Paths[0] && p2.Paths[1] == p1.Paths[1] && p2.Paths[2] == p1.Paths[2] && p2.Paths[3] == p1.Paths[3] {
+					msgInherit := (*byte)("PROC:INHERIT4:OK")
+					hal.DMACopy(0, word(msgInherit), 2, 0x1000, 16)
+					proc.ProcWritLn(2, 1, (*byte)(0x1000), 16)
+				}
+
+				// Free child process
+				proc.ProcFree(2)
+			}
+
+			// 5. Test SysFork with OS-9 Module (/d0/CMDS/TESTCMD)
+			proc.CurrentPID = 1
+			os9Cmd := (*byte)("/d0/CMDS/TESTCMD")
+			paramStr := (*byte)("testarg")
+			c1PID, c1Err := proc.SysFork(os9Cmd, paramStr, 7)
+			if c1Err == 0 && c1PID > 0 {
+				var checkMagic [2]byte
+				hal.DMACopy(c1PID, 0x0200, 0, word(&checkMagic[0]), 2)
+				if checkMagic[0] == 0x87 && checkMagic[1] == 0xCD {
+					msgOS9 := (*byte)("FORK:OS9:OK")
+					dev.TermWrite(0, word(msgOS9), 11)
+					hal.PutChar('\n')
+				}
+			}
+
+			// 6. Test SysFork with DECB Binary (/d0/CMDS/TESTDECB)
+			decbCmd := (*byte)("/d0/CMDS/TESTDECB")
+			c2PID, c2Err := proc.SysFork(decbCmd, (*byte)(0), 0)
+			if c2Err == 0 && c2PID > 0 {
+				var checkDECB [2]byte
+				hal.DMACopy(c2PID, 0x0500, 0, word(&checkDECB[0]), 2)
+				if checkDECB[0] == 0x86 && proc.ProcTable[c2PID].SavedPC == 0x0500 {
+					msgDECB := (*byte)("FORK:DECB:OK")
+					dev.TermWrite(0, word(msgDECB), 12)
+					hal.PutChar('\n')
+				}
+			}
+
+			// 7. Test SysChgDir & cxd relative binary execution
+			cxdPath := (*byte)("/d0/CMDS")
+			stCxd := proc.SysChgDir(cxdPath, path.MODE_EXEC)
+			if stCxd == 0 {
+				relCmd := (*byte)("TESTCMD")
+				c3PID, c3Err := proc.SysFork(relCmd, (*byte)(0), 0)
+				if c3Err == 0 && c3PID > 0 {
+					msgCXD := (*byte)("FORK:CXD:OK")
+					dev.TermWrite(0, word(msgCXD), 11)
+					hal.PutChar('\n')
+					proc.ProcFree(c3PID)
+				}
+			}
+
+			// 8. Test SysWait & process termination
+			if c1PID > 0 {
+				proc.ProcTable[c1PID].ExitStatus = 42
+				proc.ProcTable[c1PID].State = proc.PROC_ZOMBIE
+				wpid, wst, werr := proc.SysWait()
+				if wpid == c1PID && wst == 42 && werr == 0 {
+					msgWait := (*byte)("WAIT:OK")
+					dev.TermWrite(0, word(msgWait), 7)
+					hal.PutChar('\n')
+				}
+			}
+
+			if c2PID > 0 {
+				proc.ProcFree(c2PID)
+			}
+
+			// Free parent process
+			proc.ProcFree(1)
+			msgProcOk := (*byte)("PROC:LIFECYCLE:OK")
+			dev.TermWrite(0, word(msgProcOk), 17)
+			hal.PutChar('\n')
+		}
+	}
+
 	hal.Exit(0)
 }
+
+

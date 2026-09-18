@@ -478,6 +478,20 @@ In accordance with OS-9 architecture, each process maintains two distinct, indep
 - **Process Forking**: When a child process is spawned via `F$Fork`, it automatically inherits both `cwd` (`CwdFDLSN`) and `cxd` (`CxdFDLSN`) from its parent process.
 - **Dynamic Updates**: A process may independently change either directory at runtime via the `I$ChgDir` system call.
 
+#### 7.1.2 Standard Paths Inheritance (Paths 0, 1, 2, 3)
+
+In standard OS-9, three file descriptors are inherited (duplicated) across fork: `0` (stdin), `1` (stdout), and `2` (stderr). In Hatvan OS, **four standard paths (0, 1, 2, 3) are inherited**:
+1. **Path 0 (`stdin`)**: Standard input (usually `/term` in read mode).
+2. **Path 1 (`stdout`)**: Standard output (usually `/term` in write mode).
+3. **Path 2 (`stderr`)**: Standard error (usually `/term` in write mode).
+4. **Path 3 (`stdlog`)**: Standard diagnostic logger (connected to `/log`, port `$FF04`).
+
+**Inheritance Rules during `SysFork`**:
+- For each path index `p` from `0` to `3`:
+  - If parent's `Paths[p] != 0xFF`, the descriptor in `PathTable[parent.Paths[p]]` has its `RefCount` incremented by 1, and the child's `Paths[p]` is set to `parent.Paths[p]`.
+  - If parent's `Paths[p] == 0xFF`, child's `Paths[p]` is set to `0xFF`.
+- All other paths (`4..15`) in the child process are initialized to closed (`0xFF`).
+
 
 ### 7.2 Open Path / File Table (`PathTable`)
 
@@ -814,11 +828,14 @@ lwasm --decb --list=_tmp/kernel_6809.list \
 - [x] Implement `SysReadLn` and `SysWritLn` with line termination conversion (`\n` $\leftrightarrow$ `\r`).
 - [x] Verified end-to-end in `hatvan-vm` with `/term`, `/log`, and `/d0/CMDS` directory traversal.
 
-### Phase 4: Process Management & Lifecycle
-- [ ] Implement `proc.golf`: `ProcTable` management (PIDs 1..31).
-- [ ] Implement executable binary loader: read header, copy code to target task space via DMA.
-- [ ] Implement `SysFork`: allocate child task, copy command parameters into child stack, suspend parent (`PROC_WAITING`), and launch child.
-- [ ] Implement `SysExit` and `SysWait`: close open paths, record exit status, and wake parent.
+### Phase 4: Process Management & Lifecycle (Complete)
+- [x] Implement `proc.golf`: `ProcTable` management (PIDs 1..15), process states, and per-process path dispatching.
+- [x] Implement 4 standard paths inheritance: Paths 0 (`stdin`), 1 (`stdout`), 2 (`stderr`), and 3 (`stdlog`) automatically inherited and reference-counted across fork.
+- [x] Implement executable binary loader (`loader.golf`): automatic format detection, header parity check for OS-9 modules (`$87 $CD`), and segmented chunk parsing for DECB binaries (`$00`, `$FE`, `$FF`).
+- [x] Implement `SysFork`: allocate child task, load binary via cross-task DMA, marshall parameters to child stack (`$FE00`), and prepare child for execution.
+- [x] Implement `SysChgDir`: dynamic switching of data directory (`cwd`) and command execution directory (`cxd`), with relative command invocation from `cxd`.
+- [x] Implement `SysExit` and `SysWait`: path resource reclamation, exit status propagation, parent wakeup, and zombie reaping.
+- [x] Verified end-to-end in `hatvan-vm` with real OS-9 module (`TESTCMD`) and DECB binary (`TESTDECB`) on `test.dsk`.
 
 ### Phase 5: Assembly Trap Stubs & Integration
 - [ ] Author `kernel/m6809/trap_m6809.asm` (`SWI2` entry, register save/restore, `TaskFuse`).
