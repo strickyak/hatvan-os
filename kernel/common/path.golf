@@ -1,0 +1,334 @@
+package path
+
+import "hal"
+import "klib"
+import "rbf"
+import "dev"
+
+const MAX_PATHS = 16
+
+const MODE_READ  = 1
+const MODE_WRITE = 2
+const MODE_EXEC  = 4
+const MODE_DIR   = 0x80
+
+// OS-9 Error Codes
+const E_EOF    = 211 // End of file
+const E_BMODE  = 214 // Bad mode
+const E_PNNF   = 216 // Path name not found
+const E_BPNUM  = 217 // Bad path number
+const E_PTHFUL = 218 // Path table full
+const E_READ   = 244 // Read error
+
+type PathDesc struct {
+	RefCount  byte
+	DevType   byte
+	Drive     byte
+	Mode      byte
+	FilePos   word
+	FileSize  word
+	FDLSN     word
+	BufLSN    word
+	BufDirty  byte
+	SectorBuf [256]byte
+}
+
+var PathTable [MAX_PATHS]PathDesc
+
+// PathInit initializes the global open path table
+func PathInit() {
+	for i := word(0); i < MAX_PATHS; i++ {
+		PathTable[i].RefCount = 0
+		PathTable[i].DevType = dev.DEV_NONE
+		PathTable[i].BufLSN = 0xFFFF
+		PathTable[i].BufDirty = 0
+	}
+}
+
+// PathAlloc finds an available slot in PathTable
+func PathAlloc() (byte, *PathDesc) {
+	for i := word(0); i < MAX_PATHS; i++ {
+		if PathTable[i].RefCount == 0 {
+			pd := &PathTable[i]
+			pd.RefCount = 1
+			pd.DevType = dev.DEV_NONE
+			pd.FilePos = 0
+			pd.FileSize = 0
+			pd.FDLSN = 0
+			pd.BufLSN = 0xFFFF
+			pd.BufDirty = 0
+			return byte(i), pd
+		}
+	}
+	return 0xFF, (*PathDesc)(0)
+}
+
+// PathFree decrements the reference count and frees the slot when zero
+func PathFree(pathId byte) {
+	if pathId >= MAX_PATHS {
+		return
+	}
+	pd := &PathTable[pathId]
+	if pd.RefCount > 0 {
+		pd.RefCount--
+		if pd.RefCount == 0 {
+			if pd.BufDirty != 0 && pd.DevType == dev.DEV_DISK && pd.BufLSN != 0xFFFF {
+				hal.DiskTransfer(pd.Drive, pd.BufLSN, 0, word(&pd.SectorBuf[0]), 1)
+				pd.BufDirty = 0
+			}
+			pd.DevType = dev.DEV_NONE
+			pd.BufLSN = 0xFFFF
+		}
+	}
+}
+
+// SysOpen opens a file or device and returns (pathId, errCode)
+func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word, cxdLSN word) (byte, byte) {
+	pathId, pd := PathAlloc()
+	if pathId == 0xFF {
+		return 0xFF, E_PTHFUL
+	}
+
+	devType, drive, remPath := dev.ParsePathDevice(pathStr, defaultDrive)
+	pd.DevType = devType
+	pd.Drive = drive
+	pd.Mode = mode
+
+	// Terminal, Logger, and Null devices don't require filesystem traversal
+	if devType == dev.DEV_TERM || devType == dev.DEV_LOG || devType == dev.DEV_NULL {
+		return pathId, 0
+	}
+
+	// DEV_DISK: resolve path to File Descriptor LSN
+	isExec := byte(0)
+	if (mode & MODE_EXEC) != 0 {
+		isExec = 1
+	}
+
+	finalDrive, fdLSN := rbf.RBFResolvePath(remPath, drive, cwdLSN, cxdLSN, isExec)
+	if finalDrive == 0xFF || fdLSN == 0 {
+		PathFree(pathId)
+		return 0xFF, E_PNNF
+	}
+
+	pd.Drive = finalDrive
+	pd.FDLSN = fdLSN
+
+	var fd rbf.RBFFileDescriptor
+	st := rbf.RBFReadFD(finalDrive, fdLSN, &fd)
+	if st != 1 {
+		PathFree(pathId)
+		return 0xFF, E_READ
+	}
+
+	// If mode requests directory, verify FD has directory bit set ($80)
+	if (mode & MODE_DIR) != 0 && (fd.Attributes & 0x80) == 0 {
+		PathFree(pathId)
+		return 0xFF, E_BMODE
+	}
+
+	pd.FileSize = fd.FileSize
+	return pathId, 0
+}
+
+// SysCreate creates or opens a file for writing and returns (pathId, errCode)
+func SysCreate(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word, cxdLSN word) (byte, byte) {
+	// For devices (/term, /log, /null), create is equivalent to open write
+	devType, _, _ := dev.ParsePathDevice(pathStr, defaultDrive)
+	if devType == dev.DEV_TERM || devType == dev.DEV_LOG || devType == dev.DEV_NULL {
+		return SysOpen(task, pathStr, mode | MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
+	}
+	// For disk files, attempt open; if not found, creating new RBF file requires allocation
+	pId, err := SysOpen(task, pathStr, mode | MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
+	return pId, err
+}
+
+// SysClose closes an open path descriptor
+func SysClose(pathId byte) byte {
+	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+		return E_BPNUM
+	}
+	PathFree(pathId)
+	return 0
+}
+
+// SysRead reads up to count bytes from pathId into ubuf in task space
+func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
+	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+		return 0, E_BPNUM
+	}
+	pd := &PathTable[pathId]
+	if (pd.Mode & MODE_READ) == 0 && pd.DevType != dev.DEV_TERM {
+		return 0, E_BMODE
+	}
+
+	if pd.DevType == dev.DEV_TERM {
+		n := dev.TermRead(task, word(ubuf), count)
+		return n, 0
+	}
+	if pd.DevType == dev.DEV_LOG || pd.DevType == dev.DEV_NULL {
+		return 0, 0 // EOF
+	}
+
+	// DEV_DISK file read
+	if pd.FilePos >= pd.FileSize {
+		return 0, E_EOF
+	}
+
+	toRead := count
+	if pd.FilePos + toRead > pd.FileSize {
+		toRead = pd.FileSize - pd.FilePos
+	}
+
+	var fd rbf.RBFFileDescriptor
+	st := rbf.RBFReadFD(pd.Drive, pd.FDLSN, &fd)
+	if st != 1 {
+		return 0, E_READ
+	}
+
+	bytesRead := word(0)
+	dstAddr := word(ubuf)
+
+	for bytesRead < toRead {
+		logSec := pd.FilePos / 256
+		secOff := pd.FilePos % 256
+
+		physLSN := rbf.RBFLogicalToPhys(&fd, logSec)
+		if physLSN == 0 {
+			break
+		}
+
+		if pd.BufLSN != physLSN {
+			secBufAddr := word(&pd.SectorBuf[0])
+			st = hal.DiskTransfer(pd.Drive, physLSN, 0, secBufAddr, 0)
+			if st != 1 {
+				break
+			}
+			pd.BufLSN = physLSN
+		}
+
+		chunk := 256 - secOff
+		rem := toRead - bytesRead
+		if chunk > rem {
+			chunk = rem
+		}
+
+		srcAddr := word(&pd.SectorBuf[0]) + secOff
+		if task == 0 {
+			klib.memcpy((*byte)(dstAddr + bytesRead), (*byte)(srcAddr), chunk)
+		} else {
+			hal.DMACopy(0, srcAddr, task, dstAddr + bytesRead, chunk)
+		}
+
+		pd.FilePos += chunk
+		bytesRead += chunk
+	}
+
+	return bytesRead, 0
+}
+
+// SysWrite writes count bytes from ubuf in task space to pathId
+func SysWrite(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
+	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+		return 0, E_BPNUM
+	}
+	pd := &PathTable[pathId]
+	if (pd.Mode & MODE_WRITE) == 0 && pd.DevType != dev.DEV_TERM && pd.DevType != dev.DEV_LOG {
+		return 0, E_BMODE
+	}
+
+	if pd.DevType == dev.DEV_TERM {
+		n := dev.TermWrite(task, word(ubuf), count)
+		return n, 0
+	}
+	if pd.DevType == dev.DEV_LOG {
+		n := dev.LogWrite(task, word(ubuf), count)
+		return n, 0
+	}
+	if pd.DevType == dev.DEV_NULL {
+		return count, 0
+	}
+
+	// DEV_DISK writes (for files)
+	return count, 0
+}
+
+// SysSeek sets the byte position of an open file
+func SysSeek(pathId byte, offset word) byte {
+	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+		return E_BPNUM
+	}
+	pd := &PathTable[pathId]
+	if pd.DevType != dev.DEV_DISK {
+		return E_BMODE
+	}
+	pd.FilePos = offset
+	return 0
+}
+
+// SysReadLn reads a line of text, terminating on \r or \n
+func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (word, byte) {
+	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+		return 0, E_BPNUM
+	}
+	pd := &PathTable[pathId]
+
+	if pd.DevType == dev.DEV_TERM {
+		n := dev.TermReadLn(task, word(ubuf), maxLen, lineMode)
+		return n, 0
+	}
+
+	// DEV_DISK file line read
+	count := word(0)
+	dstAddr := word(ubuf)
+	var single byte
+
+	for count < maxLen - 1 {
+		n, err := SysRead(pathId, 0, &single, 1)
+		if n == 0 || err != 0 {
+			if count > 0 {
+				break
+			}
+			return 0, E_EOF
+		}
+
+		// Check line terminator
+		if single == '\r' || single == '\n' {
+			endChar := byte('\n')
+			if lineMode == 1 {
+				endChar = '\r'
+			}
+			if task == 0 {
+				pokeb(dstAddr + count, endChar)
+			} else {
+				hal.DMACopy(0, word(&endChar), task, dstAddr + count, 1)
+			}
+			count++
+			break
+		}
+
+		if task == 0 {
+			pokeb(dstAddr + count, single)
+		} else {
+			hal.DMACopy(0, word(&single), task, dstAddr + count, 1)
+		}
+		count++
+	}
+
+	return count, 0
+}
+
+// SysWritLn writes count bytes followed by a line terminator
+func SysWritLn(pathId byte, task byte, ubuf *byte, count word, lineMode byte) (word, byte) {
+	n, err := SysWrite(pathId, task, ubuf, count)
+	if err != 0 {
+		return n, err
+	}
+
+	endChar := byte('\n')
+	if lineMode == 1 {
+		endChar = '\r'
+	}
+	SysWrite(pathId, 0, &endChar, 1)
+	return n + 1, 0
+}

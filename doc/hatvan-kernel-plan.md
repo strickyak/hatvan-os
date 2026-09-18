@@ -806,12 +806,13 @@ lwasm --decb --list=_tmp/kernel_6809.list \
 - [x] Directory lookup: resolve path strings (`/d0/cmds/shell`) by scanning 32-byte directory records.
 - [x] Verified end-to-end against real OS-9 disk image in `hatvan-vm`.
 
-### Phase 3: Device Driver Dispatch & Open Path Table
-- [ ] Implement `dev.golf`: initialize `DevTable` with `/term`, `/d0..3`, `/log`, `/null`.
-- [ ] Implement `path.golf`: `PathTable` allocator (open, close, ref counts).
-- [ ] Implement `SysOpen`, `SysCreate`, `SysClose`.
-- [ ] Implement `SysRead` and `SysWrite` with cross-task DMA data transfers.
-- [ ] Implement `SysReadLn` and `SysWritLn` with line termination conversion (`\n` $\leftrightarrow$ `\r`).
+### Phase 3: Device Driver Dispatch & Open Path Table (Complete)
+- [x] Implement `dev.golf`: static device table dispatching `/term`, `/d0..3`, `/log`, `/null`.
+- [x] Implement `path.golf`: `PathTable` allocator (open, close, ref counts), sector caching.
+- [x] Implement `SysOpen`, `SysCreate`, `SysClose`.
+- [x] Implement `SysRead` and `SysWrite` with cross-task DMA data transfers.
+- [x] Implement `SysReadLn` and `SysWritLn` with line termination conversion (`\n` $\leftrightarrow$ `\r`).
+- [x] Verified end-to-end in `hatvan-vm` with `/term`, `/log`, and `/d0/CMDS` directory traversal.
 
 ### Phase 4: Process Management & Lifecycle
 - [ ] Implement `proc.golf`: `ProcTable` management (PIDs 1..31).

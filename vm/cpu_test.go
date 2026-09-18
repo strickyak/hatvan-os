@@ -433,3 +433,25 @@ func TestHyperCalls(t *testing.T) {
 		t.Fatalf("expected ExitCode 15, got %d", cpu.ExitCode)
 	}
 }
+
+func TestLEAS(t *testing.T) {
+	bus := NewBus()
+	cpu := NewCPU(bus)
+	// 10D3: 32 66 ED 60 (LEAS 6,S; STD 0,S)
+	code := []byte{0x32, 0x66, 0xED, 0x60, 0xE6, 0x60}
+	for i, b := range code {
+		bus.WriteByte(uint16(0x10D3+i), b)
+	}
+	cpu.PC = 0x10D3
+	cpu.S = 0x0EC6
+	cpu.SetD(0x0100)
+
+	cpu.Step()
+	if cpu.PC != 0x10D5 || cpu.S != 0x0ECC {
+		t.Fatalf("expected PC=10D5 S=0ECC, got PC=%04X S=%04X", cpu.PC, cpu.S)
+	}
+	cpu.Step()
+	if cpu.PC != 0x10D7 || cpu.S != 0x0ECC {
+		t.Fatalf("expected PC=10D7 S=0ECC, got PC=%04X S=%04X", cpu.PC, cpu.S)
+	}
+}

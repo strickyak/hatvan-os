@@ -3,6 +3,8 @@ package main
 import "hal"
 import "klib"
 import "rbf"
+import "dev"
+import "path"
 
 var bootSB rbf.RBFSuperblock
 
@@ -18,41 +20,46 @@ func main() {
 	hal.PutChar('S')
 	hal.PutChar('\n')
 
-	// Initialize boot disk 0
-	st := rbf.RBFReadSuperblock(0, &bootSB)
-	if st == 1 {
-		hal.PutChar('D')
-		hal.PutChar('0')
-		hal.PutChar(':')
-		hal.PutChar('O')
-		hal.PutChar('K')
-		hal.PutChar(' ')
+	// Initialize path subsystem
+	path.PathInit()
 
-		var rootFD rbf.RBFFileDescriptor
-		st = rbf.RBFReadFD(0, bootSB.RootDirLSN, &rootFD)
-		if st == 1 {
-			hal.PutChar('R')
-			hal.PutChar('O')
-			hal.PutChar('O')
-			hal.PutChar('T')
-			hal.PutChar(':')
-			hal.PutChar('O')
-			hal.PutChar('K')
-			hal.PutChar(' ')
+	// 1. Test opening and writing to /term
+	termPath := (*byte)("/term")
+	pTerm, err := path.SysOpen(0, termPath, path.MODE_WRITE, 0, 0, 0)
+	if err == 0 {
+		msg := (*byte)("PATH:TERM:OK")
+		path.SysWritLn(pTerm, 0, msg, 12, 0)
+	}
 
-			cmdsName := (*byte)("CMDS")
-			cmdsLSN := rbf.RBFScanDirectory(0, &rootFD, cmdsName)
-			if cmdsLSN > 0 {
-				hal.PutChar('C')
-				hal.PutChar('M')
-				hal.PutChar('D')
-				hal.PutChar('S')
-				hal.PutChar(':')
-				hal.PutChar('O')
-				hal.PutChar('K')
-				hal.PutChar('\n')
-			}
+	// 2. Test opening and reading /d0/CMDS directory
+	cmdsPath := (*byte)("/d0/CMDS")
+	pDir, err := path.SysOpen(0, cmdsPath, path.MODE_READ | path.MODE_DIR, 0, 0, 0)
+	if err == 0 {
+		msg := (*byte)("PATH:CMDS:OK")
+		path.SysWritLn(pTerm, 0, msg, 12, 0)
+
+		// Read first 32-byte directory entry from CMDS
+		var dirEntry [32]byte
+		n, rerr := path.SysRead(pDir, 0, &dirEntry[0], 32)
+		if n == 32 && rerr == 0 {
+			msgEntry := (*byte)("DIR:ENTRY:OK")
+			path.SysWritLn(pTerm, 0, msgEntry, 12, 0)
 		}
+
+		path.SysClose(pDir)
+	}
+
+	// 3. Test SysCreate on /log device
+	logPath := (*byte)("/log")
+	pLog, errLog := path.SysCreate(0, logPath, path.MODE_WRITE, 0, 0, 0)
+	if errLog == 0 {
+		msgLog := (*byte)("PATH:LOG:OK")
+		path.SysWritLn(pLog, 0, msgLog, 11, 0)
+		path.SysClose(pLog)
+	}
+
+	if pTerm != 0xFF {
+		path.SysClose(pTerm)
 	}
 
 	hal.Exit(0)
