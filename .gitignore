@@ -7,6 +7,8 @@ RCS/
 
 # Binaries & build artifacts
 /hatvan-vm
+/hatvan-vmk
+/AGY
 /bin/
 *.o
 *.a

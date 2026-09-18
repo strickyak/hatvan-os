@@ -1,0 +1,168 @@
+package prelude
+
+func peek[T any](addr word) T {
+	return *((*T)(addr))
+}
+
+func poke[T any](addr word, value T) {
+	*((*T)(addr)) = value
+}
+
+func peekb(addr word) byte        { return *((*byte)(addr)) }
+func peekw(addr word) word        { return *((*word)(addr)) }
+func pokeb(addr word, value byte) { *((*byte)(addr)) = value }
+func pokew(addr word, value word) { *((*word)(addr)) = value }
+
+// golf:volatile
+func vpeekb(addr word) byte { return *((*byte)(addr)) }
+
+// golf:volatile
+func vpeekw(addr word) word { return *((*word)(addr)) }
+
+// golf:volatile
+func vpokeb(addr word, value byte) { *((*byte)(addr)) = value }
+
+// golf:volatile
+func vpokew(addr word, value word) { *((*word)(addr)) = value }
+
+// abort terminates the program abnormally.
+func abort() {
+	panic("abort")
+}
+
+func pointer_add[T any](ptr *T, i int) *T {
+	return (*T)(word(ptr) + word(i)*sizeof[T]())
+}
+func pointer_sub[T any](ptr *T, i int) *T {
+	return (*T)(word(ptr) - word(i)*sizeof[T]())
+}
+func pointer_diff[T any](a *T, b *T) int {
+	return int(word(a)-word(b)) / int(sizeof[T]())
+}
+
+///////////////////////////////////////////////
+
+// post_decrement returns the current value of *p and then decrements *p.
+func post_decrement[T any](p *T) T {
+	z := *p
+	*p--
+	return z
+}
+
+// post_increment returns the current value of *p and then increments *p.
+func post_increment[T any](p *T) T {
+	z := *p
+	*p++
+	return z
+}
+
+// pre_increment increments *p and returns the new value.
+func pre_increment[T any](p *T) T {
+	*p++
+	return *p
+}
+
+// pre_decrement decrements *p and returns the new value.
+func pre_decrement[T any](p *T) T {
+	*p--
+	return *p
+}
+
+func pointer_post_increment[T any](p **T) *T {
+	z := *p
+	*p = pointer_add[T](*p, 1)
+	return z
+}
+
+func pointer_post_decrement[T any](p **T) *T {
+	z := *p
+	*p = pointer_sub[T](*p, 1)
+	return z
+}
+
+func pointer_pre_increment[T any](p **T) *T {
+	*p = pointer_add[T](*p, 1)
+	return *p
+}
+
+func pointer_pre_decrement[T any](p **T) *T {
+	*p = pointer_sub[T](*p, 1)
+	return *p
+}
+
+///////////////////////////////////////////////
+
+type any struct {
+	BaseAddr word
+	TypeStr  word
+}
+
+///////////////////////////////////////////////
+
+type slice[T any] struct {
+	Base word
+	Cap  word
+	Len  word
+}
+type string = slice[byte]
+
+func (o *slice[T]) Address(i word) word {
+	if i >= o.Len {
+		panic("slice: out of range (Address)")
+	}
+	p := (i * sizeof[T]())
+	return o.Base + p
+}
+
+func (o *slice[T]) Get(i word) T {
+	p := (i * sizeof[T]())
+	if i >= o.Len {
+		panic("slice: out of range (Get)")
+	}
+	return peek[T](o.Base + p)
+}
+
+func (o *slice[T]) Put(i word, x T) {
+	p := (i * sizeof[T]())
+	if i >= o.Len {
+		panic("slice: out of range (Put)")
+	}
+	poke[T](o.Base+p, x)
+}
+
+func (o *slice[T]) Chop(start word, limit word) slice[T] {
+	if start > limit {
+		panic("slice: start > limit (Chop)")
+	}
+	if limit > o.Cap {
+		panic("slice: limit > Cap (Chop)")
+	}
+	var z slice[T]
+	z.Base = o.Base + start*sizeof[T]()
+	z.Len = limit - start
+	z.Cap = z.Len
+	return z
+}
+
+func (o *slice[T]) Pop() T {
+	if o.Len == 0 {
+		panic("calling Pop() on empty slice")
+	}
+	result := o.Get(0)
+	*o = o.Chop(1, o.Len)
+	return result
+}
+
+///////////////////////////////////////////////
+
+var _panic_ *byte
+var _jmp_chain_ *byte
+
+func recover() *byte {
+	z := _panic_
+	_panic_ = (*byte)(0)
+	return z
+}
+
+// putchar is overridden by HAL or hardware I/O
+func putchar(b byte)

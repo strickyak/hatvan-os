@@ -23,6 +23,8 @@ var (
 	disk1Flag      = flag.String("disk1", "", "disk image file for /d1")
 	disk2Flag      = flag.String("disk2", "", "disk image file for /d2")
 	disk3Flag      = flag.String("disk3", "", "disk image file for /d3")
+	hypercallsFlag  = flag.Bool("hypercalls", false, "enable GOMAR-compatible hypercall traps ($12,$21,<hop>)")
+	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
 )
 
 func main() {
@@ -49,6 +51,7 @@ func main() {
 	// 1. Initialize Bus and CPU
 	bus := vm.NewBus()
 	cpu := vm.NewCPU(bus)
+	cpu.EnableHypercalls = *hypercallsFlag
 
 	// Attach disk images if specified
 	attachDisk(bus, 0, *disk0Flag)
@@ -210,9 +213,15 @@ func main() {
 		}
 	}
 
-	if *traceFlag {
+	if *traceFlag || *printCyclesFlag || os.Getenv("HATVAN_PRINT_CYCLES") != "" {
 		fmt.Fprintf(os.Stderr, "[hatvan-vm finished: %d total cycles executed]\n", cpu.Cycles)
+	}
+	if *traceFlag {
 		printRegisters(cpu)
+	}
+
+	if cpu.Halted {
+		os.Exit(cpu.ExitCode)
 	}
 }
 

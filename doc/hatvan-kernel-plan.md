@@ -799,11 +799,12 @@ lwasm --decb --list=_tmp/kernel_6809.list \
 - [x] Implement M68000 HAL (`kernel/m68k/hal.golf`) targeting `$00FF0000..$00FF0032`.
 - [x] Verify dual-target compilation with `minigolf -m M6809` and `minigolf -m=k`.
 
-### Phase 2: RBF Disk Driver & Superblock Parser
-- [ ] Implement `rbf.golf`: `RBFReadSector(drive, lsn, buf)` and `RBFWriteSector(drive, lsn, buf)`.
-- [ ] Parse Identification Sector (LSN 0 Superblock) to extract total sectors, cluster size, and root directory FD.
-- [ ] Parse File Descriptor sectors: decode attributes, file size, and segment lists.
-- [ ] Directory lookup: resolve path strings (`/d0/cmds/shell`) by scanning 32-byte directory records.
+### Phase 2: RBF Disk Driver & Superblock Parser (Complete)
+- [x] Implement `rbf.golf`: `RBFReadSector(drive, lsn, buf)` and `RBFWriteSector(drive, lsn, buf)`.
+- [x] Parse Identification Sector (LSN 0 Superblock) to extract total sectors, cluster size, and root directory FD.
+- [x] Parse File Descriptor sectors: decode attributes, file size, and segment lists.
+- [x] Directory lookup: resolve path strings (`/d0/cmds/shell`) by scanning 32-byte directory records.
+- [x] Verified end-to-end against real OS-9 disk image in `hatvan-vm`.
 
 ### Phase 3: Device Driver Dispatch & Open Path Table
 - [ ] Implement `dev.golf`: initialize `DevTable` with `/term`, `/d0..3`, `/log`, `/null`.

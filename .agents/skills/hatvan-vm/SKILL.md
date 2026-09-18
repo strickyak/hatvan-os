@@ -43,6 +43,7 @@ The emulator accepts a primary `.decb` file or raw 64KB `.img` system image, and
 | `--cpu-hz <N>` | `2000000` | Simulated CPU clock frequency in Hz (default 2 MHz). Used to scale timer ticks per cycle. |
 | `--disk0 <path>` | `""` | Attaches a raw disk image file (256 bytes/sector) to `/d0` (`$FF10 = 0`). |
 | `--disk1`..`--disk3` | `""` | Attaches disk images to `/d1`, `/d2`, and `/d3`. |
+| `--hypercalls` | `false` | Enables GOMAR-compatible instruction traps (`fcb $12,$21,<hop>`). |
 
 > [!NOTE]
 > When loading a raw 64KB OS-9/TurbOS image (`.img`), `hatvan-vm` automatically scans memory for valid OS-9 module headers. Any `.list` files passed on the command line that match module names (`kernel`, `shell`, `mdir`, etc.) are automatically shifted by the module's in-memory base address for seamless source tracing.
@@ -83,6 +84,7 @@ The emulator accepts a primary `.decb` file or raw 64KB `.img` system image, and
   * Bit 0 (`$01`): `Ctrl.TimrIRQ` (1 = timer generates CPU IRQ).
   * Bit 1 (`$02`): `Ctrl.TermIRQ` (1 = keyboard input generates CPU IRQ).
 * **`$FF04` (`logchar`):** Write ASCII character to debug log file (`os.Stderr`).
+* **`$FF05` (`exit` / `Exit.Code`):** Write exit status code byte to halt simulation and terminate VM with that exit code; read returns status code.
 * **`$FF10..$FF17` (Disk I/O):**
   * `$FF10`: Drive number (0 to 3).
   * `$FF11..$FF13`: 24-bit sector number (LSN).

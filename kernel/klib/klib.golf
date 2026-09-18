@@ -1,0 +1,58 @@
+package klib
+
+// memset fills n bytes at ptr with value b.
+func memset(ptr *byte, b byte, n word) {
+	addr := word(ptr)
+	for i := word(0); i < n; i++ {
+		pokeb(addr+i, b)
+	}
+}
+
+// memcpy copies n bytes from src to dst.
+func memcpy(dst *byte, src *byte, n word) {
+	d := word(dst)
+	s := word(src)
+	for i := word(0); i < n; i++ {
+		pokeb(d+i, peekb(s+i))
+	}
+}
+
+// memeq returns true if n bytes of a and b are identical.
+func memeq(a *byte, b *byte, n word) bool {
+	p1 := word(a)
+	p2 := word(b)
+	for i := word(0); i < n; i++ {
+		if peekb(p1+i) != peekb(p2+i) {
+			return false
+		}
+	}
+	return true
+}
+
+// strlen returns the length of a null-terminated string.
+func strlen(s *byte) word {
+	n := word(0)
+	p := word(s)
+	for peekb(p+n) != 0 {
+		n++
+	}
+	return n
+}
+
+// streq returns true if null-terminated strings a and b are identical.
+func streq(a *byte, b *byte) bool {
+	p1 := word(a)
+	p2 := word(b)
+	for {
+		c1 := peekb(p1)
+		c2 := peekb(p2)
+		if c1 != c2 {
+			return false
+		}
+		if c1 == 0 {
+			return true
+		}
+		p1++
+		p2++
+	}
+}

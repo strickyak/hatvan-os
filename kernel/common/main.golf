@@ -1,0 +1,59 @@
+package main
+
+import "hal"
+import "klib"
+import "rbf"
+
+var bootSB rbf.RBFSuperblock
+
+func main() {
+	hal.PutChar('H')
+	hal.PutChar('a')
+	hal.PutChar('t')
+	hal.PutChar('v')
+	hal.PutChar('a')
+	hal.PutChar('n')
+	hal.PutChar(' ')
+	hal.PutChar('O')
+	hal.PutChar('S')
+	hal.PutChar('\n')
+
+	// Initialize boot disk 0
+	st := rbf.RBFReadSuperblock(0, &bootSB)
+	if st == 1 {
+		hal.PutChar('D')
+		hal.PutChar('0')
+		hal.PutChar(':')
+		hal.PutChar('O')
+		hal.PutChar('K')
+		hal.PutChar(' ')
+
+		var rootFD rbf.RBFFileDescriptor
+		st = rbf.RBFReadFD(0, bootSB.RootDirLSN, &rootFD)
+		if st == 1 {
+			hal.PutChar('R')
+			hal.PutChar('O')
+			hal.PutChar('O')
+			hal.PutChar('T')
+			hal.PutChar(':')
+			hal.PutChar('O')
+			hal.PutChar('K')
+			hal.PutChar(' ')
+
+			cmdsName := (*byte)("CMDS")
+			cmdsLSN := rbf.RBFScanDirectory(0, &rootFD, cmdsName)
+			if cmdsLSN > 0 {
+				hal.PutChar('C')
+				hal.PutChar('M')
+				hal.PutChar('D')
+				hal.PutChar('S')
+				hal.PutChar(':')
+				hal.PutChar('O')
+				hal.PutChar('K')
+				hal.PutChar('\n')
+			}
+		}
+	}
+
+	hal.Exit(0)
+}

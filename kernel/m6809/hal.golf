@@ -1,0 +1,98 @@
+package hal
+
+// Hardware ports for M6809 Hatvan VM ($FF00 page in Task 0)
+const PORT_TERMOUT = 0xFF00
+const PORT_TERMIN = 0xFF01
+const PORT_REGSTAT = 0xFF02
+const PORT_REGCTRL = 0xFF03
+const PORT_LOGCHAR = 0xFF04
+const PORT_EXIT = 0xFF05
+
+const PORT_DISKDRV = 0xFF10
+const PORT_DISKSEC0 = 0xFF11
+const PORT_DISKSEC1 = 0xFF12
+const PORT_DISKSEC2 = 0xFF13
+const PORT_DISKTASK = 0xFF14
+const PORT_DISKADDR = 0xFF15 // 2 bytes (Hi, Lo)
+const PORT_DISKCMD = 0xFF17
+
+const PORT_TASKFUSE = 0xFF20
+
+const PORT_DMASRCTASK = 0xFF21
+const PORT_DMASRCADDR = 0xFF22 // 2 bytes (Hi, Lo)
+const PORT_DMADSTTASK = 0xFF24
+const PORT_DMADSTADDR = 0xFF25 // 2 bytes (Hi, Lo)
+const PORT_DMACNT = 0xFF27
+
+func PutChar(b byte) {
+	vpokeb(PORT_TERMOUT, b)
+}
+
+func GetChar() byte {
+	return vpeekb(PORT_TERMIN)
+}
+
+func LogChar(b byte) {
+	vpokeb(PORT_LOGCHAR, b)
+}
+
+func Exit(code byte) {
+	vpokeb(PORT_EXIT, code)
+	for {
+	}
+}
+
+func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte {
+	vpokeb(PORT_DISKDRV, drive)
+	vpokeb(PORT_DISKSEC0, 0)
+	vpokeb(PORT_DISKSEC1, byte(lsn>>8))
+	vpokeb(PORT_DISKSEC2, byte(lsn))
+	vpokeb(PORT_DISKTASK, task)
+	vpokew(PORT_DISKADDR, addr)
+
+	cmd := byte(1) // 1 = Read
+	if isWrite != 0 {
+		cmd = 2 // 2 = Write
+	}
+	vpokeb(PORT_DISKCMD, cmd)
+
+	// Busy-wait for completion
+	for {
+		st := vpeekb(PORT_DISKCMD)
+		if st > 0 {
+			return st
+		}
+	}
+}
+
+func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word) {
+	for count > 0 {
+		chunk := count
+		if chunk > 256 {
+			chunk = 256
+		}
+
+		vpokeb(PORT_DMASRCTASK, srcTask)
+		vpokew(PORT_DMASRCADDR, srcAddr)
+		vpokeb(PORT_DMADSTTASK, dstTask)
+		vpokew(PORT_DMADSTADDR, dstAddr)
+
+		cntByte := byte(chunk)
+		if chunk == 256 {
+			cntByte = 0
+		}
+		vpokeb(PORT_DMACNT, cntByte)
+
+		// Wait for completion
+		for vpeekb(PORT_DMACNT) == 0 {
+		}
+
+		count -= chunk
+		srcAddr += chunk
+		dstAddr += chunk
+	}
+}
+
+func SwitchTask(task byte) {
+	vpokeb(PORT_TASKFUSE, task)
+}

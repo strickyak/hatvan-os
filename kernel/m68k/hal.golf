@@ -1,0 +1,81 @@
+package hal
+
+// Hardware ports for M68000 Hatvan VM/K ($00FF0000 page in Task 0)
+const PORT_TERMOUT = 0x00FF0000
+const PORT_TERMIN = 0x00FF0002
+const PORT_REGSTAT = 0x00FF0004
+const PORT_REGCTRL = 0x00FF0006
+const PORT_LOGCHAR = 0x00FF0008
+const PORT_EXIT = 0x00FF000A
+
+const PORT_DISKDRV = 0x00FF0010
+const PORT_DISKSEC = 0x00FF0014 // 32-bit LSN
+const PORT_DISKTASK = 0x00FF0018
+const PORT_DISKADDR = 0x00FF001A // 32-bit Address
+const PORT_DISKCMD = 0x00FF001E
+
+const PORT_TASKREG = 0x00FF0020
+
+const PORT_DMASRCTASK = 0x00FF0022
+const PORT_DMASRCADDR = 0x00FF0024 // 32-bit Address
+const PORT_DMADSTTASK = 0x00FF0028
+const PORT_DMADSTADDR = 0x00FF002A // 32-bit Address
+const PORT_DMACNT = 0x00FF002E // 32-bit Count
+const PORT_DMACMD = 0x00FF0032
+
+func PutChar(b byte) {
+	vpokeb(PORT_TERMOUT, b)
+}
+
+func GetChar() byte {
+	return vpeekb(PORT_TERMIN)
+}
+
+func LogChar(b byte) {
+	vpokeb(PORT_LOGCHAR, b)
+}
+
+func Exit(code byte) {
+	vpokeb(PORT_EXIT, code)
+	for {
+	}
+}
+
+func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte {
+	vpokeb(PORT_DISKDRV, drive)
+	vpokew(PORT_DISKSEC, lsn)
+	vpokeb(PORT_DISKTASK, task)
+	vpokew(PORT_DISKADDR, addr)
+
+	cmd := byte(1) // 1 = Read
+	if isWrite != 0 {
+		cmd = 2 // 2 = Write
+	}
+	vpokeb(PORT_DISKCMD, cmd)
+
+	// Busy-wait for completion
+	for {
+		st := vpeekb(PORT_DISKCMD)
+		if st > 0 {
+			return st
+		}
+	}
+}
+
+func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word) {
+	vpokeb(PORT_DMASRCTASK, srcTask)
+	vpokew(PORT_DMASRCADDR, srcAddr)
+	vpokeb(PORT_DMADSTTASK, dstTask)
+	vpokew(PORT_DMADSTADDR, dstAddr)
+	vpokew(PORT_DMACNT, count)
+
+	vpokeb(PORT_DMACMD, 1)
+
+	// Wait for completion
+	for vpeekb(PORT_DMACMD) == 0 {
+	}
+}
+
+func SwitchTask(task byte) {
+	vpokeb(PORT_TASKREG, task)
+}

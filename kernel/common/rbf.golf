@@ -1,0 +1,295 @@
+package rbf
+
+import "hal"
+import "klib"
+
+const RBF_SECTOR_SIZE = 256
+const RBF_DIR_ENTRY_SIZE = 32
+const RBF_MAX_SEGMENTS = 16
+
+// Static sector buffers for RBF operations (Task 0 kernel RAM)
+var rbfSectorBuf [256]byte
+var rbfDirBuf [256]byte
+
+// RBFSuperblock represents LSN 0 metadata
+type RBFSuperblock struct {
+	TotalSectors word
+	TrackSize    byte
+	MapBytes     word
+	ClusterSize  word
+	RootDirLSN   word
+	Attributes   byte
+	DiskID       word
+}
+
+// RBFSegment represents one contiguous segment of disk blocks
+type RBFSegment struct {
+	LSN   word
+	Count word
+}
+
+// RBFFileDescriptor represents decoded metadata from an FD sector
+type RBFFileDescriptor struct {
+	Attributes byte
+	FileSize   word
+	SegCount   byte
+	Segments   [RBF_MAX_SEGMENTS]RBFSegment
+}
+
+// readWord16 reads a big-endian 16-bit word from memory address addr
+func readWord16(addr word) word {
+	hi := word(peekb(addr))
+	lo := word(peekb(addr + 1))
+	return (hi << 8) | lo
+}
+
+// readWord24 reads a big-endian 24-bit LSN from memory address addr
+func readWord24(addr word) word {
+	b0 := word(peekb(addr))
+	b1 := word(peekb(addr + 1))
+	b2 := word(peekb(addr + 2))
+	res := (b1 << 8) | b2
+	if sizeof[word]() > 2 {
+		res = (b0 << 16) | res
+	}
+	return res
+}
+
+// readWord32 reads a big-endian 32-bit word from memory address addr
+func readWord32(addr word) word {
+	b0 := word(peekb(addr))
+	b1 := word(peekb(addr + 1))
+	b2 := word(peekb(addr + 2))
+	b3 := word(peekb(addr + 3))
+	res := (b2 << 8) | b3
+	if sizeof[word]() > 2 {
+		res = (b0 << 24) | (b1 << 16) | res
+	}
+	return res
+}
+
+// toUpper converts an ASCII character to uppercase
+func toUpper(c byte) byte {
+	if c >= 'a' && c <= 'z' {
+		return c - 32
+	}
+	return c
+}
+
+// RBFReadSector reads sector lsn of drive into destination buffer dst
+func RBFReadSector(drive byte, lsn word, dst *byte) byte {
+	return hal.DiskTransfer(drive, lsn, 0, word(dst), 0)
+}
+
+// RBFWriteSector writes sector lsn of drive from source buffer src
+func RBFWriteSector(drive byte, lsn word, src *byte) byte {
+	return hal.DiskTransfer(drive, lsn, 0, word(src), 1)
+}
+
+// RBFReadSuperblock reads and parses the LSN 0 Identification Sector
+func RBFReadSuperblock(drive byte, sb *RBFSuperblock) byte {
+	bufAddr := word(&rbfSectorBuf[0])
+	st := hal.DiskTransfer(drive, 0, 0, bufAddr, 0)
+	if st != 1 {
+		return st
+	}
+
+	sb.TotalSectors = readWord24(bufAddr)
+	sb.TrackSize = peekb(bufAddr + 3)
+	sb.MapBytes = readWord16(bufAddr + 4)
+	sb.ClusterSize = readWord16(bufAddr + 6)
+	sb.RootDirLSN = readWord24(bufAddr + 8)
+	sb.Attributes = peekb(bufAddr + 14)
+	sb.DiskID = readWord16(bufAddr + 15)
+	return 1
+}
+
+// RBFReadFD reads and decodes the File Descriptor sector at fdLSN
+func RBFReadFD(drive byte, fdLSN word, fd *RBFFileDescriptor) byte {
+	bufAddr := word(&rbfSectorBuf[0])
+	st := hal.DiskTransfer(drive, fdLSN, 0, bufAddr, 0)
+	if st != 1 {
+		return st
+	}
+
+	fd.Attributes = peekb(bufAddr)
+	fd.FileSize = readWord32(bufAddr + 9)
+	fd.SegCount = 0
+
+	segAddr := bufAddr + 16
+	for i := word(0); i < RBF_MAX_SEGMENTS; i++ {
+		cnt := readWord16(segAddr + 3)
+		if cnt == 0 {
+			break
+		}
+		fd.Segments[i].LSN = readWord24(segAddr)
+		fd.Segments[i].Count = cnt
+		fd.SegCount++
+		segAddr += 5
+	}
+	return 1
+}
+
+// RBFLogicalToPhys maps a logical file sector index to its physical disk LSN
+func RBFLogicalToPhys(fd *RBFFileDescriptor, logSec word) word {
+	rem := logSec
+	for i := word(0); i < word(fd.SegCount); i++ {
+		cnt := fd.Segments[i].Count
+		if rem < cnt {
+			return fd.Segments[i].LSN + rem
+		}
+		rem -= cnt
+	}
+	return 0
+}
+
+// RBFMatchName checks if a 29-byte high-bit-terminated entry name matches targetName
+func RBFMatchName(entryAddr word, targetName *byte) bool {
+	tAddr := word(targetName)
+	for i := word(0); i < 29; i++ {
+		ec := peekb(entryAddr + i)
+		isLast := (ec & 0x80) != 0
+		rawChar := ec & 0x7F
+		tc := peekb(tAddr)
+
+		if tc == 0 {
+			return false
+		}
+		if toUpper(rawChar) != toUpper(tc) {
+			return false
+		}
+
+		tAddr++
+		if isLast {
+			return peekb(tAddr) == 0
+		}
+	}
+	return false
+}
+
+// RBFScanDirectory searches a directory FD for targetName, returning its FD LSN or 0
+func RBFScanDirectory(drive byte, dirFD *RBFFileDescriptor, targetName *byte) word {
+	if (dirFD.Attributes & 0x80) == 0 {
+		return 0 // Not a directory
+	}
+
+	totalSectors := (dirFD.FileSize + 255) / 256
+	dirBufAddr := word(&rbfDirBuf[0])
+
+	for s := word(0); s < totalSectors; s++ {
+		physLSN := RBFLogicalToPhys(dirFD, s)
+		if physLSN == 0 {
+			break
+		}
+
+		st := hal.DiskTransfer(drive, physLSN, 0, dirBufAddr, 0)
+		if st != 1 {
+			break
+		}
+
+		for e := word(0); e < 8; e++ {
+			entryOffset := s*256 + e*32
+			if entryOffset >= dirFD.FileSize {
+				return 0
+			}
+
+			entryAddr := dirBufAddr + e*32
+			if peekb(entryAddr) == 0 {
+				continue // Deleted or empty slot
+			}
+
+			if RBFMatchName(entryAddr, targetName) {
+				return readWord24(entryAddr + 29)
+			}
+		}
+	}
+	return 0
+}
+
+// ParsePathDrive extracts optional "/d0".."/d3" prefix from path.
+// Returns (driveIndex, remainingPathPtr). If no drive prefix, driveIndex is 0xFF.
+func ParsePathDrive(path *byte) (byte, *byte) {
+	p := word(path)
+	if peekb(p) == '/' && peekb(p+1) == 'd' {
+		d := peekb(p + 2)
+		if d >= '0' && d <= '3' {
+			return d - '0', (*byte)(p + 3)
+		}
+	}
+	return 0xFF, path
+}
+
+// RBFResolvePath resolves a full or relative path string to a (drive, fdLSN).
+// Returns (drive, fdLSN). If resolution fails, returns (0xFF, 0).
+func RBFResolvePath(path *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isExec byte) (byte, word) {
+	drive, remPath := ParsePathDrive(path)
+	if drive == 0xFF {
+		drive = defaultDrive
+	}
+
+	p := word(remPath)
+	currFDLSN := word(0)
+
+	// If absolute path starting with '/'
+	if peekb(p) == '/' {
+		var sb RBFSuperblock
+		st := RBFReadSuperblock(drive, &sb)
+		if st != 1 {
+			return 0xFF, 0
+		}
+		currFDLSN = sb.RootDirLSN
+		for peekb(p) == '/' {
+			p++
+		}
+	} else {
+		// Relative path
+		if isExec != 0 {
+			currFDLSN = cxdLSN
+		} else {
+			currFDLSN = cwdLSN
+		}
+	}
+
+	var compBuf [32]byte
+	var dirFD RBFFileDescriptor
+
+	for {
+		c := peekb(p)
+		if c == 0 || c == '\r' || c == '\n' || c == ' ' {
+			break
+		}
+
+		// Extract component
+		idx := word(0)
+		for idx < 29 {
+			ch := peekb(p)
+			if ch == 0 || ch == '/' || ch == '\r' || ch == '\n' || ch == ' ' {
+				break
+			}
+			compBuf[idx] = ch
+			idx++
+			p++
+		}
+		compBuf[idx] = 0
+
+		if peekb(p) == '/' {
+			p++
+		}
+
+		if idx > 0 {
+			st := RBFReadFD(drive, currFDLSN, &dirFD)
+			if st != 1 {
+				return 0xFF, 0
+			}
+
+			nextLSN := RBFScanDirectory(drive, &dirFD, &compBuf[0])
+			if nextLSN == 0 {
+				return 0xFF, 0
+			}
+			currFDLSN = nextLSN
+		}
+	}
+
+	return drive, currFDLSN
+}
+
