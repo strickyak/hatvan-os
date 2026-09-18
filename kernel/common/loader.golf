@@ -59,6 +59,7 @@ func LoadDECB(pathId byte, targetTask byte) (word, word, byte) {
 	var hdr [5]byte
 	entryPC := word(0)
 	totalLoaded := word(0)
+	high16 := word(0)
 
 	for {
 		n, err := path.SysRead(pathId, 0, &hdr[0], 5)
@@ -71,9 +72,10 @@ func LoadDECB(pathId byte, targetTask byte) (word, word, byte) {
 		addr := (word(hdr[3]) << 8) | word(hdr[4])
 
 		if tag == 0 {
-			// DECB_DATA chunk: load chunkLen bytes into targetTask at addr
+			// DECB_DATA chunk: load chunkLen bytes into targetTask at fullAddr
+			fullAddr := (high16 << 16) | addr
 			if chunkLen > 0 {
-				rn, rerr := path.SysRead(pathId, targetTask, (*byte)(addr), chunkLen)
+				rn, rerr := path.SysRead(pathId, targetTask, (*byte)(fullAddr), chunkLen)
 				if rn != chunkLen || rerr != 0 {
 					return 0, 0, path.E_READ
 				}
@@ -81,10 +83,10 @@ func LoadDECB(pathId byte, targetTask byte) (word, word, byte) {
 			}
 		} else if tag == 254 {
 			// SET_HIGH16_ADDR32 header: persistent upper 16-bit address extension (spec-hatvan-68000)
-			// chunkLen is always 0
+			high16 = addr
 		} else if tag == 255 {
 			// DECB_EXEC postamble: chunkLen is 0, addr is execution entry PC
-			entryPC = addr
+			entryPC = (high16 << 16) | addr
 			break
 		} else {
 			// Unrecognized or extended debug chunks (source lines, symbols): skip payload

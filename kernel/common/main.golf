@@ -6,6 +6,8 @@ import "rbf"
 import "dev"
 import "path"
 import "proc"
+import "syscall"
+import "sh"
 
 var bootSB rbf.RBFSuperblock
 
@@ -23,6 +25,7 @@ func main() {
 
 	// Initialize path subsystem
 	path.PathInit()
+	syscall.SyscallInit()
 
 	// 1. Test opening and writing to /term
 	termPath := (*byte)("/term")
@@ -95,7 +98,7 @@ func main() {
 			}
 
 			// 5. Test SysFork with OS-9 Module (/d0/CMDS/TESTCMD)
-			proc.CurrentPID = 1
+			proc.SetCurrentPID(1)
 			os9Cmd := (*byte)("/d0/CMDS/TESTCMD")
 			paramStr := (*byte)("testarg")
 			c1PID, c1Err := proc.SysFork(os9Cmd, paramStr, 7)
@@ -152,11 +155,70 @@ func main() {
 				proc.ProcFree(c2PID)
 			}
 
+			// 9. Test User Process Execution in User Space (Phase 5)
+			proc.SetCurrentPID(1)
+			echoCmd := (*byte)("ECHO")
+			if hal.ARCH == 68 {
+				echoCmd = (*byte)("ECHOK")
+			}
+			paramEcho := (*byte)("hello world\r")
+			pEcho, pEchoErr := proc.SysFork(echoCmd, paramEcho, 12)
+			if pEchoErr == 0 && pEcho > 0 {
+				msgUserStart := (*byte)("USER:EXEC:START\n")
+				dev.TermWrite(0, word(msgUserStart), 16)
+
+				hal.LaunchProcess(pEcho, proc.ProcTable[pEcho].SavedSP, proc.ProcTable[pEcho].SavedPC)
+
+				// After child exits, SysWait reaps it
+				wpid, wst, werr := proc.SysWait()
+				if wpid == pEcho && wst == 0 && werr == 0 {
+					msgEchoOk := (*byte)("USER:ECHO:OK\n")
+					dev.TermWrite(0, word(msgEchoOk), 13)
+				}
+			}
+
 			// Free parent process
 			proc.ProcFree(1)
 			msgProcOk := (*byte)("PROC:LIFECYCLE:OK")
 			dev.TermWrite(0, word(msgProcOk), 17)
 			hal.PutChar('\n')
+		}
+	}
+
+	// 10. Resident Mini-Shell (Phase 5)
+	pShellPID, pShell := proc.ProcAlloc(0)
+	if pShellPID == 1 && pShell != (*proc.Process)(0) {
+		proc.ProcOpen(1, termPath, path.MODE_READ)
+		proc.ProcOpen(1, termPath, path.MODE_WRITE)
+		proc.ProcOpen(1, termPath, path.MODE_WRITE)
+		proc.ProcOpen(1, logPath, path.MODE_WRITE)
+		proc.SetCurrentPID(1)
+
+		// Initialize shell cwd to /d0 and cxd to /d0/CMDS
+		proc.SysChgDir((*byte)("/d0"), 0)
+		proc.SysChgDir((*byte)("/d0/CMDS"), path.MODE_EXEC)
+
+		// Test builtin command execution
+		shSt := sh.RunCommand((*byte)("help"))
+		if shSt == 0 {
+			msgHelpOk := (*byte)("SHELL:HELP:OK\n")
+			dev.TermWrite(0, word(msgHelpOk), 14)
+		}
+
+		// Test external binary execution through shell
+		shEcho := (*byte)("ECHO hello from shell")
+		if hal.ARCH == 68 {
+			shEcho = (*byte)("ECHOK hello from shell")
+		}
+		shEchoSt := sh.RunCommand(shEcho)
+		if shEchoSt == 0 {
+			msgShOk := (*byte)("SHELL:EXEC:OK\n")
+			dev.TermWrite(0, word(msgShOk), 14)
+		}
+
+		// If interactive console input is ready, enter resident shell loop
+		if hal.HasInput() {
+			sh.RunShell()
 		}
 	}
 

@@ -1,0 +1,250 @@
+package syscall
+
+import "hal"
+import "klib"
+import "path"
+import "proc"
+
+// OS-9 System Call Numbers
+const F_FORK    = 0x03 // F$Fork
+const F_WAIT    = 0x04 // F$Wait
+const F_CHAIN   = 0x05 // F$Chain
+const F_EXIT    = 0x06 // F$Exit
+const F_MEM     = 0x07 // F$Mem
+const F_SLEEP   = 0x0A // F$Sleep
+const F_ID      = 0x0C // F$ID
+
+const I_OPEN    = 0x84 // I$Open
+const I_CREATE  = 0x85 // I$Create
+const I_CHGDIR  = 0x86 // I$ChgDir
+const I_DELETE  = 0x87 // I$Delete
+const I_SEEK    = 0x88 // I$Seek
+const I_READ    = 0x89 // I$Read
+const I_WRITE   = 0x8A // I$Write
+const I_READLN  = 0x8B // I$ReadLn
+const I_WRITLN  = 0x8C // I$WritLn
+const I_GETSTT  = 0x8D // I$GetStt
+const I_SETSTT  = 0x8E // I$SetStt
+const I_CLOSE   = 0x8F // I$Close
+
+// SyscallFrame holds the registers saved from the user stack
+type SyscallFrame struct {
+	CC byte
+	A  byte
+	B  byte
+	DP byte
+	X  word
+	Y  word
+	U  word
+	PC word
+}
+
+var UserFrame SyscallFrame
+var pathBuf [128]byte
+var paramBuf [128]byte
+
+func SyscallInit() {
+	Dispatch(0xFF)
+}
+
+// CopyUserString copies a string from user task space into kernel buffer.
+// Stops at NUL, CR, or LF. Returns string length.
+func CopyUserString(task byte, userAddr word, dst *byte, maxLen word) word {
+	count := word(0)
+	dstAddr := word(dst)
+	for count < maxLen-1 {
+		c := byte(0)
+		hal.DMACopy(task, userAddr+count, 0, word(&c), 1)
+		if c == 0 || c == '\r' || c == '\n' {
+			break
+		}
+		pokeb(dstAddr+count, c)
+		count++
+	}
+	pokeb(dstAddr+count, 0)
+	return count
+}
+
+// CopyUserParams copies parameter bytes from user task space into kernel buffer
+func CopyUserParams(task byte, userAddr word, dst *byte, count word) word {
+	if count == 0 {
+		pokeb(word(dst), 0)
+		return 0
+	}
+	chunk := count
+	if chunk > 127 {
+		chunk = 127
+	}
+	hal.DMACopy(task, userAddr, 0, word(dst), chunk)
+	pokeb(word(dst)+chunk, 0)
+	return chunk
+}
+
+// Dispatch executes a system call requested by the current user task.
+// Updates UserFrame registers and CC (clearing carry on success, setting carry on error).
+func Dispatch(callNum byte) {
+	curPID := proc.CurrentPID
+
+	if callNum == I_OPEN {
+		CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
+		slot, err := proc.ProcOpen(curPID, &pathBuf[0], UserFrame.A)
+		if err == 0 {
+			UserFrame.A = slot
+			UserFrame.CC &^= 1 // clear CC.C
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1 // set CC.C
+		}
+		return
+	}
+
+	if callNum == I_CREATE {
+		CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
+		slot, err := proc.ProcCreate(curPID, &pathBuf[0], UserFrame.A)
+		if err == 0 {
+			UserFrame.A = slot
+			UserFrame.CC &^= 1
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1
+		}
+		return
+	}
+
+	if callNum == I_CLOSE {
+		err := proc.ProcClose(curPID, UserFrame.A)
+		if err == 0 {
+			UserFrame.CC &^= 1
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1
+		}
+		return
+	}
+
+	if callNum == I_READ {
+		n, err := proc.ProcRead(curPID, UserFrame.A, (*byte)(UserFrame.X), UserFrame.Y)
+		UserFrame.Y = n
+		if err == 0 {
+			UserFrame.CC &^= 1
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1
+		}
+		return
+	}
+
+	if callNum == I_WRITE {
+		n, err := proc.ProcWrite(curPID, UserFrame.A, (*byte)(UserFrame.X), UserFrame.Y)
+		UserFrame.Y = n
+		if err == 0 {
+			UserFrame.CC &^= 1
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1
+		}
+		return
+	}
+
+	if callNum == I_READLN {
+		n, err := proc.ProcReadLn(curPID, UserFrame.A, (*byte)(UserFrame.X), UserFrame.Y)
+		UserFrame.Y = n
+		if err == 0 {
+			UserFrame.CC &^= 1
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1
+		}
+		return
+	}
+
+	if callNum == I_WRITLN {
+		n, err := proc.ProcWritLn(curPID, UserFrame.A, (*byte)(UserFrame.X), UserFrame.Y)
+		UserFrame.Y = n
+		if err == 0 {
+			UserFrame.CC &^= 1
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1
+		}
+		return
+	}
+
+	if callNum == I_SEEK {
+		if UserFrame.A < proc.PROC_MAX_PATHS {
+			pathId := proc.ProcTable[curPID].Paths[UserFrame.A]
+			if pathId != 0xFF {
+				err := path.SysSeek(pathId, UserFrame.X)
+				if err == 0 {
+					UserFrame.CC &^= 1
+					return
+				}
+				UserFrame.B = err
+				UserFrame.CC |= 1
+				return
+			}
+		}
+		UserFrame.B = proc.E_BPNUM
+		UserFrame.CC |= 1
+		return
+	}
+
+	if callNum == I_CHGDIR {
+		CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
+		err := proc.SysChgDir(&pathBuf[0], UserFrame.A)
+		if err == 0 {
+			UserFrame.CC &^= 1
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1
+		}
+		return
+	}
+
+	if callNum == F_FORK {
+		CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
+		plen := CopyUserParams(curPID, UserFrame.U, &paramBuf[0], UserFrame.Y)
+		childPID, err := proc.SysFork(&pathBuf[0], &paramBuf[0], plen)
+		if err == 0 {
+			UserFrame.A = childPID
+			UserFrame.CC &^= 1
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1
+		}
+		return
+	}
+
+	if callNum == F_WAIT {
+		cpid, st, err := proc.SysWait()
+		if err == 0 {
+			UserFrame.A = cpid
+			UserFrame.B = st
+			UserFrame.CC &^= 1
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1
+		}
+		return
+	}
+
+	if callNum == F_EXIT {
+		proc.SysExit(UserFrame.B)
+		return
+	}
+
+	if callNum == F_ID {
+		UserFrame.A = curPID
+		UserFrame.CC &^= 1
+		return
+	}
+
+	if callNum == F_SLEEP {
+		UserFrame.CC &^= 1
+		return
+	}
+
+	// Unknown syscall: set error 214 (E_BMODE)
+	UserFrame.B = 214
+	UserFrame.CC |= 1
+}

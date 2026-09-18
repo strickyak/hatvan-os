@@ -1,5 +1,7 @@
 package hal
 
+const ARCH = 9
+
 // Hardware ports for M6809 Hatvan VM ($FF00 page in Task 0)
 const PORT_TERMOUT = 0xFF00
 const PORT_TERMIN = 0xFF01
@@ -95,4 +97,10 @@ func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word)
 
 func SwitchTask(task byte) {
 	vpokeb(PORT_TASKFUSE, task)
+}
+
+func LaunchProcess(pid byte, sp word, pc word)
+
+func HasInput() bool {
+	return (vpeekb(PORT_REGSTAT) & 2) != 0
 }

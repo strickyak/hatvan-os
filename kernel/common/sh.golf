@@ -1,0 +1,173 @@
+package sh
+
+import "dev"
+import "hal"
+import "klib"
+import "path"
+import "proc"
+
+var lineBuf [128]byte
+var cmdName [32]byte
+var argBuf [128]byte
+
+func printStr(s *byte) {
+	n := klib.strlen(s)
+	if n > 0 {
+		dev.TermWrite(0, word(s), n)
+	}
+}
+
+func printHexWord(val word) {
+	for i := word(0); i < 4; i++ {
+		shift := (3 - i) * 4
+		nib := byte((val >> shift) & 0xF)
+		if nib < 10 {
+			hal.PutChar('0' + nib)
+		} else {
+			hal.PutChar('A' + nib - 10)
+		}
+	}
+}
+
+// RunCommand parses and executes a single command line string
+func RunCommand(line *byte) byte {
+	p := line
+	// 1. Skip leading spaces
+	for peekb(word(p)) == ' ' {
+		p = (*byte)(word(p) + 1)
+	}
+
+	c0 := peekb(word(p))
+	if c0 == 0 || c0 == '\r' || c0 == '\n' {
+		return 0
+	}
+
+	// 2. Extract command token into cmdName
+	cmdLen := word(0)
+	for cmdLen < 31 {
+		c := peekb(word(p))
+		if c == 0 || c == ' ' || c == '\r' || c == '\n' {
+			break
+		}
+		pokeb(word(&cmdName[0]) + cmdLen, c)
+		cmdLen++
+		p = (*byte)(word(p) + 1)
+	}
+	pokeb(word(&cmdName[0]) + cmdLen, 0)
+
+	// 3. Extract arguments into argBuf (CR terminated)
+	argLen := word(0)
+	for argLen < 126 {
+		c := peekb(word(p))
+		if c == 0 || c == '\r' || c == '\n' {
+			break
+		}
+		pokeb(word(&argBuf[0]) + argLen, c)
+		argLen++
+		p = (*byte)(word(p) + 1)
+	}
+	pokeb(word(&argBuf[0]) + argLen, '\r')
+	pokeb(word(&argBuf[0]) + argLen + 1, 0)
+	argLen++ // count includes '\r'
+
+	// 4. Check builtin commands
+	if klib.streq(&cmdName[0], (*byte)("help")) {
+		printStr((*byte)("Hatvan OS Shell Builtins: help, exit, pwd, pwx, cd, cx\n"))
+		return 0
+	}
+
+	if klib.streq(&cmdName[0], (*byte)("exit")) {
+		hal.Exit(0)
+		return 0
+	}
+
+	if klib.streq(&cmdName[0], (*byte)("pwd")) {
+		curPID := proc.CurrentPID
+		procEntry := &proc.ProcTable[curPID]
+		printStr((*byte)("/d"))
+		hal.PutChar('0' + procEntry.CwdDrive)
+		printStr((*byte)(" (FD $"))
+		printHexWord(procEntry.CwdFDLSN)
+		printStr((*byte)(")\n"))
+		return 0
+	}
+
+	if klib.streq(&cmdName[0], (*byte)("pwx")) {
+		curPID := proc.CurrentPID
+		procEntry := &proc.ProcTable[curPID]
+		printStr((*byte)("/d"))
+		hal.PutChar('0' + procEntry.CxdDrive)
+		printStr((*byte)(" (FD $"))
+		printHexWord(procEntry.CxdFDLSN)
+		printStr((*byte)(")\n"))
+		return 0
+	}
+
+	if klib.streq(&cmdName[0], (*byte)("cd")) {
+		idx := word(0)
+		for argBuf[idx] == ' ' {
+			idx++
+		}
+		end := idx
+		for argBuf[end] != 0 && argBuf[end] != '\r' && argBuf[end] != '\n' && argBuf[end] != ' ' {
+			end++
+		}
+		argBuf[end] = 0
+		err := proc.SysChgDir(&argBuf[idx], 0)
+		if err != 0 {
+			printStr((*byte)("cd: path not found\n"))
+		}
+		return err
+	}
+
+	if klib.streq(&cmdName[0], (*byte)("cx")) {
+		idx := word(0)
+		for argBuf[idx] == ' ' {
+			idx++
+		}
+		end := idx
+		for argBuf[end] != 0 && argBuf[end] != '\r' && argBuf[end] != '\n' && argBuf[end] != ' ' {
+			end++
+		}
+		argBuf[end] = 0
+		err := proc.SysChgDir(&argBuf[idx], path.MODE_EXEC)
+		if err != 0 {
+			printStr((*byte)("cx: path not found\n"))
+		}
+		return err
+	}
+
+	// 5. External executable binary execution from cxd
+	cpid, err := proc.SysFork(&cmdName[0], &argBuf[0], argLen)
+	if err != 0 {
+		printStr(&cmdName[0])
+		printStr((*byte)(": not found\n"))
+		return err
+	}
+
+	if cpid > 0 {
+		hal.LaunchProcess(cpid, proc.ProcTable[cpid].SavedSP, proc.ProcTable[cpid].SavedPC)
+		wpid, wst, werr := proc.SysWait()
+		if werr == 0 && wpid == cpid {
+			return wst
+		}
+	}
+
+	return 0
+}
+
+// RunShell runs an interactive shell prompt loop reading from console into Task 0 lineBuf
+func RunShell() {
+	for {
+		printStr((*byte)("# "))
+
+		n := dev.TermReadLn(0, word(&lineBuf[0]), 128, 0)
+		if n == 0 {
+			break
+		}
+		lineBuf[n] = 0
+
+		RunCommand(&lineBuf[0])
+	}
+}
+

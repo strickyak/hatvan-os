@@ -116,8 +116,11 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 
 			if task == 0 {
 				pokeb(dstAddr+count, endChar)
+				pokeb(dstAddr+count+1, 0)
 			} else {
 				hal.DMACopy(0, word(&endChar), task, dstAddr+count, 1)
+				zero := byte(0)
+				hal.DMACopy(0, word(&zero), task, dstAddr+count+1, 1)
 			}
 			return count + 1
 		}

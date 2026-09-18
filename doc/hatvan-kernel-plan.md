@@ -837,8 +837,9 @@ lwasm --decb --list=_tmp/kernel_6809.list \
 - [x] Implement `SysExit` and `SysWait`: path resource reclamation, exit status propagation, parent wakeup, and zombie reaping.
 - [x] Verified end-to-end in `hatvan-vm` with real OS-9 module (`TESTCMD`) and DECB binary (`TESTDECB`) on `test.dsk`.
 
-### Phase 5: Assembly Trap Stubs & Integration
-- [ ] Author `kernel/m6809/trap_m6809.asm` (`SWI2` entry, register save/restore, `TaskFuse`).
-- [ ] Author `kernel/m68k/trap_m68k.s` (`TRAP #0` entry, register save/restore, `TaskReg`).
-- [ ] Implement resident mini-shell in `kernel/common/sh.golf`.
-- [ ] End-to-end boot tests on `hatvan-vm` and `hatvan-vmk`.
+### Phase 5: Assembly Trap Stubs & Integration (Complete)
+- [x] Author `kernel/m6809/trap_m6809.asm` (`SWI2` entry, register save/restore, `TaskFuse`).
+- [x] Author `kernel/m68k/trap_m68k.s` (`TRAP #0` entry, register save/restore, `TaskReg`).
+- [x] Implement resident mini-shell in `kernel/common/sh.golf`.
+- [x] Author userland test commands (`cmds/echo.asm` for M6809 OS-9 module, `cmds/echok.s` for M68K DECB32 binary).
+- [x] End-to-end boot tests and interactive shell sessions verified on both `hatvan-vm` and `hatvan-vmk`.

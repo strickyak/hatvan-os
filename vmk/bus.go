@@ -227,24 +227,18 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		}
 		if len(b.ConsoleIn) > 0 {
 			ch := b.ConsoleIn[0]
-			if isOdd {
-				// Reading odd byte (lower byte of word) consumes character
-				b.ConsoleIn = b.ConsoleIn[1:]
-				if len(b.ConsoleIn) == 0 {
-					b.RegStat &^= 0x0002
-				} else {
-					b.RegStat |= 0x0002
-				}
-				b.evalInterrupts()
+			b.ConsoleIn = b.ConsoleIn[1:]
+			if len(b.ConsoleIn) == 0 {
+				b.RegStat &^= 0x0002
+			} else {
+				b.RegStat |= 0x0002
 			}
+			b.evalInterrupts()
 			return ch
 		}
 		return 0 // Non-blocking: 0 if no char ready
 
 	case 0x00FF0004: // Reg.Stat
-		if len(b.ConsoleIn) == 0 && b.StdinChan != nil {
-			b.pollStdinInternal()
-		}
 		if isOdd {
 			return byte(b.RegStat)
 		}
@@ -266,10 +260,7 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		return byte(b.ExitCode >> 8)
 
 	case 0x00FF0010: // Disk.Drive
-		if isOdd {
-			return byte(b.DiskDrive)
-		}
-		return byte(b.DiskDrive >> 8)
+		return byte(b.DiskDrive)
 
 	case 0x00FF0014: // Disk.Sector (MSW)
 		if isOdd {
@@ -283,10 +274,7 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		return byte(b.DiskSector >> 8)
 
 	case 0x00FF0018: // Disk.Task
-		if isOdd {
-			return byte(b.DiskTask)
-		}
-		return byte(b.DiskTask >> 8)
+		return byte(b.DiskTask)
 
 	case 0x00FF001A: // Disk.Addr (MSW)
 		if isOdd {
@@ -301,23 +289,14 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 
 	case 0x00FF001E: // Disk.CmdSt
 		st := b.DiskStatus
-		if isOdd {
-			b.DiskStatus = 0 // Reset on lower byte read
-			return byte(st)
-		}
-		return byte(st >> 8)
+		b.DiskStatus = 0
+		return byte(st)
 
 	case 0x00FF0020: // Task.Active
-		if isOdd {
-			return byte(b.TaskReg)
-		}
-		return 0
+		return byte(b.TaskReg)
 
 	case 0x00FF0022: // DMA.SrcTask
-		if isOdd {
-			return byte(b.DmaSrcTask)
-		}
-		return byte(b.DmaSrcTask >> 8)
+		return byte(b.DmaSrcTask)
 
 	case 0x00FF0024: // DMA.SrcAddr (MSW)
 		if isOdd {
@@ -331,10 +310,7 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		return byte(b.DmaSrcAddr >> 8)
 
 	case 0x00FF0028: // DMA.DstTask
-		if isOdd {
-			return byte(b.DmaDstTask)
-		}
-		return byte(b.DmaDstTask >> 8)
+		return byte(b.DmaDstTask)
 
 	case 0x00FF002A: // DMA.DstAddr (MSW)
 		if isOdd {
@@ -360,11 +336,8 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 
 	case 0x00FF0032: // DMA.CmdSt
 		st := b.DmaStatus
-		if isOdd {
-			b.DmaStatus = 0 // Reset on lower byte read
-			return byte(st)
-		}
-		return byte(st >> 8)
+		b.DmaStatus = 0
+		return byte(st)
 
 	default:
 		panic(fmt.Errorf("%w: read at unmapped port 0x%06X in Task 0", ErrKernelIOPanic, addr))
@@ -417,9 +390,7 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 		b.Exited = true
 
 	case 0x00FF0010: // Disk.Drive
-		if isOdd {
-			b.DiskDrive = uint16(val & 0x03)
-		}
+		b.DiskDrive = uint16(val & 0x03)
 
 	case 0x00FF0014: // Disk.Sector (MSW)
 		if isOdd {
@@ -435,9 +406,7 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 		}
 
 	case 0x00FF0018: // Disk.Task
-		if isOdd {
-			b.DiskTask = uint16(val)
-		}
+		b.DiskTask = uint16(val)
 
 	case 0x00FF001A: // Disk.Addr (MSW)
 		if isOdd {
@@ -453,19 +422,15 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 		}
 
 	case 0x00FF001E: // Disk.CmdSt
-		if isOdd && val != 0 {
+		if val != 0 {
 			b.executeDiskCommand(val)
 		}
 
 	case 0x00FF0020: // Task.Active
-		if isOdd {
-			b.TaskReg = val
-		}
+		b.TaskReg = val
 
 	case 0x00FF0022: // DMA.SrcTask
-		if isOdd {
-			b.DmaSrcTask = uint16(val)
-		}
+		b.DmaSrcTask = uint16(val)
 
 	case 0x00FF0024: // DMA.SrcAddr (MSW)
 		if isOdd {
@@ -481,9 +446,7 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 		}
 
 	case 0x00FF0028: // DMA.DstTask
-		if isOdd {
-			b.DmaDstTask = uint16(val)
-		}
+		b.DmaDstTask = uint16(val)
 
 	case 0x00FF002A: // DMA.DstAddr (MSW)
 		if isOdd {
@@ -512,7 +475,7 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 		}
 
 	case 0x00FF0032: // DMA.CmdSt
-		if isOdd && val != 0 {
+		if val != 0 {
 			b.executeDMACopy()
 		}
 
@@ -629,7 +592,7 @@ func (b *Bus) executeDiskCommand(cmd byte) {
 		return
 	}
 	disk := b.Disks[drv]
-	sectorSize := 512
+	sectorSize := 256
 	offset := int(b.DiskSector) * sectorSize
 	if offset+sectorSize > len(disk) {
 		b.DiskStatus = 3 // Sector out of range
