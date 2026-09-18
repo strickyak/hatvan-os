@@ -167,3 +167,45 @@ func LogWrite(task byte, srcAddr word, count word) word {
 	}
 	return count
 }
+
+// KLog prints a message from the kernel to the log port (stderr)
+// prefixed with "    --  ". If the message does not end in a newline, one is added.
+func KLog(msg *byte) {
+	prefix := (*byte)("    --  ")
+	pPre := word(prefix)
+	for {
+		c := peekb(pPre)
+		if c == 0 {
+			break
+		}
+		hal.LogChar(c)
+		pPre++
+	}
+	p := word(msg)
+	lastC := byte(0)
+	for {
+		c := peekb(p)
+		if c == 0 {
+			break
+		}
+		hal.LogChar(c)
+		lastC = c
+		if c == '\n' {
+			if peekb(p+1) != 0 {
+				pPre = word(prefix)
+				for {
+					cp := peekb(pPre)
+					if cp == 0 {
+						break
+					}
+					hal.LogChar(cp)
+					pPre++
+				}
+			}
+		}
+		p++
+	}
+	if lastC != '\n' {
+		hal.LogChar('\n')
+	}
+}

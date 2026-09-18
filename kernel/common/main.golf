@@ -12,16 +12,7 @@ import "sh"
 var bootSB rbf.RBFSuperblock
 
 func main() {
-	hal.PutChar('H')
-	hal.PutChar('a')
-	hal.PutChar('t')
-	hal.PutChar('v')
-	hal.PutChar('a')
-	hal.PutChar('n')
-	hal.PutChar(' ')
-	hal.PutChar('O')
-	hal.PutChar('S')
-	hal.PutChar('\n')
+	dev.KLog((*byte)("Hatvan OS"))
 
 	// Initialize path subsystem
 	path.PathInit()
@@ -31,23 +22,20 @@ func main() {
 	termPath := (*byte)("/term")
 	pTerm, err := path.SysOpen(0, termPath, path.MODE_WRITE, 0, 0, 0)
 	if err == 0 {
-		msg := (*byte)("PATH:TERM:OK")
-		path.SysWritLn(pTerm, 0, msg, 12, 0)
+		dev.KLog((*byte)("PATH:TERM:OK"))
 	}
 
 	// 2. Test opening and reading /d0/CMDS directory
 	cmdsPath := (*byte)("/d0/CMDS")
 	pDir, err := path.SysOpen(0, cmdsPath, path.MODE_READ | path.MODE_DIR, 0, 0, 0)
 	if err == 0 {
-		msg := (*byte)("PATH:CMDS:OK")
-		path.SysWritLn(pTerm, 0, msg, 12, 0)
+		dev.KLog((*byte)("PATH:CMDS:OK"))
 
 		// Read first 32-byte directory entry from CMDS
 		var dirEntry [32]byte
 		n, rerr := path.SysRead(pDir, 0, &dirEntry[0], 32)
 		if n == 32 && rerr == 0 {
-			msgEntry := (*byte)("DIR:ENTRY:OK")
-			path.SysWritLn(pTerm, 0, msgEntry, 12, 0)
+			dev.KLog((*byte)("DIR:ENTRY:OK"))
 		}
 
 		path.SysClose(pDir)
@@ -57,8 +45,7 @@ func main() {
 	logPath := (*byte)("/log")
 	pLog, errLog := path.SysCreate(0, logPath, path.MODE_WRITE, 0, 0, 0)
 	if errLog == 0 {
-		msgLog := (*byte)("PATH:LOG:OK")
-		path.SysWritLn(pLog, 0, msgLog, 11, 0)
+		dev.KLog((*byte)("PATH:LOG:OK"))
 		path.SysClose(pLog)
 	}
 
@@ -88,9 +75,7 @@ func main() {
 			if p2PID == 2 && p2 != (*proc.Process)(0) {
 				// Verify child inherited all 4 standard paths
 				if p2.Paths[0] == p1.Paths[0] && p2.Paths[1] == p1.Paths[1] && p2.Paths[2] == p1.Paths[2] && p2.Paths[3] == p1.Paths[3] {
-					msgInherit := (*byte)("PROC:INHERIT4:OK")
-					hal.DMACopy(0, word(msgInherit), 2, 0x1000, 16)
-					proc.ProcWritLn(2, 1, (*byte)(0x1000), 16)
+					dev.KLog((*byte)("PROC:INHERIT4:OK"))
 				}
 
 				// Free child process
@@ -106,9 +91,7 @@ func main() {
 				var checkMagic [2]byte
 				hal.DMACopy(c1PID, 0x0200, 0, word(&checkMagic[0]), 2)
 				if checkMagic[0] == 0x87 && checkMagic[1] == 0xCD {
-					msgOS9 := (*byte)("FORK:OS9:OK")
-					dev.TermWrite(0, word(msgOS9), 11)
-					hal.PutChar('\n')
+					dev.KLog((*byte)("FORK:OS9:OK"))
 				}
 			}
 
@@ -119,9 +102,7 @@ func main() {
 				var checkDECB [2]byte
 				hal.DMACopy(c2PID, 0x0500, 0, word(&checkDECB[0]), 2)
 				if checkDECB[0] == 0x86 && proc.ProcTable[c2PID].SavedPC == 0x0500 {
-					msgDECB := (*byte)("FORK:DECB:OK")
-					dev.TermWrite(0, word(msgDECB), 12)
-					hal.PutChar('\n')
+					dev.KLog((*byte)("FORK:DECB:OK"))
 				}
 			}
 
@@ -132,9 +113,7 @@ func main() {
 				relCmd := (*byte)("TESTCMD")
 				c3PID, c3Err := proc.SysFork(relCmd, (*byte)(0), 0)
 				if c3Err == 0 && c3PID > 0 {
-					msgCXD := (*byte)("FORK:CXD:OK")
-					dev.TermWrite(0, word(msgCXD), 11)
-					hal.PutChar('\n')
+					dev.KLog((*byte)("FORK:CXD:OK"))
 					proc.ProcFree(c3PID)
 				}
 			}
@@ -145,9 +124,7 @@ func main() {
 				proc.ProcTable[c1PID].State = proc.PROC_ZOMBIE
 				wpid, wst, werr := proc.SysWait()
 				if wpid == c1PID && wst == 42 && werr == 0 {
-					msgWait := (*byte)("WAIT:OK")
-					dev.TermWrite(0, word(msgWait), 7)
-					hal.PutChar('\n')
+					dev.KLog((*byte)("WAIT:OK"))
 				}
 			}
 
@@ -164,24 +141,20 @@ func main() {
 			paramEcho := (*byte)("hello world\r")
 			pEcho, pEchoErr := proc.SysFork(echoCmd, paramEcho, 12)
 			if pEchoErr == 0 && pEcho > 0 {
-				msgUserStart := (*byte)("USER:EXEC:START\n")
-				dev.TermWrite(0, word(msgUserStart), 16)
+				dev.KLog((*byte)("USER:EXEC:START"))
 
 				hal.LaunchProcess(pEcho, proc.ProcTable[pEcho].SavedSP, proc.ProcTable[pEcho].SavedPC)
 
 				// After child exits, SysWait reaps it
 				wpid, wst, werr := proc.SysWait()
 				if wpid == pEcho && wst == 0 && werr == 0 {
-					msgEchoOk := (*byte)("USER:ECHO:OK\n")
-					dev.TermWrite(0, word(msgEchoOk), 13)
+					dev.KLog((*byte)("USER:ECHO:OK"))
 				}
 			}
 
 			// Free parent process
 			proc.ProcFree(1)
-			msgProcOk := (*byte)("PROC:LIFECYCLE:OK")
-			dev.TermWrite(0, word(msgProcOk), 17)
-			hal.PutChar('\n')
+			dev.KLog((*byte)("PROC:LIFECYCLE:OK"))
 		}
 	}
 
@@ -201,8 +174,7 @@ func main() {
 		// Test builtin command execution
 		shSt := sh.RunCommand((*byte)("help"))
 		if shSt == 0 {
-			msgHelpOk := (*byte)("SHELL:HELP:OK\n")
-			dev.TermWrite(0, word(msgHelpOk), 14)
+			dev.KLog((*byte)("SHELL:HELP:OK"))
 		}
 
 		// Test external binary execution through shell
@@ -212,8 +184,7 @@ func main() {
 		}
 		shEchoSt := sh.RunCommand(shEcho)
 		if shEchoSt == 0 {
-			msgShOk := (*byte)("SHELL:EXEC:OK\n")
-			dev.TermWrite(0, word(msgShOk), 14)
+			dev.KLog((*byte)("SHELL:EXEC:OK"))
 		}
 
 		// If interactive console input is ready, enter resident shell loop
