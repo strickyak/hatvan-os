@@ -143,18 +143,23 @@ $(BUILD_DIR)/catk.decb: $(BUILD_DIR)/catk.srec $(SREC2DECB) | $(BUILD_DIR)
 # --- OS-9 Disk Images ---
 disk: $(DISK_IMAGE) $(TEST_DISK)
 
-$(DISK_IMAGE): $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb $(BUILD_DIR)/catk.decb | $(BUILD_DIR)
+$(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) | $(BUILD_DIR)
 	rm -f $@ $(TEST_DISK)
 	$(OS9) format -e -n'HATVAN' -l'40000' $@
-	$(OS9) makdir $@,CMDS
-	$(OS9) copy -r -l $(BUILD_DIR)/echo.mod $@,CMDS/ECHO
-	$(OS9) copy -r -l $(BUILD_DIR)/cat.mod $@,CMDS/CAT
-	$(OS9) copy -r -l $(BUILD_DIR)/echok.decb $@,CMDS/ECHOK
-	$(OS9) copy -r -l $(BUILD_DIR)/dirk.decb $@,CMDS/DIRK
-	$(OS9) copy -r -l $(BUILD_DIR)/dumpk.decb $@,CMDS/DUMPK
-	$(OS9) copy -r -l $(BUILD_DIR)/catk.decb $@,CMDS/CATK
-	$(OS9) copy -r -l $(BUILD_DIR)/testcmd.mod $@,CMDS/TESTCMD
-	$(OS9) copy -r -l $(BUILD_DIR)/testdecb.decb $@,CMDS/TESTDECB
+	$(OS9) makdir $@,Cmds9
+	$(OS9) copy -r -l $(BUILD_DIR)/echo.mod $@,Cmds9/ECHO
+	$(OS9) copy -r -l $(BUILD_DIR)/cat.mod $@,Cmds9/CAT
+	$(OS9) copy -r -l $(BUILD_DIR)/testcmd.mod $@,Cmds9/TESTCMD
+	$(OS9) copy -r -l $(BUILD_DIR)/testdecb.decb $@,Cmds9/TESTDECB
+	$(OS9) makdir $@,CmdsK
+	$(OS9) copy -r -l $(BUILD_DIR)/echok.decb $@,CmdsK/ECHOK
+	$(OS9) copy -r -l $(BUILD_DIR)/echok.decb $@,CmdsK/ECHO
+	$(OS9) copy -r -l $(BUILD_DIR)/dirk.decb $@,CmdsK/DIRK
+	$(OS9) copy -r -l $(BUILD_DIR)/dirk.decb $@,CmdsK/DIR
+	$(OS9) copy -r -l $(BUILD_DIR)/dumpk.decb $@,CmdsK/DUMPK
+	$(OS9) copy -r -l $(BUILD_DIR)/dumpk.decb $@,CmdsK/DUMP
+	$(OS9) copy -r -l $(BUILD_DIR)/catk.decb $@,CmdsK/CATK
+	$(OS9) copy -r -l $(BUILD_DIR)/catk.decb $@,CmdsK/CAT
 	cp -f $@ $(TEST_DISK)
 
 $(TEST_DISK): $(DISK_IMAGE)

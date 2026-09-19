@@ -25,8 +25,11 @@ func main() {
 		dev.KLog((*byte)("PATH:TERM:OK"))
 	}
 
-	// 2. Test opening and reading /d0/CMDS directory
-	cmdsPath := (*byte)("/d0/CMDS")
+	// 2. Test opening and reading /d0/Cmds9 (6809) or /d0/CmdsK (68k) directory
+	cmdsPath := (*byte)("/d0/Cmds9")
+	if hal.ARCH == 'k' {
+		cmdsPath = (*byte)("/d0/CmdsK")
+	}
 	pDir, err := path.SysOpen(0, cmdsPath, path.MODE_READ|path.MODE_DIR, 0, 0, 0)
 	if err == 0 {
 		dev.KLog((*byte)("PATH:CMDS:OK"))
@@ -83,9 +86,9 @@ func main() {
 				proc.ProcFree(2)
 			}
 
-			// 5. Test SysFork with OS-9 Module (/d0/CMDS/TESTCMD)
+			// 5. Test SysFork with OS-9 Module (/d0/Cmds9/TESTCMD)
 			proc.SetCurrentPID(1)
-			os9Cmd := (*byte)("/d0/CMDS/TESTCMD")
+			os9Cmd := (*byte)("/d0/Cmds9/TESTCMD")
 			paramStr := (*byte)("testarg")
 			c1PID, c1Err := proc.SysFork(os9Cmd, paramStr, 7)
 			if c1Err == 0 && c1PID > 0 {
@@ -96,8 +99,8 @@ func main() {
 				}
 			}
 
-			// 6. Test SysFork with DECB Binary (/d0/CMDS/TESTDECB)
-			decbCmd := (*byte)("/d0/CMDS/TESTDECB")
+			// 6. Test SysFork with DECB Binary (/d0/Cmds9/TESTDECB)
+			decbCmd := (*byte)("/d0/Cmds9/TESTDECB")
 			c2PID, c2Err := proc.SysFork(decbCmd, (*byte)(0), 0)
 			if c2Err == 0 && c2PID > 0 {
 				var checkDECB [2]byte
@@ -108,10 +111,14 @@ func main() {
 			}
 
 			// 7. Test SysChgDir & cxd relative binary execution
-			cxdPath := (*byte)("/d0/CMDS")
+			cxdPath := (*byte)("/d0/Cmds9")
+			relCmd := (*byte)("TESTCMD")
+			if hal.ARCH == 'k' {
+				cxdPath = (*byte)("/d0/CmdsK")
+				relCmd = (*byte)("ECHOK")
+			}
 			stCxd := proc.SysChgDir(cxdPath, path.MODE_EXEC)
 			if stCxd == 0 {
-				relCmd := (*byte)("TESTCMD")
 				c3PID, c3Err := proc.SysFork(relCmd, (*byte)(0), 0)
 				if c3Err == 0 && c3PID > 0 {
 					dev.KLog((*byte)("FORK:CXD:OK"))
@@ -169,9 +176,13 @@ func main() {
 		proc.ProcOpen(1, logPath, path.MODE_WRITE)
 		proc.SetCurrentPID(1)
 
-		// Initialize shell cwd to /d0 and cxd to /d0/CMDS
+		// Initialize shell cwd to /d0 and cxd to /d0/Cmds9 or /d0/CmdsK
 		proc.SysChgDir((*byte)("/d0"), 0)
-		proc.SysChgDir((*byte)("/d0/CMDS"), path.MODE_EXEC)
+		if hal.ARCH == 'k' {
+			proc.SysChgDir((*byte)("/d0/CmdsK"), path.MODE_EXEC)
+		} else {
+			proc.SysChgDir((*byte)("/d0/Cmds9"), path.MODE_EXEC)
+		}
 
 		// Test /proc/p file system (read and readln)
 		procPath := (*byte)("/proc/p")

@@ -478,7 +478,7 @@ In accordance with OS-9 architecture, each process maintains two distinct, indep
    - Any file system call with the `EXEC.` mode flag asserted (`mode & 0x04 != 0`) resolves relative paths starting from `cxd`.
 
 **Lifecycle & Inheritance**:
-- **Boot Defaults**: At machine startup, the root Task 1 process (interactive shell) initializes `cwd` to the root directory of the boot drive (`/d0`, obtained from LSN 0 Superblock `DD.DIR`) and `cxd` to the execution directory (`/d0/cmds`).
+- **Boot Defaults**: At machine startup, the root Task 1 process (interactive shell) initializes `cwd` to the root directory of the boot drive (`/d0`, obtained from LSN 0 Superblock `DD.DIR`) and `cxd` to the target architecture's execution directory (`/d0/Cmds9` on 6809, `/d0/CmdsK` on 68000).
 - **Process Forking**: When a child process is spawned via `F$Fork`, it automatically inherits both `cwd` (`CwdFDLSN`) and `cxd` (`CxdFDLSN`) from its parent process.
 - **Dynamic Updates**: A process may independently change either directory at runtime via the `I$ChgDir` system call.
 
