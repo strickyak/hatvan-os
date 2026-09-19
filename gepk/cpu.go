@@ -1,4 +1,4 @@
-package vmk
+package gepk
 
 import (
 	"fmt"

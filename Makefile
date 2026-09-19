@@ -53,10 +53,10 @@ $(ASM68K):
 # --- Emulators ---
 vms: $(VM_6809) $(VM_68K)
 
-$(VM_6809): $(shell find $(REPO_DIR)/cmd/gep9 $(REPO_DIR)/vm -type f -name '*.go') | $(BUILD_DIR)
+$(VM_6809): $(shell find $(REPO_DIR)/cmd/gep9 $(REPO_DIR)/gep9 -type f -name '*.go') | $(BUILD_DIR)
 	$(GO) build -o $@ ./cmd/gep9
 
-$(VM_68K): $(shell find $(REPO_DIR)/cmd/gepk $(REPO_DIR)/vmk -type f -name '*.go') | $(BUILD_DIR)
+$(VM_68K): $(shell find $(REPO_DIR)/cmd/gepk $(REPO_DIR)/gepk -type f -name '*.go') | $(BUILD_DIR)
 	$(GO) build -o $@ ./cmd/gepk
 
 # --- Kernels ---

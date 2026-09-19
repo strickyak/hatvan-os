@@ -1,4 +1,4 @@
-package vmk
+package gepk
 
 func maskForSize(size OpSize) uint32 {
 	switch size {

@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/strickyak/hatvan-os/vm"
+	"github.com/strickyak/hatvan-os/gep9"
 )
 
 var (
@@ -49,8 +49,8 @@ func main() {
 	}
 
 	// 1. Initialize Bus and CPU
-	bus := vm.NewBus()
-	cpu := vm.NewCPU(bus)
+	bus := gep9.NewBus()
+	cpu := gep9.NewCPU(bus)
 	cpu.EnableHypercalls = *hypercallsFlag
 
 	// Attach disk images if specified
@@ -66,7 +66,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	var decb *vm.DECB
+	var decb *gep9.DECB
 	isRaw := strings.HasSuffix(strings.ToLower(binPath), ".img") ||
 		strings.HasSuffix(strings.ToLower(binPath), ".rom") ||
 		len(fileData) == 65536
@@ -82,7 +82,7 @@ func main() {
 		}
 		cpu.Reset()
 	} else {
-		decb, err = vm.LoadDECBFile(binPath)
+		decb, err = gep9.LoadDECBFile(binPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading DECB file %q: %v\n", binPath, err)
 			os.Exit(1)
@@ -95,16 +95,16 @@ func main() {
 	}
 
 	// 3. Scan for OS-9 modules in memory
-	modules := vm.ScanOS9Modules(bus.Memory[0][:], 0x0000, 0xFF00)
-	modulesByName := make(map[string]*vm.OS9LoadedModule)
+	modules := gep9.ScanOS9Modules(bus.Memory[0][:], 0x0000, 0xFF00)
+	modulesByName := make(map[string]*gep9.OS9LoadedModule)
 	for _, m := range modules {
 		modulesByName[m.Name] = m
 	}
 
 	// 4. Load optional .list files and offset-adjust them if matching an OS-9 module
-	var listings []*vm.Listing
+	var listings []*gep9.Listing
 	for _, lp := range listPaths {
-		l, err := vm.LoadListingFile(lp)
+		l, err := gep9.LoadListingFile(lp)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to load listing %q: %v\n", lp, err)
 			continue
@@ -232,7 +232,7 @@ func unescapeString(s string) string {
 	return s
 }
 
-func attachDisk(b *vm.Bus, drive int, path string) {
+func attachDisk(b *gep9.Bus, drive int, path string) {
 	if path == "" {
 		return
 	}
@@ -244,7 +244,7 @@ func attachDisk(b *vm.Bus, drive int, path string) {
 	b.Disks[drive] = data
 }
 
-func lookupSource(pc uint16, decb *vm.DECB, listings []*vm.Listing) string {
+func lookupSource(pc uint16, decb *gep9.DECB, listings []*gep9.Listing) string {
 	// 1. Check DECB absolute source lines
 	if decb != nil {
 		if line, ok := decb.AbsLines[pc]; ok {
@@ -284,7 +284,7 @@ func formatCC(cc byte) string {
 	return sb.String()
 }
 
-func printRegisters(cpu *vm.CPU) {
+func printRegisters(cpu *gep9.CPU) {
 	fmt.Fprintf(os.Stderr, "CPU State: PC=%04X A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X DP=%02X CC=%02X %s MD=%02X\n",
 		cpu.PC, cpu.A, cpu.B, cpu.X, cpu.Y, cpu.U, cpu.S, cpu.DP, cpu.CC, formatCC(cpu.CC), cpu.MD)
 }

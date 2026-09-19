@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/strickyak/hatvan-os/vmk"
+	"github.com/strickyak/hatvan-os/gepk"
 )
 
 var (
@@ -45,8 +45,8 @@ func main() {
 	binPath := args[0]
 
 	// 1. Initialize Bus and CPU
-	bus := vmk.NewBus()
-	cpu := vmk.NewCPU(bus)
+	bus := gepk.NewBus()
+	cpu := gepk.NewCPU(bus)
 
 	attachDisk(bus, 0, *disk0Flag)
 	attachDisk(bus, 1, *disk1Flag)
@@ -150,12 +150,12 @@ func main() {
 			disasm, _ := cpu.Disassemble(cpu.PC)
 			fmt.Fprintf(os.Stderr, "PC=%06X SR=%04X [S=%d X=%d N=%d Z=%d V=%d C=%d] D0=%08X D1=%08X A0=%08X A7=%08X  %s\n",
 				cpu.PC, cpu.SR,
-				boolToInt((cpu.SR&vmk.FlagS) != 0),
-				boolToInt((cpu.SR&vmk.FlagX) != 0),
-				boolToInt((cpu.SR&vmk.FlagN) != 0),
-				boolToInt((cpu.SR&vmk.FlagZ) != 0),
-				boolToInt((cpu.SR&vmk.FlagV) != 0),
-				boolToInt((cpu.SR&vmk.FlagC) != 0),
+				boolToInt((cpu.SR&gepk.FlagS) != 0),
+				boolToInt((cpu.SR&gepk.FlagX) != 0),
+				boolToInt((cpu.SR&gepk.FlagN) != 0),
+				boolToInt((cpu.SR&gepk.FlagZ) != 0),
+				boolToInt((cpu.SR&gepk.FlagV) != 0),
+				boolToInt((cpu.SR&gepk.FlagC) != 0),
 				cpu.D[0], cpu.D[1], cpu.A[0], cpu.A[7],
 				disasm,
 			)
@@ -217,7 +217,7 @@ func unescapeString(s string) string {
 	return s
 }
 
-func attachDisk(b *vmk.Bus, drive int, path string) {
+func attachDisk(b *gepk.Bus, drive int, path string) {
 	if path == "" {
 		return
 	}

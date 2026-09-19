@@ -1,4 +1,4 @@
-package vmk
+package gepk
 
 func (c *CPU) dispatch(op uint16) {
 	group := (op >> 12) & 0x0F

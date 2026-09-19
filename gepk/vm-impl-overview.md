@@ -1,10 +1,10 @@
-# Hatvan VM/K: Implementation Overview
+# Hatvan gepk: Implementation Overview
 
-This document provides an overview of the clean-room Motorola 68000 CPU emulator and **Hatvan VM/K** (`hatvan-vmk`) virtual machine implemented in Go, complying with [`spec-hatvan-vmk.md`](../spec-hatvan-vmk.md).
+This document provides an overview of the clean-room Motorola 68000 CPU emulator and **Hatvan gepk** (`gepk`) virtual machine implemented in Go, complying with [`spec-hatvan-68000.md`](../spec-hatvan-68000.md).
 
 ---
 
-## 1. Memory & Bus Subsystem (`vmk/bus.go`)
+## 1. Memory & Bus Subsystem (`gepk/bus.go`)
 
 - **24-bit physical address space** with 256 isolated task spaces (`[256]*TaskMemory`), dynamically allocated via sparse 64 KB pages.
 - **Privilege-based memory routing**:
@@ -24,7 +24,7 @@ This document provides an overview of the clean-room Motorola 68000 CPU emulator
 
 ---
 
-## 2. CPU Architecture & Dual Stacks (`vmk/cpu.go`)
+## 2. CPU Architecture & Dual Stacks (`gepk/cpu.go`)
 
 - **Registers**:
   - Eight 32-bit Data registers: `D0-D7`.
@@ -40,7 +40,7 @@ This document provides an overview of the clean-room Motorola 68000 CPU emulator
 
 ---
 
-## 3. Effective Addressing Engine (`vmk/addressing.go`)
+## 3. Effective Addressing Engine (`gepk/addressing.go`)
 
 - Implements all 12 Motorola 68000 Effective Addressing modes:
   1. Data Register Direct: `Dn` (mode 0)
@@ -60,7 +60,7 @@ This document provides an overview of the clean-room Motorola 68000 CPU emulator
 
 ---
 
-## 4. ALU, CCR Flags, & Arithmetic (`vmk/alu.go`)
+## 4. ALU, CCR Flags, & Arithmetic (`gepk/alu.go`)
 
 - **Bit-accurate flag calculations** for all condition codes (`X`, `N`, `Z`, `V`, `C`).
 - **Basic Arithmetic & Logic**: `ADD`, `SUB`, `CMP`, `NEG`, `NOT`, `AND`, `OR`, `EOR`, `TST`, `CLR`.
@@ -72,7 +72,7 @@ This document provides an overview of the clean-room Motorola 68000 CPU emulator
 
 ---
 
-## 5. Instruction Decoder & Dispatcher (`vmk/ops.go`, `vmk/dispatch.go`)
+## 5. Instruction Decoder & Dispatcher (`gepk/ops.go`, `gepk/dispatch.go`)
 
 Covers all 16 opcode groups (`0` through `F`):
 
@@ -97,14 +97,14 @@ Covers all 16 opcode groups (`0` through `F`):
 
 ---
 
-## 6. S-Records & Disassembly (`vmk/srec.go`, `vmk/disasm.go`)
+## 6. S-Records & Disassembly (`gepk/srec.go`, `gepk/disasm.go`)
 
 - **Motorola S-Record Loader**: Automatically parses `.s19`, `.s28`, `.s37`, and `.srec` files, verifying checksums and extracting entry point addresses from `S7`/`S8`/`S9` records.
 - **Instruction Disassembler**: Real-time disassembly engine formatting opcodes, effective addresses, and branch targets for `--trace` diagnostic logging.
 
 ---
 
-## 7. CLI Executable (`cmd/hatvan-vmk/main.go`)
+## 7. CLI Executable (`cmd/gepk/main.go`)
 
 - **Command Line Flags**:
   - `--trace`: output instruction execution trace to `stderr`.

@@ -1,4 +1,4 @@
-package vm
+package gep9
 
 // PushByte pushes a single byte onto the system stack S.
 func (c *CPU) PushByte(val byte) {

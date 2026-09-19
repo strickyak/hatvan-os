@@ -1,4 +1,4 @@
-package vmk
+package gepk
 
 func decodeMoveSize(ss uint16) (OpSize, bool) {
 	switch ss {

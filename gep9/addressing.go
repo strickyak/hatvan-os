@@ -1,4 +1,4 @@
-package vm
+package gep9
 
 // AddressingMode defines how the effective address or operand is resolved.
 type AddressingMode int

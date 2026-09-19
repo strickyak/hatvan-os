@@ -1,4 +1,4 @@
-package vmk
+package gepk
 
 // EAOperand holds resolved effective addressing information.
 type EAOperand struct {
