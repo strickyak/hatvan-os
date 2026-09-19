@@ -37,15 +37,16 @@ type Process struct {
 	Paths       [PROC_MAX_PATHS]byte
 	CwdDrive    byte
 	CwdFDLSN    word
-	CwdPath     [64]byte
+	CwdPath     [32]byte
 	CxdDrive    byte
 	CxdFDLSN    word
-	CxdPath     [64]byte
+	CxdPath     [32]byte
 	LineMode    byte // 0 = '\n' (Unix), 1 = '\r' (OS-9)
 	CodeStart   word
 	CodeSize    word
 	DataTop     word
 	StackBottom word
+	CmdName     [16]byte
 }
 
 var ProcTable [MAX_PROCS]Process
@@ -78,6 +79,7 @@ func ProcInit() {
 		p.CodeSize = 0
 		p.DataTop = 0
 		p.StackBottom = 0
+		p.CmdName[0] = 0
 		for k := word(0); k < PROC_MAX_PATHS; k++ {
 			p.Paths[k] = 0xFF
 		}
@@ -85,6 +87,10 @@ func ProcInit() {
 
 	// Process 0 is Task 0 (Kernel)
 	ProcTable[0].State = PROC_RUNNING
+	if hal.ARCH == '9' {
+		ProcTable[0].SavedSP = 0x3800
+	}
+	klib.strcpy(&ProcTable[0].CmdName[0], (*byte)("kernel"))
 	CurrentPID = 0
 }
 
@@ -112,6 +118,7 @@ func ProcAlloc(parentPID byte) (byte, *Process) {
 			p.CodeSize = 0
 			p.DataTop = 0
 			p.StackBottom = 0
+			p.CmdName[0] = 0
 
 			for k := word(0); k < PROC_MAX_PATHS; k++ {
 				p.Paths[k] = 0xFF
@@ -181,6 +188,14 @@ func ProcOpen(pid byte, pathStr *byte, mode byte) (byte, byte) {
 	pathId, err := path.SysOpen(pid, pathStr, mode, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN)
 	if err != 0 {
 		return 0xFF, err
+	}
+
+	if path.PathTable[pathId].DevType == dev.DEV_PROC {
+		perr := ProcfsOpen(pathId, pathStr)
+		if perr != 0 {
+			path.SysClose(pathId)
+			return 0xFF, perr
+		}
 	}
 
 	p.Paths[slot] = pathId
@@ -295,6 +310,39 @@ func ProcWritLn(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
 	return path.SysWritLn(pathId, pid, ubuf, count, p.LineMode)
 }
 
+// extractCmdName copies the basename of cmdPath (without directory prefix) into dst (up to 15 chars)
+func extractCmdName(src *byte, dst *byte) {
+	p := word(src)
+	lastSlash := p
+	hasSlash := false
+	for {
+		c := peekb(p)
+		if c == 0 || c == ' ' || c == '\r' || c == '\n' {
+			break
+		}
+		if c == '/' {
+			hasSlash = true
+			lastSlash = p + 1
+		}
+		p++
+	}
+	start := word(src)
+	if hasSlash {
+		start = lastSlash
+	}
+	d := word(dst)
+	idx := word(0)
+	for idx < 15 {
+		c := peekb(start + idx)
+		if c == 0 || c == ' ' || c == '\r' || c == '\n' || c == '/' {
+			break
+		}
+		pokeb(d+idx, c)
+		idx++
+	}
+	pokeb(d+idx, 0)
+}
+
 // SysFork spawns a child process, loads the binary executable from cmdPath,
 // marshalls command parameters onto the child stack, and prepares it for execution.
 func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
@@ -302,6 +350,7 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
 	if childPID == 0xFF {
 		return 0xFF, E_PROCFUL
 	}
+	extractCmdName(cmdPath, &childProc.CmdName[0])
 
 	// Open binary from cxd (execution directory) or absolute path
 	binPathId, err := path.SysOpen(CurrentPID, cmdPath, path.MODE_READ|path.MODE_EXEC, childProc.CxdDrive, childProc.CwdFDLSN, childProc.CxdFDLSN)
@@ -541,3 +590,158 @@ func SysChgDir(pathStr *byte, mode byte) byte {
 
 	return 0
 }
+
+// ==================== /proc Filesystem ====================
+
+func bufAppendByte(buf *byte, pos *word, b byte) {
+	p := *pos
+	if p < 254 {
+		pokeb(word(buf)+p, b)
+		*pos = p + 1
+	}
+}
+
+func bufAppendStr(buf *byte, pos *word, s *byte) {
+	p := word(s)
+	for {
+		c := peekb(p)
+		if c == 0 {
+			break
+		}
+		bufAppendByte(buf, pos, c)
+		p++
+	}
+}
+
+func bufAppendDec(buf *byte, pos *word, val byte, width byte) {
+	var tmp [4]byte
+	n := word(0)
+	v := val
+	if v == 0 {
+		tmp[0] = '0'
+		n = 1
+	} else {
+		for v > 0 {
+			rem := v % 10
+			tmp[n] = '0' + rem
+			n++
+			v = v / 10
+		}
+	}
+	for n < word(width) {
+		bufAppendByte(buf, pos, ' ')
+		width--
+	}
+	for n > 0 {
+		n--
+		bufAppendByte(buf, pos, tmp[n])
+	}
+}
+
+func bufAppendHexWord(buf *byte, pos *word, val word) {
+	for i := word(0); i < 4; i++ {
+		shift := (3 - i) * 4
+		nib := byte((val >> shift) & 0xF)
+		if nib < 10 {
+			bufAppendByte(buf, pos, '0'+nib)
+		} else {
+			bufAppendByte(buf, pos, 'A'+nib-10)
+		}
+	}
+}
+
+// ProcfsFormatProcesses generates a table of active processes into pd.SectorBuf
+func ProcfsFormatProcesses(pathId byte) byte {
+	pd := &path.PathTable[pathId]
+	buf := &pd.SectorBuf[0]
+	pos := word(0)
+
+	// Column headers: PID, PPID, STATE, SP, CMD
+	bufAppendStr(buf, &pos, (*byte)("  PID  PPID STATE      SP  CMD\n"))
+
+	for i := word(0); i < MAX_PROCS; i++ {
+		p := &ProcTable[i]
+		if p.State == PROC_FREE {
+			continue
+		}
+		if pos+45 >= 254 {
+			break
+		}
+
+		// PID (column width 5)
+		bufAppendDec(buf, &pos, p.PID, 5)
+		bufAppendStr(buf, &pos, (*byte)("  "))
+
+		// PPID (column width 4)
+		bufAppendDec(buf, &pos, p.ParentPID, 4)
+		bufAppendByte(buf, &pos, ' ')
+
+		// STATE (column width 5 + space)
+		if p.PID == CurrentPID {
+			bufAppendStr(buf, &pos, (*byte)("RUN   "))
+		} else if p.State == PROC_READY {
+			bufAppendStr(buf, &pos, (*byte)("READY "))
+		} else if p.State == PROC_WAITING {
+			bufAppendStr(buf, &pos, (*byte)("WAIT  "))
+		} else if p.State == PROC_ZOMBIE {
+			bufAppendStr(buf, &pos, (*byte)("ZOMB  "))
+		} else if p.State == PROC_RUNNING {
+			bufAppendStr(buf, &pos, (*byte)("RUN   "))
+		} else {
+			bufAppendStr(buf, &pos, (*byte)("???   "))
+		}
+
+		// SP ($XXXX)
+		bufAppendByte(buf, &pos, '$')
+		bufAppendHexWord(buf, &pos, p.SavedSP)
+		bufAppendStr(buf, &pos, (*byte)("  "))
+
+		// CMD
+		if p.CmdName[0] != 0 {
+			bufAppendStr(buf, &pos, &p.CmdName[0])
+		} else {
+			bufAppendStr(buf, &pos, (*byte)("-"))
+		}
+		bufAppendByte(buf, &pos, '\n')
+	}
+
+	pokeb(word(buf)+pos, 0)
+	pd.FileSize = pos
+	pd.FilePos = 0
+	return 0
+}
+
+// ProcfsOpen dispatches /proc subpaths
+func ProcfsOpen(pathId byte, pathStr *byte) byte {
+	devType, _, remPath := dev.ParsePathDevice(pathStr, 0)
+	if devType != dev.DEV_PROC {
+		return path.E_PNNF
+	}
+
+	p := word(remPath)
+	for peekb(p) == '/' {
+		p++
+	}
+
+	var comp [16]byte
+	idx := word(0)
+	for idx < 15 {
+		c := peekb(p + idx)
+		if c == 0 || c == ' ' || c == '\r' || c == '\n' || c == '/' {
+			break
+		}
+		comp[idx] = c
+		idx++
+	}
+	comp[idx] = 0
+
+	// Dispatch valid /proc paths
+	if klib.streq(&comp[0], (*byte)("p")) {
+		return ProcfsFormatProcesses(pathId)
+	}
+
+	// Additional valid paths to /proc can easily be added here later.
+
+	return path.E_PNNF
+}
+

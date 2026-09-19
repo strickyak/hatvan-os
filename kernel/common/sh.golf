@@ -156,8 +156,10 @@ func RunCommand(line *byte) byte {
 	}
 
 	if cpid > 0 {
+		proc.ProcTable[proc.CurrentPID].State = proc.PROC_WAITING
 		hal.LaunchProcess(cpid, proc.ProcTable[cpid].SavedSP, proc.ProcTable[cpid].SavedPC)
 		wpid, wst, werr := proc.SysWait()
+		proc.ProcTable[proc.CurrentPID].State = proc.PROC_RUNNING
 		if werr == 0 && wpid == cpid {
 			return wst
 		}

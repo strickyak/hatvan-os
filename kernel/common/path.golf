@@ -98,6 +98,13 @@ func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word
 	if devType == dev.DEV_TERM || devType == dev.DEV_LOG || devType == dev.DEV_NULL {
 		return pathId, 0
 	}
+	if devType == dev.DEV_PROC {
+		if (mode & MODE_WRITE) != 0 {
+			PathFree(pathId)
+			return 0xFF, E_BMODE
+		}
+		return pathId, 0
+	}
 
 	// DEV_DISK: resolve path to File Descriptor LSN
 	isExec := byte(0)
@@ -138,6 +145,9 @@ func SysCreate(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN wo
 	if devType == dev.DEV_TERM || devType == dev.DEV_LOG || devType == dev.DEV_NULL {
 		return SysOpen(task, pathStr, mode|MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
 	}
+	if devType == dev.DEV_PROC {
+		return 0xFF, E_BMODE
+	}
 	// For disk files, attempt open; if not found, creating new RBF file requires allocation
 	pId, err := SysOpen(task, pathStr, mode|MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
 	return pId, err
@@ -168,6 +178,24 @@ func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 	}
 	if pd.DevType == dev.DEV_LOG || pd.DevType == dev.DEV_NULL {
 		return 0, 0 // EOF
+	}
+
+	if pd.DevType == dev.DEV_PROC {
+		if pd.FilePos >= pd.FileSize {
+			return 0, E_EOF
+		}
+		toRead := count
+		if pd.FilePos+toRead > pd.FileSize {
+			toRead = pd.FileSize - pd.FilePos
+		}
+		srcAddr := word(&pd.SectorBuf[0]) + pd.FilePos
+		if task == 0 {
+			klib.memcpy(ubuf, (*byte)(srcAddr), toRead)
+		} else {
+			hal.DMACopy(0, srcAddr, task, word(ubuf), toRead)
+		}
+		pd.FilePos += toRead
+		return toRead, 0
 	}
 
 	// DEV_DISK file read
@@ -259,8 +287,13 @@ func SysSeek(pathId byte, offset word) byte {
 		return E_BPNUM
 	}
 	pd := &PathTable[pathId]
-	if pd.DevType != dev.DEV_DISK {
+	if pd.DevType != dev.DEV_DISK && pd.DevType != dev.DEV_PROC {
 		return E_BMODE
+	}
+	if pd.DevType == dev.DEV_PROC {
+		if offset > pd.FileSize {
+			offset = pd.FileSize
+		}
 	}
 	pd.FilePos = offset
 	return 0
@@ -281,12 +314,21 @@ func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (
 		return n, 0
 	}
 
-	// DEV_DISK file line read
+	// DEV_DISK or DEV_PROC file line read
+	if maxLen <= 1 {
+		return 0, 0
+	}
+
+	var lineBuf [256]byte
+	limit := maxLen
+	if limit > 256 {
+		limit = 256
+	}
+
 	count := word(0)
-	dstAddr := word(ubuf)
 	var single byte
 
-	for count < maxLen-1 {
+	for count < limit-1 {
 		n, err := SysRead(pathId, 0, &single, 1)
 		if n == 0 || err != 0 {
 			if count > 0 {
@@ -301,21 +343,22 @@ func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (
 			if lineMode == 1 {
 				endChar = '\r'
 			}
-			if task == 0 {
-				pokeb(dstAddr+count, endChar)
-			} else {
-				hal.DMACopy(0, word(&endChar), task, dstAddr+count, 1)
-			}
+			lineBuf[count] = endChar
 			count++
 			break
 		}
 
-		if task == 0 {
-			pokeb(dstAddr+count, single)
-		} else {
-			hal.DMACopy(0, word(&single), task, dstAddr+count, 1)
-		}
+		lineBuf[count] = single
 		count++
+	}
+
+	if count > 0 {
+		dstAddr := word(ubuf)
+		if task == 0 {
+			klib.memcpy((*byte)(dstAddr), &lineBuf[0], count)
+		} else {
+			hal.DMACopy(0, word(&lineBuf[0]), task, dstAddr, count)
+		}
 	}
 
 	return count, 0

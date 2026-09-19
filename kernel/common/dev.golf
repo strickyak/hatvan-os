@@ -8,9 +8,10 @@ const DEV_TERM = 1
 const DEV_LOG = 2
 const DEV_NULL = 3
 const DEV_DISK = 4
+const DEV_PROC = 5
 
 // ParsePathDevice examines path for device prefixes:
-// "/term", "/log", "/null", "/d0".."/d3".
+// "/term", "/log", "/null", "/proc", "/d0".."/d3".
 // Returns (devType, driveNum, remainingPathPtr).
 func ParsePathDevice(path *byte, defaultDrive byte) (byte, byte, *byte) {
 	p := word(path)
@@ -36,6 +37,13 @@ func ParsePathDevice(path *byte, defaultDrive byte) (byte, byte, *byte) {
 			c := peekb(p + 5)
 			if c == 0 || c == '/' || c == ' ' || c == '\r' || c == '\n' {
 				return DEV_NULL, 0, (*byte)(p + 5)
+			}
+		}
+		// Check /proc
+		if peekb(p+1) == 'p' && peekb(p+2) == 'r' && peekb(p+3) == 'o' && peekb(p+4) == 'c' {
+			c := peekb(p + 5)
+			if c == 0 || c == '/' || c == ' ' || c == '\r' || c == '\n' {
+				return DEV_PROC, 0, (*byte)(p + 5)
 			}
 		}
 		// Check /d0 .. /d3

@@ -59,6 +59,7 @@ func main() {
 	// Allocate root Process 1 (e.g. Shell)
 	p1PID, p1 := proc.ProcAlloc(0)
 	if p1PID == 1 && p1 != (*proc.Process)(0) {
+		klib.strcpy(&p1.CmdName[0], (*byte)("sh"))
 		// Open 4 standard paths for Process 1:
 		// 0: stdin (/term)
 		// 1: stdout (/term)
@@ -161,6 +162,7 @@ func main() {
 	// 10. Resident Mini-Shell (Phase 5)
 	pShellPID, pShell := proc.ProcAlloc(0)
 	if pShellPID == 1 && pShell != (*proc.Process)(0) {
+		klib.strcpy(&pShell.CmdName[0], (*byte)("sh"))
 		proc.ProcOpen(1, termPath, path.MODE_READ)
 		proc.ProcOpen(1, termPath, path.MODE_WRITE)
 		proc.ProcOpen(1, termPath, path.MODE_WRITE)
@@ -170,6 +172,34 @@ func main() {
 		// Initialize shell cwd to /d0 and cxd to /d0/CMDS
 		proc.SysChgDir((*byte)("/d0"), 0)
 		proc.SysChgDir((*byte)("/d0/CMDS"), path.MODE_EXEC)
+
+		// Test /proc/p file system (read and readln)
+		procPath := (*byte)("/proc/p")
+		pProc, pProcErr := proc.ProcOpen(1, procPath, path.MODE_READ)
+		if pProcErr == 0 && pProc != 0xFF {
+			var pBuf [256]byte
+			rn, rerr := proc.ProcRead(1, pProc, &pBuf[0], 255)
+			if rerr == 0 && rn > 0 {
+				dev.KLog((*byte)("PROCFS:READ:OK"))
+			}
+			proc.ProcClose(1, pProc)
+		}
+
+		pProcLn, pProcLnErr := proc.ProcOpen(1, procPath, path.MODE_READ)
+		if pProcLnErr == 0 && pProcLn != 0xFF {
+			var lnBuf [64]byte
+			ln, lnErr := proc.ProcReadLn(1, pProcLn, &lnBuf[0], 64)
+			if lnErr == 0 && ln > 0 {
+				dev.KLog((*byte)("PROCFS:READLN:OK"))
+			}
+			proc.ProcClose(1, pProcLn)
+		}
+
+		// Test invalid /proc subpath returns E_PNNF
+		pBad, pBadErr := proc.ProcOpen(1, (*byte)("/proc/nonexistent"), path.MODE_READ)
+		if pBadErr == path.E_PNNF && pBad == 0xFF {
+			dev.KLog((*byte)("PROCFS:BADPATH:OK"))
+		}
 
 		// Test builtin command execution
 		shSt := sh.RunCommand((*byte)("help"))

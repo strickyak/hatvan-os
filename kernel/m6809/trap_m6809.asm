@@ -23,6 +23,10 @@ call_num:
 ; Hardware pushed (PC, U, Y, X, DP, B, A, CC) onto user task stack.
 ; CPU switched to Task 0 during vector fetch. Register S is user SP.
 trap_swi2:
+    ; 0. Reset Direct Page to page 0 for kernel execution
+    clra
+    tfr a,dp
+
     ; 1. Save user stack pointer in user_sp_table[CurrentPID]
     tfr s,x
     ldb v_proc.CurrentPID
@@ -56,7 +60,7 @@ trap_swi2:
     ; User PC is at UserFrame + 10 (big-endian word)
     ldb v_proc.CurrentPID
     stb $FF21
-    ldd v_syscall.UserFrame+10
+    ldd >v_syscall.UserFrame+10
     std $FF22
     clr $FF24
     ldd #call_num
@@ -68,9 +72,9 @@ trap_swi2:
     beq .wait_dma2
 
     ; Increment user PC past the inline call_num byte
-    ldd v_syscall.UserFrame+10
+    ldd >v_syscall.UserFrame+10
     addd #1
-    std v_syscall.UserFrame+10
+    std >v_syscall.UserFrame+10
 
     ; 5. Dispatch system call in MiniGolf
     ldb call_num

@@ -22,8 +22,8 @@ KERNEL_6809 := $(BUILD_DIR)/kernel_6809.decb
 KERNEL_68K  := $(BUILD_DIR)/kernel_68k.srec
 
 # Command Targets
-CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb
-CMDS_68K    := $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb
+CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod
+CMDS_68K    := $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb $(BUILD_DIR)/catk.decb
 
 # Disk Images
 DISK_IMAGE  := $(BUILD_DIR)/disk0.dsk
@@ -129,17 +129,30 @@ $(BUILD_DIR)/dumpk.srec: $(REPO_DIR)/cmds/dumpk.s $(ASM68K) | $(BUILD_DIR)
 $(BUILD_DIR)/dumpk.decb: $(BUILD_DIR)/dumpk.srec $(SREC2DECB) | $(BUILD_DIR)
 	$(PYTHON) $(SREC2DECB) $< $@
 
+$(BUILD_DIR)/cat.mod: $(REPO_DIR)/cmds/cat.asm | $(BUILD_DIR)
+	cd $(BUILD_DIR) && $(LWASM) --format=os9 --list=cat.list --map=cat.map -o cat.mod $<
+	cp -f $(BUILD_DIR)/cat.mod.list $(BUILD_DIR)/cat.list 2>/dev/null || true
+	cp -f $(BUILD_DIR)/cat.mod.map $(BUILD_DIR)/cat.map 2>/dev/null || true
+
+$(BUILD_DIR)/catk.srec: $(REPO_DIR)/cmds/catk.s $(ASM68K) | $(BUILD_DIR)
+	$(ASM68K) -l $@.list -o $@ $<
+
+$(BUILD_DIR)/catk.decb: $(BUILD_DIR)/catk.srec $(SREC2DECB) | $(BUILD_DIR)
+	$(PYTHON) $(SREC2DECB) $< $@
+
 # --- OS-9 Disk Images ---
 disk: $(DISK_IMAGE) $(TEST_DISK)
 
-$(DISK_IMAGE): $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb | $(BUILD_DIR)
+$(DISK_IMAGE): $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb $(BUILD_DIR)/catk.decb | $(BUILD_DIR)
 	rm -f $@ $(TEST_DISK)
 	$(OS9) format -e -n'HATVAN' -l'40000' $@
 	$(OS9) makdir $@,CMDS
 	$(OS9) copy -r -l $(BUILD_DIR)/echo.mod $@,CMDS/ECHO
+	$(OS9) copy -r -l $(BUILD_DIR)/cat.mod $@,CMDS/CAT
 	$(OS9) copy -r -l $(BUILD_DIR)/echok.decb $@,CMDS/ECHOK
 	$(OS9) copy -r -l $(BUILD_DIR)/dirk.decb $@,CMDS/DIRK
 	$(OS9) copy -r -l $(BUILD_DIR)/dumpk.decb $@,CMDS/DUMPK
+	$(OS9) copy -r -l $(BUILD_DIR)/catk.decb $@,CMDS/CATK
 	$(OS9) copy -r -l $(BUILD_DIR)/testcmd.mod $@,CMDS/TESTCMD
 	$(OS9) copy -r -l $(BUILD_DIR)/testdecb.decb $@,CMDS/TESTDECB
 	cp -f $@ $(TEST_DISK)
@@ -152,8 +165,8 @@ test: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_68K) -disk0=$(DISK_IMAGE) -input="exit\n" $(KERNEL_68K)
 
 test-interactive: $(BUILD_DIR) vms kernels cmds disk
-	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nexit\n" $(KERNEL_6809)
-	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHOK hello from 68k userspace\nexit\n" $(KERNEL_68K)
+	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nCAT /proc/p\nexit\n" $(KERNEL_6809)
+	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHOK hello from 68k userspace\nCATK /proc/p\nexit\n" $(KERNEL_68K)
 
 # --- Clean ---
 clean:
