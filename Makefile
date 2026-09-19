@@ -143,7 +143,7 @@ $(BUILD_DIR)/catk.decb: $(BUILD_DIR)/catk.srec $(SREC2DECB) | $(BUILD_DIR)
 # --- OS-9 Disk Images ---
 disk: $(DISK_IMAGE) $(TEST_DISK)
 
-$(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) | $(BUILD_DIR)
+$(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(REPO_DIR)/cmds/os9-6809-level1.zip | $(BUILD_DIR)
 	rm -f $@ $(TEST_DISK)
 	$(OS9) format -e -n'HATVAN' -l'40000' $@
 	$(OS9) makdir $@,Cmds9
@@ -151,6 +151,8 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) | $(BUILD_DIR)
 	$(OS9) copy -r -l $(BUILD_DIR)/cat.mod $@,Cmds9/CAT
 	$(OS9) copy -r -l $(BUILD_DIR)/testcmd.mod $@,Cmds9/TESTCMD
 	$(OS9) copy -r -l $(BUILD_DIR)/testdecb.decb $@,Cmds9/TESTDECB
+	unzip -q -o $(REPO_DIR)/cmds/os9-6809-level1.zip -d $(BUILD_DIR)
+	for f in $(BUILD_DIR)/os9-6809-level1/*; do $(OS9) copy -r "$$f" $@,Cmds9; done
 	$(OS9) makdir $@,CmdsK
 	$(OS9) copy -r -l $(BUILD_DIR)/echok.decb $@,CmdsK/ECHO
 	$(OS9) copy -r -l $(BUILD_DIR)/dirk.decb $@,CmdsK/DIR
