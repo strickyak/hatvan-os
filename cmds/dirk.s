@@ -71,7 +71,7 @@ read_done:
 
 open_err:
     lea     err_msg, a0
-    moveq   #17, d2
+    moveq   #16, d2
     moveq   #1, d1
     move.l  #$8C, d0
     dc.w    $4E40
@@ -84,7 +84,7 @@ path_dot:
     dc.b    ".", 0
 
 err_msg:
-    dc.b    "dirk: cannot open", 0
+    dc.b    "dir: cannot open", 0
 
     even
 dirent_buf:

@@ -80,12 +80,12 @@ read_done:
 
 usage_err:
     lea     msg_usage, a0
-    move.l  #18, d2
+    move.l  #17, d2
     bra     print_err_and_exit
 
 open_err:
     lea     msg_openerr, a0
-    move.l  #17, d2
+    move.l  #16, d2
     bra     print_err_and_exit
 
 print_err_and_exit:
@@ -98,9 +98,9 @@ print_err_and_exit:
     rts
 
 msg_usage:
-    dc.b    "Usage: CATK <file>", 10, 0
+    dc.b    "Usage: CAT <file>", 10, 0
 msg_openerr:
-    dc.b    "CATK: cannot open", 10, 0
+    dc.b    "CAT: cannot open", 10, 0
 
     even
 path_buf:

@@ -113,7 +113,7 @@ read_done:
 
 open_err:
     lea     msg_open_err, a0
-    moveq   #23, d2
+    moveq   #22, d2
     moveq   #1, d1
     move.l  #$8C, d0
     dc.w    $4E40
@@ -124,7 +124,7 @@ open_err:
 
 usage_err:
     lea     msg_usage, a0
-    moveq   #19, d2
+    moveq   #18, d2
     moveq   #1, d1
     move.l  #$8C, d0
     dc.w    $4E40
@@ -179,10 +179,10 @@ hex_byte:
     rts
 
 msg_open_err:
-    dc.b    "dumpk: cannot open file", 0
+    dc.b    "dump: cannot open file", 0
 
 msg_usage:
-    dc.b    "Usage: dumpk <file>", 0
+    dc.b    "Usage: dump <file>", 0
 
     even
 path_buf:

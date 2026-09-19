@@ -152,13 +152,9 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) | $(BUILD_DIR)
 	$(OS9) copy -r -l $(BUILD_DIR)/testcmd.mod $@,Cmds9/TESTCMD
 	$(OS9) copy -r -l $(BUILD_DIR)/testdecb.decb $@,Cmds9/TESTDECB
 	$(OS9) makdir $@,CmdsK
-	$(OS9) copy -r -l $(BUILD_DIR)/echok.decb $@,CmdsK/ECHOK
 	$(OS9) copy -r -l $(BUILD_DIR)/echok.decb $@,CmdsK/ECHO
-	$(OS9) copy -r -l $(BUILD_DIR)/dirk.decb $@,CmdsK/DIRK
 	$(OS9) copy -r -l $(BUILD_DIR)/dirk.decb $@,CmdsK/DIR
-	$(OS9) copy -r -l $(BUILD_DIR)/dumpk.decb $@,CmdsK/DUMPK
 	$(OS9) copy -r -l $(BUILD_DIR)/dumpk.decb $@,CmdsK/DUMP
-	$(OS9) copy -r -l $(BUILD_DIR)/catk.decb $@,CmdsK/CATK
 	$(OS9) copy -r -l $(BUILD_DIR)/catk.decb $@,CmdsK/CAT
 	cp -f $@ $(TEST_DISK)
 
@@ -171,7 +167,7 @@ test: $(BUILD_DIR) vms kernels cmds disk
 
 test-interactive: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nCAT /proc/p\nexit\n" $(KERNEL_6809)
-	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHOK hello from 68k userspace\nCATK /proc/p\nexit\n" $(KERNEL_68K)
+	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHO hello from 68k userspace\nCAT /proc/p\nexit\n" $(KERNEL_68K)
 
 # --- Clean ---
 clean:

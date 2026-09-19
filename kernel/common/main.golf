@@ -112,13 +112,12 @@ func main() {
 
 			// 7. Test SysChgDir & cxd relative binary execution
 			cxdPath := (*byte)("/d0/Cmds9")
-			relCmd := (*byte)("TESTCMD")
 			if hal.ARCH == 'k' {
 				cxdPath = (*byte)("/d0/CmdsK")
-				relCmd = (*byte)("ECHOK")
 			}
 			stCxd := proc.SysChgDir(cxdPath, path.MODE_EXEC)
 			if stCxd == 0 {
+				relCmd := (*byte)("ECHO")
 				c3PID, c3Err := proc.SysFork(relCmd, (*byte)(0), 0)
 				if c3Err == 0 && c3PID > 0 {
 					dev.KLog((*byte)("FORK:CXD:OK"))
@@ -143,9 +142,6 @@ func main() {
 			// 9. Test User Process Execution in User Space (Phase 5)
 			proc.SetCurrentPID(1)
 			echoCmd := (*byte)("ECHO")
-			if hal.ARCH == 'k' {
-				echoCmd = (*byte)("ECHOK")
-			}
 			paramEcho := (*byte)("hello world\r")
 			pEcho, pEchoErr := proc.SysFork(echoCmd, paramEcho, 12)
 			if pEchoErr == 0 && pEcho > 0 {
@@ -220,9 +216,6 @@ func main() {
 
 		// Test external binary execution through shell
 		shEcho := (*byte)("ECHO hello from shell")
-		if hal.ARCH == 'k' {
-			shEcho = (*byte)("ECHOK hello from shell")
-		}
 		shEchoSt := sh.RunCommand(shEcho)
 		if shEchoSt == 0 {
 			dev.KLog((*byte)("SHELL:EXEC:OK"))
