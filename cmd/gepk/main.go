@@ -214,6 +214,8 @@ func unescapeString(s string) string {
 	s = strings.ReplaceAll(s, `\n`, "\n")
 	s = strings.ReplaceAll(s, `\r`, "\r")
 	s = strings.ReplaceAll(s, `\t`, "\t")
+	s = strings.ReplaceAll(s, `\d`, "\x04")
+	s = strings.ReplaceAll(s, `\x04`, "\x04")
 	return s
 }
 

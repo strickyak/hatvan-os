@@ -17,7 +17,7 @@ name fcs /echo/
 start:
  ; Skip leading spaces in parameter string
 skip_sp:
- cmpy #0
+ cmpd #0
  beq do_nl
  lda ,x
  cmpa #13        ; CR?
@@ -25,7 +25,7 @@ skip_sp:
  cmpa #' '
  bne do_print
  leax 1,x
- leay -1,y
+ subd #1
  bra skip_sp
 
 do_nl:
@@ -37,6 +37,7 @@ do_nl:
  bra do_exit
 
 do_print:
+ ldy #80
  lda #1          ; Path 1: stdout
  swi2
  fcb $8C         ; I$WritLn

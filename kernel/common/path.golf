@@ -158,7 +158,7 @@ func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 		return 0, E_BPNUM
 	}
 	pd := &PathTable[pathId]
-	if (pd.Mode&MODE_READ) == 0 && pd.DevType != dev.DEV_TERM {
+	if (pd.Mode&(MODE_READ|MODE_EXEC)) == 0 && pd.DevType != dev.DEV_TERM {
 		return 0, E_BMODE
 	}
 
@@ -275,6 +275,9 @@ func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (
 
 	if pd.DevType == dev.DEV_TERM {
 		n := dev.TermReadLn(task, word(ubuf), maxLen, lineMode)
+		if n == 0 {
+			return 0, E_EOF
+		}
 		return n, 0
 	}
 

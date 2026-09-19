@@ -90,9 +90,16 @@ func TermWrite(task byte, srcAddr word, count word) word {
 	return count
 }
 
+
+
 // TermReadLn reads a cooked line of text from console into user buffer.
 // Returns number of bytes read including line terminator.
 func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
+	var lineBuf [256]byte
+	limit := maxLen - 1
+	if limit > 254 {
+		limit = 254
+	}
 	count := word(0)
 	for {
 		c := byte(0)
@@ -114,15 +121,16 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 			hal.PutChar('\r')
 			hal.PutChar('\n')
 
+			lineBuf[count] = endChar
+			count++
+			lineBuf[count] = 0
+
 			if task == 0 {
-				pokeb(dstAddr+count, endChar)
-				pokeb(dstAddr+count+1, 0)
+				klib.memcpy((*byte)(dstAddr), &lineBuf[0], count+1)
 			} else {
-				hal.DMACopy(0, word(&endChar), task, dstAddr+count, 1)
-				zero := byte(0)
-				hal.DMACopy(0, word(&zero), task, dstAddr+count+1, 1)
+				hal.DMACopy(0, word(&lineBuf[0]), task, dstAddr, count+1)
 			}
-			return count + 1
+			return count
 		}
 
 		// Handle Backspace / Delete
@@ -147,25 +155,22 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 				endChar = '\r'
 			}
 
+			lineBuf[count] = endChar
+			count++
+			lineBuf[count] = 0
+
 			if task == 0 {
-				pokeb(dstAddr+count, endChar)
-				pokeb(dstAddr+count+1, 0)
+				klib.memcpy((*byte)(dstAddr), &lineBuf[0], count+1)
 			} else {
-				hal.DMACopy(0, word(&endChar), task, dstAddr+count, 1)
-				zero := byte(0)
-				hal.DMACopy(0, word(&zero), task, dstAddr+count+1, 1)
+				hal.DMACopy(0, word(&lineBuf[0]), task, dstAddr, count+1)
 			}
-			return count + 1
+			return count
 		}
 
 		// Regular printable ASCII characters
 		if c >= 32 && c <= 126 {
-			if count < maxLen-1 {
-				if task == 0 {
-					pokeb(dstAddr+count, c)
-				} else {
-					hal.DMACopy(0, word(&c), task, dstAddr+count, 1)
-				}
+			if count < limit {
+				lineBuf[count] = c
 				hal.PutChar(c) // Echo character
 				count++
 			}

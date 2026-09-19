@@ -8,14 +8,19 @@ import "proc"
 import "rbf"
 
 // OS-9 System Call Numbers
-const F_FORK = 0x03  // F$Fork
-const F_WAIT = 0x04  // F$Wait
-const F_CHAIN = 0x05 // F$Chain
-const F_EXIT = 0x06  // F$Exit
-const F_MEM = 0x07   // F$Mem
-const F_SLEEP = 0x0A // F$Sleep
-const F_ID = 0x0C    // F$ID
-const F_TIME = 0x15  // F$Time
+const F_LINK = 0x00   // F$Link
+const F_LOAD = 0x01   // F$Load
+const F_UNLINK = 0x02 // F$UnLink
+const F_FORK = 0x03   // F$Fork
+const F_WAIT = 0x04   // F$Wait
+const F_CHAIN = 0x05  // F$Chain
+const F_EXIT = 0x06   // F$Exit
+const F_MEM = 0x07    // F$Mem
+const F_SLEEP = 0x0A  // F$Sleep
+const F_ID = 0x0C     // F$ID
+const F_PERR = 0x0F   // F$PErr
+const F_PRSNAM = 0x10 // F$PrsNam
+const F_TIME = 0x15   // F$Time
 
 const I_OPEN = 0x84   // I$Open
 const I_CREATE = 0x85 // I$Create
@@ -208,6 +213,92 @@ func Dispatch(callNum byte) {
 			UserFrame.B = err
 			UserFrame.CC |= 1
 		}
+		return
+	}
+
+	if callNum == F_LINK {
+		// Module linking: not currently in RAM, return E$MNF (218) to fallback to disk
+		UserFrame.B = 218
+		UserFrame.CC |= 1
+		return
+	}
+
+	if callNum == F_LOAD {
+		// F$Load: for shell fork preparation, point U to modbuf where header was read ($5E past U)
+		UserFrame.U += 0x5E
+		UserFrame.CC &^= 1
+		return
+	}
+
+	if callNum == F_UNLINK || callNum == F_PERR {
+		UserFrame.CC &^= 1
+		return
+	}
+
+	if callNum == F_PRSNAM {
+		uAddr := UserFrame.X
+		firstChar := byte(0)
+		hal.DMACopy(curPID, uAddr, 0, word(&firstChar), 1)
+		if firstChar == '/' {
+			uAddr++
+		}
+		startX := uAddr
+		yAddr := uAddr
+
+		c0 := byte(0)
+		hal.DMACopy(curPID, yAddr, 0, word(&c0), 1)
+		raw0 := c0
+		ascii0 := raw0 & 0x7F
+
+		isLegalFirst := false
+		if (ascii0 >= 'A' && ascii0 <= 'Z') || (ascii0 >= 'a' && ascii0 <= 'z') ||
+			(ascii0 >= '0' && ascii0 <= '9') || ascii0 == '_' {
+			isLegalFirst = true
+		}
+
+		if !isLegalFirst {
+			for raw0 == ' ' || raw0 == ',' {
+				yAddr++
+				hal.DMACopy(curPID, yAddr, 0, word(&raw0), 1)
+			}
+			UserFrame.Y = yAddr
+			UserFrame.B = 215 // E_BPNAM
+			UserFrame.CC |= 1
+			return
+		}
+
+		nameLen := byte(0)
+		delim := byte(0)
+		for {
+			nameLen++
+			yAddr++
+			if (raw0 & 0x80) != 0 {
+				delim = raw0
+				break
+			}
+
+			cNext := byte(0)
+			hal.DMACopy(curPID, yAddr, 0, word(&cNext), 1)
+			raw0 = cNext
+			asciiNext := raw0 & 0x7F
+
+			isLegalNext := false
+			if (asciiNext >= 'A' && asciiNext <= 'Z') || (asciiNext >= 'a' && asciiNext <= 'z') ||
+				(asciiNext >= '0' && asciiNext <= '9') || asciiNext == '_' || asciiNext == '.' {
+				isLegalNext = true
+			}
+
+			if !isLegalNext {
+				delim = raw0
+				break
+			}
+		}
+
+		UserFrame.X = startX
+		UserFrame.Y = yAddr
+		UserFrame.A = delim
+		UserFrame.B = nameLen
+		UserFrame.CC &^= 1
 		return
 	}
 
