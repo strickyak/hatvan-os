@@ -1,6 +1,6 @@
 # Hatvan OS Kernel Architecture & Implementation Plan in MiniGolf
 
-**Target Systems**: Motorola 6809 / Hitachi 6309 (**Hatvan VM**) & Motorola 68000 (**Hatvan VM/K**)  
+**Target Systems**: Motorola 6809 / Hitachi 6309 (**gep9**, formerly Hatvan VM) & Motorola 68000 (**gepk**, formerly Hatvan VM/K)  
 **Document**: `doc/hatvan-kernel-plan.md`  
 **Implementation Language**: **MiniGolf** (`github.com/strickyak/minigolf`)  
 **Status**: Approved Architecture & MiniGolf Implementation Specification
@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary & Design Vision
 
-**Hatvan OS** is a lean, robust, multi-tasking operating system designed to run across both 8-bit/16-bit systems (Motorola 6809 / Hitachi 6309 on `hatvan-vm`) and 16-bit/32-bit systems (Motorola 68000 on `hatvan-vmk`).
+**Hatvan OS** is a lean, robust, multi-tasking operating system designed to run across both 8-bit/16-bit systems (Motorola 6809 / Hitachi 6309 on `gep9`) and 16-bit/32-bit systems (Motorola 68000 on `gepk`). (*Hatvan is a city in Hungary; "gép" means "machine" in Hungarian, corresponding to kernel `ARCH` constants `'9'` and `'k'`.*)
 
 The kernel is authored in **MiniGolf**, a statically typed systems programming language with Go syntax and C99-style bare-metal semantics, developed specifically for memory-constrained and retro-computing architectures. Through MiniGolf's whole-program compilation and target-adaptive type system (`word` = 16-bit on 6809, 32-bit on 68000), a single machine-independent kernel codebase runs identically on both machines.
 
@@ -40,7 +40,7 @@ The kernel is authored in **MiniGolf**, a statically typed systems programming l
 |   memeq, strlen, streq, fmt        | - kernel/m68k/hal.golf  ($00FF0000)|
 +------------------------------------+------------------------------------+
 | Hardware / Virtual Machine Layer                                        |
-| - Hatvan VM   (6809 / 6309)        | - Hatvan VM/K (M68000)             |
+| - gep9        (6809 / 6309, '9')   | - gepk        (M68000, 'k')        |
 +------------------------------------+------------------------------------+
 ```
 
@@ -77,7 +77,7 @@ MiniGolf utilizes a **Whole-Program Compilation** model. Instead of compiling se
 
 The compiler resolves `import "hal"` by searching the directories specified by `-I` flags in left-to-right order:
 
-#### Target A: Motorola 6809 (`hatvan-vm`)
+#### Target A: Motorola 6809 (`gep9`)
 ```bash
 minigolf -m M6809 \
     -I kernel/m6809 \
@@ -86,11 +86,11 @@ minigolf -m M6809 \
     -o _tmp/kernel_6809.asm \
     kernel/common/main.golf
 ```
-- By placing `-I kernel/m6809` first, `import "hal"` automatically binds to `kernel/m6809/hal.golf`.
+- By placing `-I kernel/m6809` first, `import "hal"` automatically binds to `kernel/m6809/hal.golf` (`ARCH = '9'`).
 - `word` resolves to a 16-bit unsigned integer (`WordSize = 2`).
 - The backend outputs clean Motorola 6809 assembly code assembled with `lwasm`.
 
-#### Target B: Motorola 68000 (`hatvan-vmk`)
+#### Target B: Motorola 68000 (`gepk`)
 ```bash
 minigolf -m=k \
     -I kernel/m68k \
@@ -99,7 +99,7 @@ minigolf -m=k \
     -o _tmp/kernel_68k.s \
     kernel/common/main.golf
 ```
-- By placing `-I kernel/m68k` first, `import "hal"` automatically binds to `kernel/m68k/hal.golf`.
+- By placing `-I kernel/m68k` first, `import "hal"` automatically binds to `kernel/m68k/hal.golf` (`ARCH = 'k'`).
 - `word` resolves to a 32-bit unsigned integer (`WordSize = 4`).
 - The backend outputs Motorola 68000 assembly code assembled with `asm68k`.
 
@@ -267,6 +267,8 @@ All hardware communication is isolated behind the `hal` package, implemented spe
 ```go
 package hal
 
+const ARCH = '9'
+
 const PORT_TERMOUT   = 0xFF00
 const PORT_TERMIN    = 0xFF01
 const PORT_REGSTAT   = 0xFF02
@@ -355,6 +357,8 @@ func SwitchTask(task byte) {
 
 ```go
 package hal
+
+const ARCH = 'k'
 
 const PORT_TERMOUT   = 0x00FF0000
 const PORT_TERMIN    = 0x00FF0002
@@ -759,46 +763,34 @@ sequenceDiagram
 
 ## 10. Build, Toolchain & Verification Pipeline
 
-### 10.1 M6809 Build Pipeline (`hatvan-vm`)
+All products, intermediate files, listings, and disk images are built via the top-level `Makefile` into the `build/` directory.
+
+### 10.1 M6809 Build Pipeline (`gep9`)
 
 ```bash
-# 1. Compile MiniGolf source tree to 6809 assembly
-/home/strick/github.com/strickyak/minigolf/minigolf \
-    -m M6809 \
-    -I kernel/m6809 \
-    -I kernel/common \
-    -I kernel/klib \
-    -o _tmp/kernel_6809.asm \
-    kernel/common/main.golf
+# 1. Build kernel, commands, disk image, and emulator via Makefile
+make build/kernel_6809.decb build/gep9 build/disk0.dsk
 
-# 2. Assemble with lwasm into Task 0 DECB binary
-lwasm --decb --list=_tmp/kernel_6809.list \
-    -o _tmp/kernel_6809.decb \
-    kernel/m6809/trap_m6809.asm _tmp/kernel_6809.asm
-
-# 3. Execute on Hatvan VM (Task 0 mapped at boot)
-./hatvan-vm --d0=disk0.dsk _tmp/kernel_6809.decb
+# 2. Execute on gep9 (Motorola 6809 VM)
+./build/gep9 --disk0=build/disk0.dsk build/kernel_6809.decb
 ```
 
-### 10.2 M68000 Build Pipeline (`hatvan-vmk`)
+### 10.2 M68000 Build Pipeline (`gepk`)
 
 ```bash
-# 1. Compile MiniGolf source tree to 68000 assembly
-/home/strick/github.com/strickyak/minigolf/minigolf \
-    -m=k \
-    -I kernel/m68k \
-    -I kernel/common \
-    -I kernel/klib \
-    -o _tmp/kernel_68k.s \
-    kernel/common/main.golf
+# 1. Build kernel, commands, disk image, and emulator via Makefile
+make build/kernel_68k.srec build/gepk build/disk0.dsk
 
-# 2. Assemble with asm68k into Motorola S-Record binary
-/home/strick/github.com/strickyak/minigolf/asm68k \
-    -o _tmp/kernel_68k.srec \
-    kernel/m68k/trap_m68k.s _tmp/kernel_68k.s
+# 2. Execute on gepk (Motorola 68000 VM)
+./build/gepk -disk0=build/disk0.dsk build/kernel_68k.srec
+```
 
-# 3. Execute on Hatvan VM/K
-./hatvan-vmk --d0=disk0.dsk _tmp/kernel_68k.srec
+### 10.3 Automated Testing Targets
+
+```bash
+make test              # Runs automated non-interactive boot tests on both gep9 and gepk
+make test-interactive  # Runs automated interactive shell sessions on both gep9 and gepk
+make clean             # Deletes all products under build/, preserving the directory
 ```
 
 ---
@@ -809,8 +801,8 @@ lwasm --decb --list=_tmp/kernel_6809.list \
 - [x] Create directory structure: `kernel/common/`, `kernel/klib/`, `kernel/m6809/`, `kernel/m68k/`.
 - [x] Implement kernel prelude (`kernel/common/prelude.golf`) with volatile MMIO intrinsics.
 - [x] Implement general library (`kernel/klib/klib.golf`) with `memset`, `memcpy`, `memeq`, `strlen`, `streq`.
-- [x] Implement M6809 HAL (`kernel/m6809/hal.golf`) targeting `$FF00..$FF27`.
-- [x] Implement M68000 HAL (`kernel/m68k/hal.golf`) targeting `$00FF0000..$00FF0032`.
+- [x] Implement M6809 HAL (`kernel/m6809/hal.golf`) targeting `$FF00..$FF27` (`ARCH = '9'`).
+- [x] Implement M68000 HAL (`kernel/m68k/hal.golf`) targeting `$00FF0000..$00FF0032` (`ARCH = 'k'`).
 - [x] Verify dual-target compilation with `minigolf -m M6809` and `minigolf -m=k`.
 
 ### Phase 2: RBF Disk Driver & Superblock Parser (Complete)
@@ -818,7 +810,7 @@ lwasm --decb --list=_tmp/kernel_6809.list \
 - [x] Parse Identification Sector (LSN 0 Superblock) to extract total sectors, cluster size, and root directory FD.
 - [x] Parse File Descriptor sectors: decode attributes, file size, and segment lists.
 - [x] Directory lookup: resolve path strings (`/d0/cmds/shell`) by scanning 32-byte directory records.
-- [x] Verified end-to-end against real OS-9 disk image in `hatvan-vm`.
+- [x] Verified end-to-end against real OS-9 disk image in `gep9`.
 
 ### Phase 3: Device Driver Dispatch & Open Path Table (Complete)
 - [x] Implement `dev.golf`: static device table dispatching `/term`, `/d0..3`, `/log`, `/null`.
@@ -826,7 +818,7 @@ lwasm --decb --list=_tmp/kernel_6809.list \
 - [x] Implement `SysOpen`, `SysCreate`, `SysClose`.
 - [x] Implement `SysRead` and `SysWrite` with cross-task DMA data transfers.
 - [x] Implement `SysReadLn` and `SysWritLn` with line termination conversion (`\n` $\leftrightarrow$ `\r`).
-- [x] Verified end-to-end in `hatvan-vm` with `/term`, `/log`, and `/d0/CMDS` directory traversal.
+- [x] Verified end-to-end in `gep9` with `/term`, `/log`, and `/d0/CMDS` directory traversal.
 
 ### Phase 4: Process Management & Lifecycle (Complete)
 - [x] Implement `proc.golf`: `ProcTable` management (PIDs 1..15), process states, and per-process path dispatching.
@@ -835,11 +827,11 @@ lwasm --decb --list=_tmp/kernel_6809.list \
 - [x] Implement `SysFork`: allocate child task, load binary via cross-task DMA, marshall parameters to child stack (`$FE00`), and prepare child for execution.
 - [x] Implement `SysChgDir`: dynamic switching of data directory (`cwd`) and command execution directory (`cxd`), with relative command invocation from `cxd`.
 - [x] Implement `SysExit` and `SysWait`: path resource reclamation, exit status propagation, parent wakeup, and zombie reaping.
-- [x] Verified end-to-end in `hatvan-vm` with real OS-9 module (`TESTCMD`) and DECB binary (`TESTDECB`) on `test.dsk`.
+- [x] Verified end-to-end in `gep9` with real OS-9 module (`TESTCMD`) and DECB binary (`TESTDECB`) on `test.dsk`.
 
 ### Phase 5: Assembly Trap Stubs & Integration (Complete)
 - [x] Author `kernel/m6809/trap_m6809.asm` (`SWI2` entry, register save/restore, `TaskFuse`).
 - [x] Author `kernel/m68k/trap_m68k.s` (`TRAP #0` entry, register save/restore, `TaskReg`).
 - [x] Implement resident mini-shell in `kernel/common/sh.golf`.
 - [x] Author userland test commands (`cmds/echo.asm` for M6809 OS-9 module, `cmds/echok.s` for M68K DECB32 binary).
-- [x] End-to-end boot tests and interactive shell sessions verified on both `hatvan-vm` and `hatvan-vmk`.
+- [x] End-to-end boot tests and interactive shell sessions verified on both `gep9` and `gepk`.

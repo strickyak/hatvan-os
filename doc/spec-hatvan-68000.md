@@ -1,15 +1,15 @@
 # Hatvan OS/K & Hatvan VM/K Specification
 
-**Architecture Specification for Hatvan 68000 Virtual Machine (`hatvan-vmk`) and Physical Hardware Target**
+**Architecture Specification for Hatvan 68000 Virtual Machine (`gepk`) and Physical Hardware Target**
 
 ---
 
 ## 1. Overview & Vision
 
-**Hatvan OS/K** (`hatvan-osk`) is a multi-tasking, modular operating system designed for the **Motorola 68000** 16/32-bit microprocessor. It scales the architecture of 8-bit Hatvan OS (Hitachi 6309 / 6809) into the 32-bit era, combining the modularity of OS-9/68000 and NitrOS-9 with clean Unix-like process isolation.
+**Hatvan OS/K** (`hatvan-osk`) is a multi-tasking, modular operating system designed for the **Motorola 68000** 16/32-bit microprocessor. It scales the architecture of 8-bit Hatvan OS (Hitachi 6309 / 6809 on `gep9`) into the 32-bit era, combining the modularity of OS-9/68000 and NitrOS-9 with clean Unix-like process isolation. (*"gép" is "machine" in Hungarian, corresponding to kernel `ARCH` constants `'9'` and `'k'`.*)
 
-This specification describes the **Hatvan VM/K** (`hatvan-vmk`) machine from two complementary perspectives:
-1. **The Software Emulator (`hatvan-vmk`)**: A clean-room, dependency-free virtual machine implemented in the Go programming language, supporting rapid debugging, execution tracing, symbolic listing alignment, and scripted testing.
+This specification describes the **Hatvan 68000 Machine** (`gepk`) from two complementary perspectives:
+1. **The Software Emulator (`gepk`, formerly `hatvan-vmk`)**: A clean-room, dependency-free virtual machine implemented in the Go programming language, supporting rapid debugging, execution tracing, symbolic listing alignment, and scripted testing.
 2. **The Physical Hardware Implementation**: A discrete hardware design based on a physical Motorola 68000 (or 68010) CPU, supported by a CPLD/FPGA memory controller, static RAM, dual-port or DMA bus mastering, and hardware UART/timer peripherals.
 
 ---
@@ -251,9 +251,9 @@ A single low-cost CPLD (such as an Altera/Intel MAX II, Xilinx XC95144XL, or Lat
 
 ---
 
-## 7. Software Emulator (`hatvan-vmk`) in Go
+## 7. Software Emulator (`gepk`) in Go
 
-The software emulator `hatvan-vmk` follows the design principles established in `hatvan-vm`:
+The software emulator `gepk` (formerly `hatvan-vmk`) follows the design principles established in `gep9`:
 
 ### Clean-Room Go Implementation
 * Entirely written from scratch in standard Go without third-party or GPL-tainted dependencies.
@@ -281,7 +281,7 @@ The software emulator `hatvan-vmk` follows the design principles established in 
 
 ### Command-Line Interface
 ```bash
-hatvan-vmk [options] <kernel.img|program.s37> [listing.list ...]
+gepk [options] <kernel.img|program.s37> [listing.list ...]
 ```
 * `--trace`: Prints 68000 instruction execution traces (PC, D0-D7, A0-A7, SR) to `stderr`.
 * `--max-cycles <N>`: Halts simulation after $N$ clock cycles.
@@ -293,7 +293,7 @@ hatvan-vmk [options] <kernel.img|program.s37> [listing.list ...]
 
 ## 8. Binary and Executable Formats
 
-`hatvan-vmk` supports three binary distribution formats:
+`gepk` supports three binary distribution formats:
 
 ### 1. Direct System Image (`.img`)
 * Raw 24-bit binary memory image overlaying Task 0.

@@ -3,9 +3,9 @@
 Hatvan is an operating system for a Virtual Machine based on the Hitachi
 6309 8-bit/16-bit CPU with specialized I/O devices in the $FF00 page.
 
-## Hatvan VM
+## Hatvan 6809 Virtual Machine (`gep9`)
 
-The Hatvan VM is a CPU with the Hitachi 6309 instruction set
+The `gep9` emulator (formerly Hatvan VM; "gép" means machine in Hungarian, architecture `'9'`) is a CPU with the Hitachi 6309 instruction set
 and specialized devices in the $FF00 I/O page when in Task 0.
 
 ### Tasks and Memory Protection
@@ -126,7 +126,7 @@ Hatvan OS does not use in-kernel traps, like OS-9 does. Because there are no mod
 
 ## Extended DECB Binary Format (`.decb`)
 
-`hatvan-vm` and associated tools use an extended version of Radio Shack's Color Computer DECB binary format. All chunks strictly follow the uniform 5-byte header convention:
+`gep9` and associated tools use an extended version of Radio Shack's Color Computer DECB binary format. All chunks strictly follow the uniform 5-byte header convention:
 
 ```
 [Type: uint8] [Length: uint16 big-endian] [Address/Arg: uint16 big-endian] [Payload: Length bytes]
