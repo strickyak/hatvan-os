@@ -229,16 +229,17 @@ To prevent corruption of user register frames:
 - [x] Unit test suite in `gep9/cpu_test.go` and `gepk/bus_test.go`.
 - [x] Document registers in `doc/spec-hatvan-6309.md` and `doc/spec-hatvan-68000.md`.
 
-### Phase 2: Kernel Trap & IPC Bridge
-- [ ] Implement `RBF_Call` assembly stub in `kernel/m6809/trap_m6809.asm`.
-- [ ] Add re-entrant return dispatching in `trap_swi2` for `CurrentPID == 1 && call_num == $0A`.
-- [ ] Define Page 0 Mailbox structure in `kernel/common/rbf_ipc.golf`.
+### Phase 2: Kernel Trap & IPC Bridge [COMPLETED]
+- [x] Implement `f_hal__RBFCall` assembly stub in `kernel/m6809/trap_m6809.asm` and `kernel/m68k/trap_m68k.s`.
+- [x] Add re-entrant return dispatching in `trap_swi2` (`SWI2; fcb $0A`) and `trap_0` (`TRAP #0`, D0=10) for `CurrentPID == 1`.
+- [x] Define 64-byte Page 0 Mailbox structure in `kernel/common/rbf_ipc.golf` with 32-bit address and LSN support.
 
-### Phase 3: RBF Driver Extraction & Service Task
-- [ ] Author standalone Task 1 service loop (`rbf_server.asm` or `rbf_task.golf`).
-- [ ] Move `rbf.golf` path resolution and directory traversal routines into Task 1.
-- [ ] Update `proc.ProcInit` to allocate PID 1 as `[RBF]`, bless Task 1 via `hal.SetTaskFlags(0x01)`, and load the driver image.
+### Phase 3: RBF Driver Extraction & Service Task [COMPLETED]
+- [x] Author standalone Task 1 service loop in `drivers/rbf/main.golf` and assembly entry stubs (`cstart_rbf_m6809.asm`, `cstart_rbf_m68k.s`).
+- [x] Move path resolution and directory traversal routines into Task 1.
+- [x] Update `proc.ProcInit` to allocate PID 1 as `[RBF]`, bless Task 1 via `hal.SetTaskFlags(0x01)`, and initialize the driver task.
 
-### Phase 4: Full System Verification
-- [ ] Verify `/proc/p` reports PID 1 as `[RBF]`.
-- [ ] Verify end-to-end file reading, binary launching, and shell commands (`dir`, `cat`, `dump`) transparently route via Task 1.
+### Phase 4: Full System Verification [COMPLETED]
+- [x] Verify `/proc/p` reports PID 1 as `[RBF]` in state `WAIT`.
+- [x] Verify end-to-end file reading, binary launching, and shell commands (`ECHO`, `CAT`) transparently route via Task 1.
+- [x] Automated (`make test`) and interactive (`make test-interactive`) test suites pass cleanly on both M6809 (`gep9`) and M68000 (`gepk`).
