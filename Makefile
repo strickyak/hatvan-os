@@ -6,7 +6,8 @@ BUILD_DIR   := $(REPO_DIR)/build
 # Toolchains
 GO          ?= go
 PYTHON      ?= python3
-MINIGOLF    ?= /home/strick/github.com/strickyak/minigolf/minigolf
+MINIGOLF_DIR ?= /home/strick/github.com/strickyak/minigolf
+MINIGOLF    ?= $(BUILD_DIR)/minigolf
 ASM68K      ?= $(BUILD_DIR)/asm68k
 LWASM       ?= lwasm
 OS9         ?= os9
@@ -42,13 +43,11 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # --- Toolchain Binaries ---
-$(MINIGOLF):
-	@mkdir -p $(dir $@)
-	cd /home/strick/github.com/strickyak/minigolf && $(GO) build -o $(MINIGOLF) .
+$(MINIGOLF): | $(BUILD_DIR)
+	cd $(MINIGOLF_DIR) && $(GO) build -o $(MINIGOLF) .
 
-$(ASM68K):
-	@mkdir -p $(dir $@)
-	cd /home/strick/github.com/strickyak/minigolf && $(GO) build -o $(ASM68K) ./cmd/asm68k
+$(ASM68K): | $(BUILD_DIR)
+	cd $(MINIGOLF_DIR) && $(GO) build -o $(ASM68K) ./cmd/asm68k
 
 # --- Emulators ---
 vms: $(VM_6809) $(VM_68K)
