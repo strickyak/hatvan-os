@@ -7,18 +7,18 @@ import "dev"
 
 const MAX_PATHS = 16
 
-const MODE_READ  = 1
+const MODE_READ = 1
 const MODE_WRITE = 2
-const MODE_EXEC  = 4
-const MODE_DIR   = 0x80
+const MODE_EXEC = 4
+const MODE_DIR = 0x80
 
 // OS-9 Error Codes
-const E_EOF    = 211 // End of file
-const E_BMODE  = 214 // Bad mode
-const E_PNNF   = 216 // Path name not found
-const E_BPNUM  = 217 // Bad path number
+const E_EOF = 211    // End of file
+const E_BMODE = 214  // Bad mode
+const E_PNNF = 216   // Path name not found
+const E_BPNUM = 217  // Bad path number
 const E_PTHFUL = 218 // Path table full
-const E_READ   = 244 // Read error
+const E_READ = 244   // Read error
 
 type PathDesc struct {
 	RefCount  byte
@@ -122,7 +122,7 @@ func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word
 	}
 
 	// If mode requests directory, verify FD has directory bit set ($80)
-	if (mode & MODE_DIR) != 0 && (fd.Attributes & 0x80) == 0 {
+	if (mode&MODE_DIR) != 0 && (fd.Attributes&0x80) == 0 {
 		PathFree(pathId)
 		return 0xFF, E_BMODE
 	}
@@ -136,10 +136,10 @@ func SysCreate(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN wo
 	// For devices (/term, /log, /null), create is equivalent to open write
 	devType, _, _ := dev.ParsePathDevice(pathStr, defaultDrive)
 	if devType == dev.DEV_TERM || devType == dev.DEV_LOG || devType == dev.DEV_NULL {
-		return SysOpen(task, pathStr, mode | MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
+		return SysOpen(task, pathStr, mode|MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
 	}
 	// For disk files, attempt open; if not found, creating new RBF file requires allocation
-	pId, err := SysOpen(task, pathStr, mode | MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
+	pId, err := SysOpen(task, pathStr, mode|MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
 	return pId, err
 }
 
@@ -158,7 +158,7 @@ func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 		return 0, E_BPNUM
 	}
 	pd := &PathTable[pathId]
-	if (pd.Mode & MODE_READ) == 0 && pd.DevType != dev.DEV_TERM {
+	if (pd.Mode&MODE_READ) == 0 && pd.DevType != dev.DEV_TERM {
 		return 0, E_BMODE
 	}
 
@@ -176,7 +176,7 @@ func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 	}
 
 	toRead := count
-	if pd.FilePos + toRead > pd.FileSize {
+	if pd.FilePos+toRead > pd.FileSize {
 		toRead = pd.FileSize - pd.FilePos
 	}
 
@@ -215,9 +215,9 @@ func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 
 		srcAddr := word(&pd.SectorBuf[0]) + secOff
 		if task == 0 {
-			klib.memcpy((*byte)(dstAddr + bytesRead), (*byte)(srcAddr), chunk)
+			klib.memcpy((*byte)(dstAddr+bytesRead), (*byte)(srcAddr), chunk)
 		} else {
-			hal.DMACopy(0, srcAddr, task, dstAddr + bytesRead, chunk)
+			hal.DMACopy(0, srcAddr, task, dstAddr+bytesRead, chunk)
 		}
 
 		pd.FilePos += chunk
@@ -233,7 +233,7 @@ func SysWrite(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 		return 0, E_BPNUM
 	}
 	pd := &PathTable[pathId]
-	if (pd.Mode & MODE_WRITE) == 0 && pd.DevType != dev.DEV_TERM && pd.DevType != dev.DEV_LOG {
+	if (pd.Mode&MODE_WRITE) == 0 && pd.DevType != dev.DEV_TERM && pd.DevType != dev.DEV_LOG {
 		return 0, E_BMODE
 	}
 
@@ -283,7 +283,7 @@ func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (
 	dstAddr := word(ubuf)
 	var single byte
 
-	for count < maxLen - 1 {
+	for count < maxLen-1 {
 		n, err := SysRead(pathId, 0, &single, 1)
 		if n == 0 || err != 0 {
 			if count > 0 {
@@ -299,18 +299,18 @@ func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (
 				endChar = '\r'
 			}
 			if task == 0 {
-				pokeb(dstAddr + count, endChar)
+				pokeb(dstAddr+count, endChar)
 			} else {
-				hal.DMACopy(0, word(&endChar), task, dstAddr + count, 1)
+				hal.DMACopy(0, word(&endChar), task, dstAddr+count, 1)
 			}
 			count++
 			break
 		}
 
 		if task == 0 {
-			pokeb(dstAddr + count, single)
+			pokeb(dstAddr+count, single)
 		} else {
-			hal.DMACopy(0, word(&single), task, dstAddr + count, 1)
+			hal.DMACopy(0, word(&single), task, dstAddr+count, 1)
 		}
 		count++
 	}

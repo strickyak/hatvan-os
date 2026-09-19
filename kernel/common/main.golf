@@ -27,7 +27,7 @@ func main() {
 
 	// 2. Test opening and reading /d0/CMDS directory
 	cmdsPath := (*byte)("/d0/CMDS")
-	pDir, err := path.SysOpen(0, cmdsPath, path.MODE_READ | path.MODE_DIR, 0, 0, 0)
+	pDir, err := path.SysOpen(0, cmdsPath, path.MODE_READ|path.MODE_DIR, 0, 0, 0)
 	if err == 0 {
 		dev.KLog((*byte)("PATH:CMDS:OK"))
 
@@ -135,7 +135,7 @@ func main() {
 			// 9. Test User Process Execution in User Space (Phase 5)
 			proc.SetCurrentPID(1)
 			echoCmd := (*byte)("ECHO")
-			if hal.ARCH == 68 {
+			if hal.ARCH == 'k' {
 				echoCmd = (*byte)("ECHOK")
 			}
 			paramEcho := (*byte)("hello world\r")
@@ -179,7 +179,7 @@ func main() {
 
 		// Test external binary execution through shell
 		shEcho := (*byte)("ECHO hello from shell")
-		if hal.ARCH == 68 {
+		if hal.ARCH == 'k' {
 			shEcho = (*byte)("ECHOK hello from shell")
 		}
 		shEchoSt := sh.RunCommand(shEcho)
@@ -195,5 +195,3 @@ func main() {
 
 	hal.Exit(0)
 }
-
-

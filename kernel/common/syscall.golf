@@ -6,26 +6,26 @@ import "path"
 import "proc"
 
 // OS-9 System Call Numbers
-const F_FORK    = 0x03 // F$Fork
-const F_WAIT    = 0x04 // F$Wait
-const F_CHAIN   = 0x05 // F$Chain
-const F_EXIT    = 0x06 // F$Exit
-const F_MEM     = 0x07 // F$Mem
-const F_SLEEP   = 0x0A // F$Sleep
-const F_ID      = 0x0C // F$ID
+const F_FORK = 0x03  // F$Fork
+const F_WAIT = 0x04  // F$Wait
+const F_CHAIN = 0x05 // F$Chain
+const F_EXIT = 0x06  // F$Exit
+const F_MEM = 0x07   // F$Mem
+const F_SLEEP = 0x0A // F$Sleep
+const F_ID = 0x0C    // F$ID
 
-const I_OPEN    = 0x84 // I$Open
-const I_CREATE  = 0x85 // I$Create
-const I_CHGDIR  = 0x86 // I$ChgDir
-const I_DELETE  = 0x87 // I$Delete
-const I_SEEK    = 0x88 // I$Seek
-const I_READ    = 0x89 // I$Read
-const I_WRITE   = 0x8A // I$Write
-const I_READLN  = 0x8B // I$ReadLn
-const I_WRITLN  = 0x8C // I$WritLn
-const I_GETSTT  = 0x8D // I$GetStt
-const I_SETSTT  = 0x8E // I$SetStt
-const I_CLOSE   = 0x8F // I$Close
+const I_OPEN = 0x84   // I$Open
+const I_CREATE = 0x85 // I$Create
+const I_CHGDIR = 0x86 // I$ChgDir
+const I_DELETE = 0x87 // I$Delete
+const I_SEEK = 0x88   // I$Seek
+const I_READ = 0x89   // I$Read
+const I_WRITE = 0x8A  // I$Write
+const I_READLN = 0x8B // I$ReadLn
+const I_WRITLN = 0x8C // I$WritLn
+const I_GETSTT = 0x8D // I$GetStt
+const I_SETSTT = 0x8E // I$SetStt
+const I_CLOSE = 0x8F  // I$Close
 
 // SyscallFrame holds the registers saved from the user stack
 type SyscallFrame struct {

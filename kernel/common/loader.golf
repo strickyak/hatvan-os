@@ -42,7 +42,7 @@ func LoadOS9Module(pathId byte, targetTask byte, baseAddr word) (word, word, byt
 	// Stream remainder of module into targetTask starting at baseAddr + 13
 	rem := modSize - 13
 	if rem > 0 {
-		rn, rerr := path.SysRead(pathId, targetTask, (*byte)(baseAddr + 13), rem)
+		rn, rerr := path.SysRead(pathId, targetTask, (*byte)(baseAddr+13), rem)
 		if rn != rem || rerr != 0 {
 			return 0, 0, path.E_READ
 		}
@@ -92,7 +92,7 @@ func LoadDECB(pathId byte, targetTask byte) (word, word, byte) {
 			// Unrecognized or extended debug chunks (source lines, symbols): skip payload
 			if chunkLen > 0 {
 				curPos := path.PathTable[pathId].FilePos
-				path.SysSeek(pathId, curPos + chunkLen)
+				path.SysSeek(pathId, curPos+chunkLen)
 			}
 		}
 	}

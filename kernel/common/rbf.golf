@@ -292,4 +292,3 @@ func RBFResolvePath(path *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isE
 
 	return drive, currFDLSN
 }
-

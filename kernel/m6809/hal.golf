@@ -1,6 +1,6 @@
 package hal
 
-const ARCH = 9
+const ARCH = '9'
 
 // Hardware ports for M6809 Hatvan VM ($FF00 page in Task 0)
 const PORT_TERMOUT = 0xFF00

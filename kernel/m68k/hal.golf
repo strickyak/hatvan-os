@@ -1,6 +1,6 @@
 package hal
 
-const ARCH = 68
+const ARCH = 'k'
 
 // Hardware ports for M68000 Hatvan VM/K ($00FF0000 page in Task 0)
 const PORT_TERMOUT = 0x00FF0000
@@ -22,7 +22,7 @@ const PORT_DMASRCTASK = 0x00FF0022
 const PORT_DMASRCADDR = 0x00FF0024 // 32-bit Address
 const PORT_DMADSTTASK = 0x00FF0028
 const PORT_DMADSTADDR = 0x00FF002A // 32-bit Address
-const PORT_DMACNT = 0x00FF002E // 32-bit Count
+const PORT_DMACNT = 0x00FF002E     // 32-bit Count
 const PORT_DMACMD = 0x00FF0032
 
 func PutChar(b byte) {
@@ -85,5 +85,5 @@ func SwitchTask(task byte) {
 func LaunchProcess(pid byte, sp word, pc word)
 
 func HasInput() bool {
-	return (vpeekb(PORT_REGSTAT + 1) & 2) != 0
+	return (vpeekb(PORT_REGSTAT+1) & 2) != 0
 }

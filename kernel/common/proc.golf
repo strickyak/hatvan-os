@@ -10,20 +10,20 @@ import "loader"
 const MAX_PROCS = 16
 const PROC_MAX_PATHS = 16
 
-const PROC_FREE    = 0
-const PROC_READY   = 1
+const PROC_FREE = 0
+const PROC_READY = 1
 const PROC_RUNNING = 2
 const PROC_WAITING = 3
-const PROC_ZOMBIE  = 4
+const PROC_ZOMBIE = 4
 
 // OS-9 Error codes
-const E_PNNF      = 216 // Path name not found
-const E_BPNUM     = 217 // Bad path number
-const E_PTHFUL    = 218 // Path table full
-const E_NOCHILD   = 222 // No children
-const E_NOTREADY  = 223 // Child not ready
+const E_PNNF = 216      // Path name not found
+const E_BPNUM = 217     // Bad path number
+const E_PTHFUL = 218    // Path table full
+const E_NOCHILD = 222   // No children
+const E_NOTREADY = 223  // Child not ready
 const E_PROCUNDEF = 224 // Process undefined / bad PID
-const E_PROCFUL   = 225 // Process table full
+const E_PROCFUL = 225   // Process table full
 
 type Process struct {
 	PID         byte
@@ -296,7 +296,7 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
 	}
 
 	// Open binary from cxd (execution directory) or absolute path
-	binPathId, err := path.SysOpen(CurrentPID, cmdPath, path.MODE_READ | path.MODE_EXEC, childProc.CxdDrive, childProc.CwdFDLSN, childProc.CxdFDLSN)
+	binPathId, err := path.SysOpen(CurrentPID, cmdPath, path.MODE_READ|path.MODE_EXEC, childProc.CxdDrive, childProc.CwdFDLSN, childProc.CxdFDLSN)
 	if err != 0 {
 		ProcFree(childPID)
 		return 0xFF, err
@@ -318,31 +318,33 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
 		sp -= (paramLen + 1)
 		hal.DMACopy(0, word(paramStr), childProc.TaskID, sp, paramLen)
 		cr := byte('\r')
-		hal.DMACopy(0, word(&cr), childProc.TaskID, sp + paramLen, 1)
+		hal.DMACopy(0, word(&cr), childProc.TaskID, sp+paramLen, 1)
 		paramAddr = sp
 		paramLenVal = paramLen
 	}
 
-	if hal.ARCH == 68 {
+	if hal.ARCH == 'k' {
 		childProc.SavedSP = sp
-	} else {
+	} else if hal.ARCH == '9' {
 		frameAddr := sp - 12
 		var initFrame [12]byte
-		initFrame[0] = 0x80 // CC: FlagE (Entire frame)
-		initFrame[1] = 0    // A
-		initFrame[2] = 0    // B
-		initFrame[3] = 0    // DP
-		initFrame[4] = byte(paramAddr >> 8) // X MSB
-		initFrame[5] = byte(paramAddr)      // X LSB
+		initFrame[0] = 0x80                   // CC: FlagE (Entire frame)
+		initFrame[1] = 0                      // A
+		initFrame[2] = 0                      // B
+		initFrame[3] = 0                      // DP
+		initFrame[4] = byte(paramAddr >> 8)   // X MSB
+		initFrame[5] = byte(paramAddr)        // X LSB
 		initFrame[6] = byte(paramLenVal >> 8) // Y MSB
 		initFrame[7] = byte(paramLenVal)      // Y LSB
-		initFrame[8] = 0xFE // U MSB ($FE00)
-		initFrame[9] = 0x00 // U LSB
-		initFrame[10] = byte(entryPC >> 8) // PC MSB
-		initFrame[11] = byte(entryPC)      // PC LSB
+		initFrame[8] = 0xFE                   // U MSB ($FE00)
+		initFrame[9] = 0x00                   // U LSB
+		initFrame[10] = byte(entryPC >> 8)    // PC MSB
+		initFrame[11] = byte(entryPC)         // PC LSB
 
 		hal.DMACopy(0, word(&initFrame[0]), childProc.TaskID, frameAddr, 12)
 		childProc.SavedSP = frameAddr
+	} else {
+		panic("?ARCH")
 	}
 
 	childProc.SavedPC = entryPC
@@ -423,7 +425,7 @@ func SysChgDir(pathStr *byte, mode byte) byte {
 
 	var fd rbf.RBFFileDescriptor
 	st := rbf.RBFReadFD(finalDrive, fdLSN, &fd)
-	if st != 1 || (fd.Attributes & 0x80) == 0 {
+	if st != 1 || (fd.Attributes&0x80) == 0 {
 		return path.E_BMODE
 	}
 

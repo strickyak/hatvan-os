@@ -5,7 +5,7 @@ import "klib"
 
 const DEV_NONE = 0
 const DEV_TERM = 1
-const DEV_LOG  = 2
+const DEV_LOG = 2
 const DEV_NULL = 3
 const DEV_DISK = 4
 
