@@ -300,6 +300,67 @@ func TestUserPageProtection(t *testing.T) {
 	bus.ReadByte(0xFF00)
 }
 
+func TestTaskFlagsIOBlessing(t *testing.T) {
+	bus := NewBus()
+
+	// 1. Task 1 unblessed: accessing $FF00 panics
+	bus.CurrentTask = 1
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("expected unblessed Task 1 access to $FF00 to panic")
+			}
+		}()
+		bus.ReadByte(0xFF00)
+	}()
+
+	// 2. Task 0 blesses Task 1 via $FF2E = 0x01
+	bus.CurrentTask = 0
+	bus.WriteByte(0xFF2E, 0x01)
+	if got := bus.ReadByte(0xFF2E); got != 0x01 {
+		t.Fatalf("ReadByte(0xFF2E) = 0x%02X, want 0x01", got)
+	}
+
+	// 3. Task 1 now has I/O privileges: reading and writing $FF00..$FFFF succeeds without panic
+	bus.CurrentTask = 1
+	bus.WriteByte(0xFF10, 2) // Set disk drive to 2
+	if bus.DiskDrive != 2 {
+		t.Fatalf("expected DiskDrive=2 from Task 1, got %d", bus.DiskDrive)
+	}
+
+	// 4. Task 2 remains unblessed: accessing $FF00 still panics
+	bus.CurrentTask = 2
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("expected unblessed Task 2 access to $FF00 to panic")
+			}
+		}()
+		bus.ReadByte(0xFF00)
+	}()
+
+	// 5. Purging Task 1 via $FF2F revokes blessing
+	bus.CurrentTask = 0
+	bus.WriteByte(0xFF2F, 1) // Purge Task 1
+	if got := bus.ReadByte(0xFF2E); got != 0x00 {
+		t.Fatalf("ReadByte(0xFF2E) after purge = 0x%02X, want 0x00", got)
+	}
+
+	// Task 1 access now panics again
+	bus.CurrentTask = 1
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("expected Task 1 access after purge to panic")
+			}
+		}()
+		bus.ReadByte(0xFF00)
+	}()
+}
+
 func TestBusPollStdin(t *testing.T) {
 	bus := NewBus()
 	if !bus.ConsoleInEmpty() {

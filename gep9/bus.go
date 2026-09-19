@@ -52,6 +52,9 @@ type Bus struct {
 	DmaDstAddr uint16 // $FF25..$FF26
 	DmaStatus  byte   // $FF27 (0 = busy, 1 = OKAY, >1 = error)
 
+	// Hatvan TaskFlags ($FF2E)
+	TaskFlags [256]byte
+
 	// Callback when IRQ line state changes
 	OnIRQChanged func(asserted bool)
 
@@ -74,13 +77,12 @@ func (b *Bus) ReadByte(addr uint16) byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// In user tasks (Task > 0), access to $FF00..$FFFF is strictly forbidden.
-	if b.CurrentTask > 0 && addr >= 0xFF00 {
+	// In user tasks (Task > 0), access to $FF00..$FFFF is strictly forbidden unless blessed with I/O flag
+	if addr >= 0xFF00 {
+		if b.CurrentTask == 0 || (b.TaskFlags[b.CurrentTask]&0x01) != 0 {
+			return b.readIO(addr)
+		}
 		panic(fmt.Errorf("%w: read at 0x%04X in task %d", ErrUserAccessTrap, addr, b.CurrentTask))
-	}
-
-	if b.CurrentTask == 0 && addr >= 0xFF00 {
-		return b.readIO(addr)
 	}
 
 	return b.Memory[b.CurrentTask][addr]
@@ -91,14 +93,13 @@ func (b *Bus) WriteByte(addr uint16, val byte) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// In user tasks (Task > 0), access to $FF00..$FFFF is strictly forbidden.
-	if b.CurrentTask > 0 && addr >= 0xFF00 {
+	// In user tasks (Task > 0), access to $FF00..$FFFF is strictly forbidden unless blessed with I/O flag
+	if addr >= 0xFF00 {
+		if b.CurrentTask == 0 || (b.TaskFlags[b.CurrentTask]&0x01) != 0 {
+			b.writeIO(addr, val)
+			return
+		}
 		panic(fmt.Errorf("%w: write at 0x%04X in task %d", ErrUserAccessTrap, addr, b.CurrentTask))
-	}
-
-	if b.CurrentTask == 0 && addr >= 0xFF00 {
-		b.writeIO(addr, val)
-		return
 	}
 
 	b.Memory[b.CurrentTask][addr] = val
@@ -204,6 +205,9 @@ func (b *Bus) readIO(addr uint16) byte {
 		b.DmaStatus = 0 // Reset on read
 		return st
 
+	case 0xFF2E: // TaskFlagsRegister
+		return b.TaskFlags[1]
+
 	case 0xFF2F: // PurgeTaskMem
 		return 0
 
@@ -285,6 +289,9 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 		b.DmaDstAddr = (b.DmaDstAddr & 0xFF00) | uint16(val)
 	case 0xFF27: // DMA Copy command: length 1..255, 0 = 256
 		b.executeDMACopy(val)
+
+	case 0xFF2E: // TaskFlagsRegister: sets flags for Task 1 (Bit 0 = allow I/O)
+		b.TaskFlags[1] = val
 
 	case 0xFF2F: // PurgeTaskMem: zero task memory if val != 0
 		if val != 0 {
@@ -456,6 +463,7 @@ func (b *Bus) purgeTaskMem(task uint8) {
 	if task == 0 {
 		return // Never purge Task 0 (kernel)
 	}
+	b.TaskFlags[task] = 0
 	for i := range b.Memory[task] {
 		b.Memory[task][i] = 0
 	}

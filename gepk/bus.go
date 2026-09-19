@@ -88,6 +88,9 @@ type Bus struct {
 	DmaCount   uint32
 	DmaStatus  uint16
 
+	// Hatvan TaskFlags ($00FF005C)
+	TaskFlags [256]byte
+
 	// Callback when highest active interrupt level changes (0 = none, 1..7)
 	OnInterruptLevelChanged func(level uint8)
 }
@@ -180,6 +183,9 @@ func (b *Bus) readByteLocked(addr uint32) byte {
 	// User Mode (FC2 == 0)
 	if (b.CurrentFC & 0x04) == 0 {
 		if addr >= 0x00FF0000 {
+			if (b.TaskFlags[b.TaskReg] & 0x01) != 0 {
+				return b.readIOLocked(addr)
+			}
 			panic(fmt.Errorf("%w: user read at 0x%06X in task %d", ErrUserAccessTrap, addr, b.TaskReg))
 		}
 		return b.Tasks[b.TaskReg].readByte(addr)
@@ -198,6 +204,10 @@ func (b *Bus) writeByteLocked(addr uint32, val byte) {
 	// User Mode (FC2 == 0)
 	if (b.CurrentFC & 0x04) == 0 {
 		if addr >= 0x00FF0000 {
+			if (b.TaskFlags[b.TaskReg] & 0x01) != 0 {
+				b.writeIOLocked(addr, val)
+				return
+			}
 			panic(fmt.Errorf("%w: user write at 0x%06X in task %d", ErrUserAccessTrap, addr, b.TaskReg))
 		}
 		b.Tasks[b.TaskReg].writeByte(addr, val)
@@ -348,6 +358,9 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		}
 		return byte(b.DmaStatus >> 8)
 
+	case 0x00FF005C: // TaskFlagsRegister (0x00FF005C or 0x00FF005D)
+		return b.TaskFlags[1]
+
 	case 0x00FF005E: // PurgeTaskMem (0x00FF005E or 0x00FF005F)
 		return 0
 
@@ -490,6 +503,9 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 		if val != 0 {
 			b.executeDMACopy()
 		}
+
+	case 0x00FF005C: // TaskFlagsRegister (0x00FF005C or 0x00FF005D): sets flags for Task 1 (Bit 0 = allow I/O)
+		b.TaskFlags[1] = val
 
 	case 0x00FF005E: // PurgeTaskMem (0x00FF005E or 0x00FF005F)
 		if val != 0 {
@@ -660,6 +676,7 @@ func (b *Bus) purgeTaskMem(task uint8) {
 	if task == 0 {
 		return // Never purge Task 0 (kernel)
 	}
+	b.TaskFlags[task] = 0
 	tm := b.Tasks[task]
 	if tm == nil {
 		return

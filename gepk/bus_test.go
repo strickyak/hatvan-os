@@ -73,6 +73,57 @@ func TestBusUserAccessProtection(t *testing.T) {
 	assertPanic(func() { bus.WriteByte(0x00FF0000, 0x55) }, "User WriteByte($FF0000)")
 }
 
+func TestBusTaskFlagsIOBlessing(t *testing.T) {
+	bus := NewBus()
+
+	assertPanic := func(fn func(), desc string) {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("expected panic for %s, but did not panic", desc)
+			}
+		}()
+		fn()
+	}
+
+	// 1. Task 1 in User mode unblessed: accessing $FF0000 panics
+	bus.CurrentFC = FCUserData
+	bus.TaskReg = 1
+	assertPanic(func() { bus.ReadByte(0x00FF0000) }, "Unblessed Task 1 ReadByte")
+	assertPanic(func() { bus.WriteByte(0x00FF0000, 0x41) }, "Unblessed Task 1 WriteByte")
+
+	// 2. Supervisor blesses Task 1 via $00FF005C = 0x01
+	bus.CurrentFC = FCSupervisorData
+	bus.WriteByte(0x00FF005C, 0x01)
+	if got := bus.ReadByte(0x00FF005C); got != 0x01 {
+		t.Fatalf("ReadByte(0x00FF005C) = 0x%02X, want 0x01", got)
+	}
+
+	// 3. Task 1 in User mode now has I/O access
+	bus.CurrentFC = FCUserData
+	bus.TaskReg = 1
+	bus.WriteByte(0x00FF0010, 0x03) // Set DiskDrive to 3
+	if bus.DiskDrive != 3 {
+		t.Fatalf("expected DiskDrive=3 from blessed Task 1, got %d", bus.DiskDrive)
+	}
+
+	// 4. Task 2 in User mode remains unblessed and panics
+	bus.TaskReg = 2
+	assertPanic(func() { bus.ReadByte(0x00FF0000) }, "Unblessed Task 2 ReadByte")
+
+	// 5. Purging Task 1 revokes blessing
+	bus.CurrentFC = FCSupervisorData
+	bus.WriteByte(0x00FF005E, 0x01) // Purge Task 1
+	if got := bus.ReadByte(0x00FF005C); got != 0x00 {
+		t.Fatalf("ReadByte(0x00FF005C) after purge = 0x%02X, want 0x00", got)
+	}
+
+	// Task 1 now panics again
+	bus.CurrentFC = FCUserData
+	bus.TaskReg = 1
+	assertPanic(func() { bus.ReadByte(0x00FF0000) }, "Task 1 ReadByte after purge")
+}
+
 func TestBusTaskRouting(t *testing.T) {
 	bus := NewBus()
 

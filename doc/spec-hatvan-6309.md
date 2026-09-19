@@ -83,7 +83,8 @@ A hardware DMA copy engine enables cross-task and intra-task block transfers:
   * `>1` (other) = Error (causes an unrecoverable kernel PANIC)
   * Reading a non-zero status resets status back to 0.
 
-* `$FF2F` : `PurgeTaskMem` : Writing a non-zero task number zeroes that task's entire 64K memory space (or frees it in sparse VM implementations). Writing 0 is ignored (Task 0 kernel memory is protected).
+* `$FF2E` : `TaskFlagsRegister` : Sets runtime capability flags for Task 1. Writing Bit 0 (`$01`) blesses Task 1 with I/O privileges, allowing it to directly access the hardware I/O page (`$FF00..$FFFF`) without triggering a user protection trap (`ErrUserAccessTrap`). Reading returns the current flags for Task 1.
+* `$FF2F` : `PurgeTaskMem` : Writing a non-zero task number zeroes that task's entire 64K memory space (or frees it in sparse VM implementations) and clears any runtime task capability flags (revoking I/O privileges). Writing 0 is ignored (Task 0 kernel memory is protected).
 
 This engine is used by the kernel to inspect the post-SWI2 syscall byte in user code, pass buffers between user space and kernel space, and access the user register frame.
 

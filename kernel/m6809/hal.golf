@@ -26,6 +26,7 @@ const PORT_DMADSTTASK = 0xFF24
 const PORT_DMADSTADDR = 0xFF25 // 2 bytes (Hi, Lo)
 const PORT_DMACNT = 0xFF27
 
+const PORT_TASKFLAGS = 0xFF2E
 const PORT_PURGETASKMEM = 0xFF2F
 
 func PutChar(b byte) {
@@ -111,4 +112,8 @@ func PurgeTaskMem(task byte) {
 	if task != 0 {
 		vpokeb(PORT_PURGETASKMEM, task)
 	}
+}
+
+func SetTaskFlags(flags byte) {
+	vpokeb(PORT_TASKFLAGS, flags)
 }

@@ -156,6 +156,7 @@ $00FF002A   L      DMA.DstAddr DMA 32-bit Destination Address
 $00FF002E   L      DMA.Count   DMA Byte Count (1 to 16,777,216 bytes)
 $00FF0032   W      DMA.CmdSt   DMA Command / Status Register
 
+$00FF005C   B      TaskFlags   Task Flags Register (Bit 0 = allow I/O for Task 1)
 $00FF005E   B      PurgeTaskMem Purge / zero task memory (task 1 to 255)
 ```
 
@@ -207,9 +208,11 @@ A hardware DMA engine allows fast inter-task and intra-task block transfers with
   * Write: `1 = Start Transfer`. Initiates transfer and sets status to `0` (busy).
   * Read: `0 = Busy`, `1 = OKAY`, `>1 = Error`.
 
-### Task Memory Management (`$00FF005E`)
+### Task Capability Flags & Memory Management (`$00FF005C..$00FF005E`)
+* **`TaskFlags` (`$00FF005C`)**:
+  * Write: writing a byte sets runtime capability flags for Task 1. Specifically, Bit 0 (`$01`) blesses Task 1 with I/O privileges, allowing it in User Mode to read/write the hardware I/O page (`$00FF0000..$00FFFFFF`) without triggering a user protection trap (`ErrUserAccessTrap`). Reading returns the current flags for Task 1.
 * **`PurgeTaskMem` (`$00FF005E`)**:
-  * Write: writing a non-zero task number frees that task's sparse 64KB memory pages (or zeroes its memory), guaranteeing that newly allocated tasks start with clean zero-filled memory. Writing 0 is ignored (Task 0 kernel memory is protected).
+  * Write: writing a non-zero task number frees that task's sparse 64KB memory pages (or zeroes its memory), resets any task capability flags (clearing I/O privileges), and guarantees that newly allocated tasks start with clean zero-filled memory. Writing 0 is ignored (Task 0 kernel memory is protected).
 
 ---
 

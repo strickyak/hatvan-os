@@ -25,6 +25,7 @@ const PORT_DMADSTADDR = 0x00FF002A // 32-bit Address
 const PORT_DMACNT = 0x00FF002E     // 32-bit Count
 const PORT_DMACMD = 0x00FF0032
 
+const PORT_TASKFLAGS = 0x00FF005C
 const PORT_PURGETASKMEM = 0x00FF005E
 
 func PutChar(b byte) {
@@ -94,4 +95,8 @@ func PurgeTaskMem(task byte) {
 	if task != 0 {
 		vpokeb(PORT_PURGETASKMEM, task)
 	}
+}
+
+func SetTaskFlags(flags byte) {
+	vpokeb(PORT_TASKFLAGS, flags)
 }
