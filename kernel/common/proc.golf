@@ -37,8 +37,10 @@ type Process struct {
 	Paths       [PROC_MAX_PATHS]byte
 	CwdDrive    byte
 	CwdFDLSN    word
+	CwdPath     [64]byte
 	CxdDrive    byte
 	CxdFDLSN    word
+	CxdPath     [64]byte
 	LineMode    byte // 0 = '\n' (Unix), 1 = '\r' (OS-9)
 	CodeStart   word
 	CodeSize    word
@@ -68,8 +70,10 @@ func ProcInit() {
 		p.LineMode = 0
 		p.CwdDrive = 0
 		p.CwdFDLSN = 0
+		p.CwdPath[0] = 0
 		p.CxdDrive = 0
 		p.CxdFDLSN = 0
+		p.CxdPath[0] = 0
 		p.CodeStart = 0
 		p.CodeSize = 0
 		p.DataTop = 0
@@ -100,8 +104,10 @@ func ProcAlloc(parentPID byte) (byte, *Process) {
 			p.LineMode = 0
 			p.CwdDrive = 0
 			p.CwdFDLSN = 0
+			p.CwdPath[0] = 0
 			p.CxdDrive = 0
 			p.CxdFDLSN = 0
+			p.CxdPath[0] = 0
 			p.CodeStart = 0
 			p.CodeSize = 0
 			p.DataTop = 0
@@ -115,8 +121,10 @@ func ProcAlloc(parentPID byte) (byte, *Process) {
 				parent := &ProcTable[parentPID]
 				p.CwdDrive = parent.CwdDrive
 				p.CwdFDLSN = parent.CwdFDLSN
+				klib.strcpy(&p.CwdPath[0], &parent.CwdPath[0])
 				p.CxdDrive = parent.CxdDrive
 				p.CxdFDLSN = parent.CxdFDLSN
+				klib.strcpy(&p.CxdPath[0], &parent.CxdPath[0])
 				p.LineMode = parent.LineMode
 
 				// Inherit standard paths 0, 1, 2, 3 (stdin, stdout, stderr, stdlog)
@@ -405,10 +413,71 @@ func SysWait() (byte, byte, byte) {
 	return 0, 0, E_NOCHILD
 }
 
+func updateProcPath(dstPath *byte, pathStr *byte, drive byte) {
+	pStr := word(pathStr)
+	dPath := word(dstPath)
+
+	// If pathStr starts with '/'
+	if peekb(pStr) == '/' {
+		// If it starts with "/d" and a digit '0'..'3'
+		if peekb(pStr+1) == 'd' && peekb(pStr+2) >= '0' && peekb(pStr+2) <= '3' {
+			// Copy pathStr directly
+			klib.strcpy(dstPath, pathStr)
+			return
+		}
+
+		// Starts with '/', but not "/d0".."/d3": prepend "/d<drive>"
+		pokeb(dPath, '/')
+		pokeb(dPath+1, 'd')
+		pokeb(dPath+2, '0' + drive)
+		klib.strcpy((*byte)(dPath+3), pathStr)
+		return
+	}
+
+	// Relative path
+	// Check for "."
+	if peekb(pStr) == '.' && peekb(pStr+1) == 0 {
+		return
+	}
+
+	// Check for ".."
+	if peekb(pStr) == '.' && peekb(pStr+1) == '.' && peekb(pStr+2) == 0 {
+		curLen := klib.strlen(dstPath)
+		lastSlash := word(0)
+		for i := word(0); i < curLen; i++ {
+			if peekb(dPath+i) == '/' {
+				lastSlash = i
+			}
+		}
+		if lastSlash <= 2 {
+			pokeb(dPath+3, 0)
+		} else {
+			pokeb(dPath+lastSlash, 0)
+		}
+		return
+	}
+
+	// Normal relative component
+	curLen := klib.strlen(dstPath)
+	if curLen == 0 {
+		pokeb(dPath, '/')
+		pokeb(dPath+1, 'd')
+		pokeb(dPath+2, '0' + drive)
+		pokeb(dPath+3, '/')
+		curLen = 4
+		pokeb(dPath+4, 0)
+	} else if peekb(dPath+curLen-1) != '/' {
+		pokeb(dPath+curLen, '/')
+		curLen++
+		pokeb(dPath+curLen, 0)
+	}
+	klib.strcpy((*byte)(dPath+curLen), pathStr)
+}
+
 // SysChgDir changes the current working directory (cwd) or execution directory (cxd)
 func SysChgDir(pathStr *byte, mode byte) byte {
 	p := &ProcTable[CurrentPID]
-	devType, drive, remPath := dev.ParsePathDevice(pathStr, p.CwdDrive)
+	devType, _, _ := dev.ParsePathDevice(pathStr, p.CwdDrive)
 	if devType != dev.DEV_DISK {
 		return path.E_BMODE
 	}
@@ -418,7 +487,7 @@ func SysChgDir(pathStr *byte, mode byte) byte {
 		isExec = 1
 	}
 
-	finalDrive, fdLSN := rbf.RBFResolvePath(remPath, drive, p.CwdFDLSN, p.CxdFDLSN, isExec)
+	finalDrive, fdLSN := rbf.RBFResolvePath(pathStr, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN, isExec)
 	if finalDrive == 0xFF || fdLSN == 0 {
 		return path.E_PNNF
 	}
@@ -432,9 +501,11 @@ func SysChgDir(pathStr *byte, mode byte) byte {
 	if isExec != 0 {
 		p.CxdDrive = finalDrive
 		p.CxdFDLSN = fdLSN
+		updateProcPath(&p.CxdPath[0], pathStr, finalDrive)
 	} else {
 		p.CwdDrive = finalDrive
 		p.CwdFDLSN = fdLSN
+		updateProcPath(&p.CwdPath[0], pathStr, finalDrive)
 	}
 
 	return 0

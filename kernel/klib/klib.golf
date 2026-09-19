@@ -56,3 +56,18 @@ func streq(a *byte, b *byte) bool {
 		p2++
 	}
 }
+
+// strcpy copies null-terminated string src to dst.
+func strcpy(dst *byte, src *byte) {
+	d := word(dst)
+	s := word(src)
+	for {
+		c := peekb(s)
+		pokeb(d, c)
+		if c == 0 {
+			break
+		}
+		d++
+		s++
+	}
+}

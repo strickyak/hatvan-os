@@ -105,7 +105,7 @@ func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word
 		isExec = 1
 	}
 
-	finalDrive, fdLSN := rbf.RBFResolvePath(remPath, drive, cwdLSN, cxdLSN, isExec)
+	finalDrive, fdLSN := rbf.RBFResolvePath(pathStr, defaultDrive, cwdLSN, cxdLSN, isExec)
 	if finalDrive == 0xFF || fdLSN == 0 {
 		PathFree(pathId)
 		return 0xFF, E_PNNF

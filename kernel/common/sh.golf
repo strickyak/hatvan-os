@@ -72,7 +72,7 @@ func RunCommand(line *byte) byte {
 
 	// 4. Check builtin commands
 	if klib.streq(&cmdName[0], (*byte)("help")) {
-		printStr((*byte)("Hatvan OS Shell Builtins: help, exit, pwd, pwx, cd, cx\n"))
+		printStr((*byte)("Hatvan OS Shell Builtins: help, exit, pwd, pxd, cd, cx\n"))
 		return 0
 	}
 
@@ -84,22 +84,28 @@ func RunCommand(line *byte) byte {
 	if klib.streq(&cmdName[0], (*byte)("pwd")) {
 		curPID := proc.CurrentPID
 		procEntry := &proc.ProcTable[curPID]
-		printStr((*byte)("/d"))
-		hal.PutChar('0' + procEntry.CwdDrive)
-		printStr((*byte)(" (FD $"))
-		printHexWord(procEntry.CwdFDLSN)
-		printStr((*byte)(")\n"))
+		if procEntry.CwdPath[0] != 0 {
+			printStr(&procEntry.CwdPath[0])
+			hal.PutChar('\n')
+		} else {
+			printStr((*byte)("/d"))
+			hal.PutChar('0' + procEntry.CwdDrive)
+			hal.PutChar('\n')
+		}
 		return 0
 	}
 
-	if klib.streq(&cmdName[0], (*byte)("pwx")) {
+	if klib.streq(&cmdName[0], (*byte)("pxd")) || klib.streq(&cmdName[0], (*byte)("pwx")) {
 		curPID := proc.CurrentPID
 		procEntry := &proc.ProcTable[curPID]
-		printStr((*byte)("/d"))
-		hal.PutChar('0' + procEntry.CxdDrive)
-		printStr((*byte)(" (FD $"))
-		printHexWord(procEntry.CxdFDLSN)
-		printStr((*byte)(")\n"))
+		if procEntry.CxdPath[0] != 0 {
+			printStr(&procEntry.CxdPath[0])
+			hal.PutChar('\n')
+		} else {
+			printStr((*byte)("/d"))
+			hal.PutChar('0' + procEntry.CxdDrive)
+			hal.PutChar('\n')
+		}
 		return 0
 	}
 

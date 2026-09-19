@@ -223,15 +223,22 @@ func ParsePathDrive(path *byte) (byte, *byte) {
 // Returns (drive, fdLSN). If resolution fails, returns (0xFF, 0).
 func RBFResolvePath(path *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isExec byte) (byte, word) {
 	drive, remPath := ParsePathDrive(path)
-	if drive == 0xFF {
+	isAbs := false
+	if drive != 0xFF {
+		isAbs = true
+	} else {
 		drive = defaultDrive
 	}
 
 	p := word(remPath)
+	if peekb(p) == '/' {
+		isAbs = true
+	}
+
 	currFDLSN := word(0)
 
-	// If absolute path starting with '/'
-	if peekb(p) == '/' {
+	// If absolute path starting with '/' or drive prefix
+	if isAbs {
 		var sb RBFSuperblock
 		st := RBFReadSuperblock(drive, &sb)
 		if st != 1 {
