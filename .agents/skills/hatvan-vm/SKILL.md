@@ -7,9 +7,9 @@ description: >-
   configuring hardware I/O or disks, analyzing instruction traces, or debugging execution.
 ---
 
-# Running and Testing with Hatvan VM (`hatvan-vm`)
+# Running and Testing with Hatvan 6809 VM (`gep9`)
 
-`hatvan-vm` is a clean-room virtual machine written in Go, implementing the Hitachi 6309 CPU with 256 isolated 64KB task spaces and specialized hardware devices mapped into `$FF00..$FFFF` in Task 0.
+`gep9` (formerly `hatvan-vm`) is a clean-room virtual machine written in Go, implementing the Hitachi 6309 CPU with 256 isolated 64KB task spaces and specialized hardware devices mapped into `$FF00..$FFFF` in Task 0.
 
 ## Building and Testing the VM
 
@@ -20,7 +20,7 @@ From the repository root (`/home/strick/github.com/strickyak/hatvan-os`):
 go test -v ./vm/...
 
 # Build the emulator binary
-go build -o hatvan-vm ./cmd/hatvan-vm
+go build -o build/gep9 ./cmd/gep9
 ```
 
 ## Running Binaries
@@ -28,7 +28,7 @@ go build -o hatvan-vm ./cmd/hatvan-vm
 The emulator accepts a primary `.decb` file or raw 64KB `.img` system image, and optional `lwasm` `.list` assembly listings for symbolic trace annotation:
 
 ```bash
-./hatvan-vm [options] <program.decb|system.img> [listing.list ...]
+./build/gep9 [options] <program.decb|system.img> [listing.list ...]
 ```
 
 ### Command-Line Options

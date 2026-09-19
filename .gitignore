@@ -6,6 +6,8 @@ _*
 RCS/
 
 # Binaries & build artifacts
+/gep9
+/gepk
 /hatvan-vm
 /hatvan-vmk
 /AGY

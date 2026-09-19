@@ -57,7 +57,7 @@ func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte
 
 	// Busy-wait for completion
 	for {
-		st := vpeekb(PORT_DISKCMD)
+		st := vpeekb(PORT_DISKCMD + 1)
 		if st > 0 {
 			return st
 		}
@@ -74,7 +74,7 @@ func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word)
 	vpokeb(PORT_DMACMD, 1)
 
 	// Wait for completion
-	for vpeekb(PORT_DMACMD) == 0 {
+	for vpeekb(PORT_DMACMD + 1) == 0 {
 	}
 }
 

@@ -288,9 +288,12 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		return byte(b.DiskAddr >> 8)
 
 	case 0x00FF001E: // Disk.CmdSt
-		st := b.DiskStatus
-		b.DiskStatus = 0
-		return byte(st)
+		if isOdd {
+			st := b.DiskStatus
+			b.DiskStatus = 0
+			return byte(st)
+		}
+		return byte(b.DiskStatus >> 8)
 
 	case 0x00FF0020: // Task.Active
 		return byte(b.TaskReg)
@@ -335,9 +338,12 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		return byte(b.DmaCount >> 8)
 
 	case 0x00FF0032: // DMA.CmdSt
-		st := b.DmaStatus
-		b.DmaStatus = 0
-		return byte(st)
+		if isOdd {
+			st := b.DmaStatus
+			b.DmaStatus = 0
+			return byte(st)
+		}
+		return byte(b.DmaStatus >> 8)
 
 	default:
 		panic(fmt.Errorf("%w: read at unmapped port 0x%06X in Task 0", ErrKernelIOPanic, addr))

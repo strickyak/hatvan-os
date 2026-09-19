@@ -37,7 +37,12 @@ func TestHatvanVMKHello(t *testing.T) {
 		t.Fatalf("Failed to write test srec: %v", err)
 	}
 
-	cmd := exec.Command("./hatvan-vmk", "--trace", "--max-cycles", "1000", srecPath)
+	binPath := filepath.Join(tmpDir, "gepk")
+	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build gepk: %v\nOutput: %s", err, string(out))
+	}
+	cmd := exec.Command(binPath, "--trace", "--max-cycles", "1000", srecPath)
 	cmd.Dir = "../.."
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

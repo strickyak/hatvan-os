@@ -29,7 +29,7 @@ var (
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: hatvan-vm [options] <program.decb|system.img> [listing.list ...]\n\nOptions:\n")
+		fmt.Fprintf(os.Stderr, "Usage: gep9 [options] <program.decb|system.img> [listing.list ...]\n\nOptions:\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -148,7 +148,7 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		fmt.Fprintln(os.Stderr, "\n[hatvan-vm: interrupted by signal]")
+		fmt.Fprintln(os.Stderr, "\n[gep9: interrupted by signal]")
 		printRegisters(cpu)
 		os.Exit(0)
 	}()
@@ -193,7 +193,7 @@ func main() {
 		if cyclesSinceInputCheck >= 1024 {
 			cyclesSinceInputCheck = 0
 			if maxDuration > 0 && time.Since(startTime) >= maxDuration {
-				fmt.Fprintf(os.Stderr, "\n[hatvan-vm: reached maximum realtime limit of %.1f seconds]\n", *maxSecondsFlag)
+				fmt.Fprintf(os.Stderr, "\n[gep9: reached maximum realtime limit of %.1f seconds]\n", *maxSecondsFlag)
 				break
 			}
 			if initialInputPending {
@@ -208,13 +208,13 @@ func main() {
 		}
 
 		if *maxCyclesFlag > 0 && cpu.Cycles >= *maxCyclesFlag {
-			fmt.Fprintf(os.Stderr, "\n[hatvan-vm: reached maximum cycle limit %d]\n", *maxCyclesFlag)
+			fmt.Fprintf(os.Stderr, "\n[gep9: reached maximum cycle limit %d]\n", *maxCyclesFlag)
 			break
 		}
 	}
 
 	if *traceFlag || *printCyclesFlag || os.Getenv("HATVAN_PRINT_CYCLES") != "" {
-		fmt.Fprintf(os.Stderr, "[hatvan-vm finished: %d total cycles executed]\n", cpu.Cycles)
+		fmt.Fprintf(os.Stderr, "[gep9 finished: %d total cycles executed]\n", cpu.Cycles)
 	}
 	if *traceFlag {
 		printRegisters(cpu)
