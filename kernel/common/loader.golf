@@ -6,8 +6,11 @@ import "path"
 
 const E_FORMAT = 213 // Bad module format error
 
+var LastLoadedIsOS9 byte
+
 // LoadOS9Module reads an OS-9 machine language module from open pathId
 // and loads it into targetTask starting at baseAddr.
+// On 6809, the module is placed high in memory so its end abuts the redpage $FF00.
 // Returns (entryPC, totalSize, errCode).
 func LoadOS9Module(pathId byte, targetTask byte, baseAddr word) (word, word, byte) {
 	var hdr [13]byte
@@ -36,19 +39,24 @@ func LoadOS9Module(pathId byte, targetTask byte, baseAddr word) (word, word, byt
 	}
 	execOff := (word(hdr[9]) << 8) | word(hdr[10])
 
-	// Copy 13-byte header into targetTask at baseAddr
-	hal.DMACopy(0, word(&hdr[0]), targetTask, baseAddr, 13)
+	loadAddr := baseAddr
+	if hal.ARCH == '9' {
+		loadAddr = 0xFF00 - modSize
+	}
 
-	// Stream remainder of module into targetTask starting at baseAddr + 13
+	// Copy 13-byte header into targetTask at loadAddr
+	hal.DMACopy(0, word(&hdr[0]), targetTask, loadAddr, 13)
+
+	// Stream remainder of module into targetTask starting at loadAddr + 13
 	rem := modSize - 13
 	if rem > 0 {
-		rn, rerr := path.SysRead(pathId, targetTask, (*byte)(baseAddr+13), rem)
+		rn, rerr := path.SysRead(pathId, targetTask, (*byte)(loadAddr+13), rem)
 		if rn != rem || rerr != 0 {
 			return 0, 0, path.E_READ
 		}
 	}
 
-	entryPC := baseAddr + execOff
+	entryPC := loadAddr + execOff
 	return entryPC, modSize, 0
 }
 
@@ -115,11 +123,13 @@ func LoadBinary(pathId byte, targetTask byte, baseAddr word) (word, word, byte) 
 
 	// Format 1: OS-9 module ($87 $CD)
 	if magic[0] == 0x87 && magic[1] == 0xCD {
+		LastLoadedIsOS9 = 1
 		return LoadOS9Module(pathId, targetTask, baseAddr)
 	}
 
 	// Format 2: DECB segmented binary ($00 or $FE)
 	if magic[0] == 0x00 || magic[0] == 254 {
+		LastLoadedIsOS9 = 0
 		return LoadDECB(pathId, targetTask)
 	}
 

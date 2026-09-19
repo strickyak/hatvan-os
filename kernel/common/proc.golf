@@ -359,7 +359,7 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
 		return 0xFF, err
 	}
 
-	// Load binary into child task space starting at base address $0200
+	// Load binary into child task space
 	entryPC, binSize, lerr := loader.LoadBinary(binPathId, childProc.TaskID, 0x0200)
 	path.SysClose(binPathId)
 	if lerr != 0 {
@@ -367,48 +367,52 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
 		return 0xFF, lerr
 	}
 
-	// Setup child stack at $FE00
-	sp := word(0xFE00)
-	paramAddr := word(0)
-	paramLenVal := word(0)
-	if paramStr != (*byte)(0) && paramLen > 0 {
-		sp -= (paramLen + 1)
-		sp &^= 1
-		hal.DMACopy(0, word(paramStr), childProc.TaskID, sp, paramLen)
-		cr := byte('\r')
-		hal.DMACopy(0, word(&cr), childProc.TaskID, sp+paramLen, 1)
-		paramAddr = sp
-		paramLenVal = paramLen
-	}
-
-	// EOL Mode Heuristic: if binary is loaded as an OS-9 module ($87 $CD), set \r mode (1), else \n (0)
-	var checkMagic [2]byte
-	hal.DMACopy(childProc.TaskID, 0x0200, 0, word(&checkMagic[0]), 2)
-	if checkMagic[0] == 0x87 && checkMagic[1] == 0xCD {
-		childProc.LineMode = 1
-	} else {
-		childProc.LineMode = 0
-	}
+	childProc.LineMode = loader.LastLoadedIsOS9
+	codeStart := word(0x0200)
 
 	if hal.ARCH == 'k' {
+		sp := word(0xFE00)
+		if paramStr != (*byte)(0) && paramLen > 0 {
+			sp -= (paramLen + 1)
+			sp &^= 1
+			hal.DMACopy(0, word(paramStr), childProc.TaskID, sp, paramLen)
+			cr := byte('\r')
+			hal.DMACopy(0, word(&cr), childProc.TaskID, sp+paramLen, 1)
+		}
 		childProc.SavedSP = sp
+		childProc.CodeStart = 0x0200
 	} else if hal.ARCH == '9' {
 		dpVal := byte(0)
 		uVal := word(0)
+		paramEnd := word(0xFE00)
 
 		if childProc.LineMode == 1 {
-			uBase := (0x0200 + binSize + 0x00FF) & 0xFF00
-			dpVal = byte(uBase >> 8)
-			uVal = uBase
+			codeStart = 0xFF00 - binSize
+			paramEnd = codeStart & 0xFF00
+			dpVal = 0
+			uVal = 0
 
-			// Zero 2048 bytes of process data area starting at uBase
+			// Zero 2048 bytes of process data area starting at $0000
 			var zeroBuf [64]byte
 			for zi := word(0); zi < 64; zi++ {
 				zeroBuf[zi] = 0
 			}
 			for off := word(0); off < 2048; off += 64 {
-				hal.DMACopy(0, word(&zeroBuf[0]), childProc.TaskID, uBase+off, 64)
+				hal.DMACopy(0, word(&zeroBuf[0]), childProc.TaskID, off, 64)
 			}
+		}
+
+		sp := paramEnd
+		paramAddr := paramEnd
+		paramLenVal := word(0)
+		if paramStr != (*byte)(0) && paramLen > 0 {
+			sp -= (paramLen + 1)
+			sp &^= 1
+			hal.DMACopy(0, word(paramStr), childProc.TaskID, sp, paramLen)
+			cr := byte('\r')
+			hal.DMACopy(0, word(&cr), childProc.TaskID, sp+paramLen, 1)
+			paramAddr = sp
+			paramLenVal = paramLen
 		}
 
 		frameAddr := sp - 12
@@ -416,24 +420,24 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
 		initFrame[0] = 0x80                   // CC: FlagE (Entire frame)
 		initFrame[1] = byte(paramLenVal >> 8) // A (D MSB: paramLenVal)
 		initFrame[2] = byte(paramLenVal)      // B (D LSB: paramLenVal)
-		initFrame[3] = dpVal                  // DP (matches U page!)
-		initFrame[4] = byte(paramAddr >> 8)   // X MSB
+		initFrame[3] = dpVal                  // DP (0x00)
+		initFrame[4] = byte(paramAddr >> 8)   // X MSB (parameter pointer)
 		initFrame[5] = byte(paramAddr)        // X LSB
-		initFrame[6] = 0xFE                   // Y MSB ($FE00: top of memory)
-		initFrame[7] = 0x00                   // Y LSB
-		initFrame[8] = byte(uVal >> 8)        // U MSB
+		initFrame[6] = byte(paramEnd >> 8)    // Y MSB (paramEnd: top of user memory)
+		initFrame[7] = byte(paramEnd)         // Y LSB
+		initFrame[8] = byte(uVal >> 8)        // U MSB (0x0000: process data area)
 		initFrame[9] = byte(uVal)             // U LSB
 		initFrame[10] = byte(entryPC >> 8)    // PC MSB
 		initFrame[11] = byte(entryPC)         // PC LSB
 
 		hal.DMACopy(0, word(&initFrame[0]), childProc.TaskID, frameAddr, 12)
 		childProc.SavedSP = frameAddr
+		childProc.CodeStart = codeStart
 	} else {
 		panic("?ARCH")
 	}
 
 	childProc.SavedPC = entryPC
-	childProc.CodeStart = 0x0200
 	childProc.CodeSize = binSize
 	childProc.State = PROC_READY
 

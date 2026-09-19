@@ -90,7 +90,7 @@ func main() {
 			c1PID, c1Err := proc.SysFork(os9Cmd, paramStr, 7)
 			if c1Err == 0 && c1PID > 0 {
 				var checkMagic [2]byte
-				hal.DMACopy(c1PID, 0x0200, 0, word(&checkMagic[0]), 2)
+				hal.DMACopy(c1PID, proc.ProcTable[c1PID].CodeStart, 0, word(&checkMagic[0]), 2)
 				if checkMagic[0] == 0x87 && checkMagic[1] == 0xCD {
 					dev.KLog((*byte)("FORK:OS9:OK"))
 				}
