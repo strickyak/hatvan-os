@@ -12,6 +12,9 @@ const RBF_CMD_READ_FD = 4
 const RBF_CMD_READ_FILE = 5
 const RBF_CMD_GET_FD_INF = 6
 const RBF_CMD_READ_SB = 7
+const RBF_CMD_CREATE_FILE = 8
+const RBF_CMD_WRITE_FILE = 9
+const RBF_CMD_DELETE_FILE = 10
 
 // Mailbox offsets at $0080 in Task 1 RAM
 const MB_CMD = 0x0080
@@ -234,6 +237,75 @@ func dispatch() {
 		} else {
 			pokeb(MB_STATUS, 244)
 		}
+		return
+	}
+
+	if cmd == RBF_CMD_CREATE_FILE {
+		drive := peekb(MB_DRIVE)
+		mode := peekb(MB_PARAM)
+		cwdLSN := readW16(MB_AUX_LSN1)
+		path := (*byte)(MB_PATH_STR)
+
+		pDrive, parentFDLSN, fileName := rbf.RBFResolveParent(path, drive, cwdLSN)
+		if pDrive == 0xFF || parentFDLSN == 0 {
+			pokeb(MB_STATUS, 216) // E_PNNF
+			return
+		}
+
+		newFDLSN, err := rbf.RBFCreateFile(pDrive, parentFDLSN, fileName, mode)
+		if err != 0 {
+			pokeb(MB_STATUS, err)
+			return
+		}
+
+		pokeb(MB_STATUS, 0)
+		pokeb(MB_DRIVE, pDrive)
+		pokeb(MB_OUT_WORD1, byte(newFDLSN>>8))
+		pokeb(MB_OUT_WORD1+1, byte(newFDLSN))
+		pokeb(MB_OUT_BYTE1, mode)
+		pokeb(MB_OUT_LONG1, 0)
+		pokeb(MB_OUT_LONG1+1, 0)
+		pokeb(MB_OUT_LONG1+2, 0)
+		pokeb(MB_OUT_LONG1+3, 0)
+		return
+	}
+
+	if cmd == RBF_CMD_WRITE_FILE {
+		drive := peekb(MB_DRIVE)
+		srcTask := peekb(MB_TARGET_TASK)
+		srcAddr := readW32(MB_TARGET_ADDR)
+		fdLSN := readW32(MB_LSN)
+		count := readW16(MB_COUNT)
+		filePos := readW32(MB_FILE_POS)
+
+		bytesWritten, newSize, err := rbf.RBFWriteFile(drive, fdLSN, filePos, srcTask, srcAddr, count)
+		pokeb(MB_STATUS, err)
+		pokeb(MB_OUT_WORD1, byte(bytesWritten>>8))
+		pokeb(MB_OUT_WORD1+1, byte(bytesWritten))
+		pokeb(MB_OUT_LONG1, 0)
+		pokeb(MB_OUT_LONG1+1, 0)
+		pokeb(MB_OUT_LONG1+2, byte(newSize>>8))
+		pokeb(MB_OUT_LONG1+3, byte(newSize))
+		if sizeof[word]() > 2 {
+			pokeb(MB_OUT_LONG1, byte(newSize>>24))
+			pokeb(MB_OUT_LONG1+1, byte(newSize>>16))
+		}
+		return
+	}
+
+	if cmd == RBF_CMD_DELETE_FILE {
+		drive := peekb(MB_DRIVE)
+		cwdLSN := readW16(MB_AUX_LSN1)
+		path := (*byte)(MB_PATH_STR)
+
+		pDrive, parentFDLSN, fileName := rbf.RBFResolveParent(path, drive, cwdLSN)
+		if pDrive == 0xFF || parentFDLSN == 0 {
+			pokeb(MB_STATUS, 216) // E_PNNF
+			return
+		}
+
+		err := rbf.RBFDeleteFile(pDrive, parentFDLSN, fileName)
+		pokeb(MB_STATUS, err)
 		return
 	}
 

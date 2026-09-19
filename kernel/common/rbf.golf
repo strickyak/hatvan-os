@@ -7,9 +7,10 @@ const RBF_SECTOR_SIZE = 256
 const RBF_DIR_ENTRY_SIZE = 32
 const RBF_MAX_SEGMENTS = 16
 
-// Static sector buffers for RBF operations (Task 0 kernel RAM)
+// Static sector buffers for RBF operations (Task 1 RAM)
 var rbfSectorBuf [256]byte
 var rbfDirBuf [256]byte
+var rbfMapBuf [256]byte
 
 // RBFSuperblock represents LSN 0 metadata
 type RBFSuperblock struct {
@@ -145,6 +146,47 @@ func RBFReadFD(drive byte, fdLSN word, fd *RBFFileDescriptor) byte {
 	return 1
 }
 
+// RBFWriteFD writes updated File Descriptor metadata to fdLSN
+func RBFWriteFD(drive byte, fdLSN word, fd *RBFFileDescriptor) byte {
+	bufAddr := word(&rbfSectorBuf[0])
+	// Read existing FD sector to preserve header fields (owner, dates, etc.)
+	st := hal.DiskTransfer(drive, fdLSN, 1, bufAddr, 0)
+	if st != 1 {
+		for i := word(0); i < 256; i++ {
+			pokeb(bufAddr+i, 0)
+		}
+		pokeb(bufAddr+8, 1) // Link count = 1
+	}
+
+	pokeb(bufAddr, fd.Attributes)
+	pokeb(bufAddr+9, byte(fd.FileSize>>24))
+	pokeb(bufAddr+10, byte(fd.FileSize>>16))
+	pokeb(bufAddr+11, byte(fd.FileSize>>8))
+	pokeb(bufAddr+12, byte(fd.FileSize))
+
+	segAddr := bufAddr + 16
+	for i := word(0); i < RBF_MAX_SEGMENTS; i++ {
+		if i < word(fd.SegCount) {
+			lsn := fd.Segments[i].LSN
+			cnt := fd.Segments[i].Count
+			pokeb(segAddr, byte(lsn>>16))
+			pokeb(segAddr+1, byte(lsn>>8))
+			pokeb(segAddr+2, byte(lsn))
+			pokeb(segAddr+3, byte(cnt>>8))
+			pokeb(segAddr+4, byte(cnt))
+		} else {
+			pokeb(segAddr, 0)
+			pokeb(segAddr+1, 0)
+			pokeb(segAddr+2, 0)
+			pokeb(segAddr+3, 0)
+			pokeb(segAddr+4, 0)
+		}
+		segAddr += 5
+	}
+
+	return hal.DiskTransfer(drive, fdLSN, 1, bufAddr, 1)
+}
+
 // RBFLogicalToPhys maps a logical file sector index to its physical disk LSN
 func RBFLogicalToPhys(fd *RBFFileDescriptor, logSec word) word {
 	rem := logSec
@@ -217,6 +259,237 @@ func RBFScanDirectory(drive byte, dirFD *RBFFileDescriptor, targetName *byte) wo
 				return readWord24(entryAddr + 29)
 			}
 		}
+	}
+	return 0
+}
+
+// RBFFormatDirEntry formats a 32-byte directory entry with high-bit on last char of name
+func RBFFormatDirEntry(entryAddr word, name *byte, fdLSN word) {
+	for i := word(0); i < 32; i++ {
+		pokeb(entryAddr+i, 0)
+	}
+	p := word(name)
+	nameLen := word(0)
+	for nameLen < 29 {
+		c := peekb(p + nameLen)
+		if c == 0 || c == '/' || c == ' ' || c == '\r' || c == '\n' {
+			break
+		}
+		nameLen++
+	}
+	if nameLen == 0 {
+		return
+	}
+	for i := word(0); i < nameLen; i++ {
+		c := peekb(p + i)
+		if i == nameLen-1 {
+			c |= 0x80
+		}
+		pokeb(entryAddr+i, c)
+	}
+	pokeb(entryAddr+29, byte(fdLSN>>16))
+	pokeb(entryAddr+30, byte(fdLSN>>8))
+	pokeb(entryAddr+31, byte(fdLSN))
+}
+
+// RBFAllocClusters finds up to count contiguous free clusters in the allocation bitmap
+func RBFAllocClusters(drive byte, count word) (word, word) {
+	var sb RBFSuperblock
+	st := RBFReadSuperblock(drive, &sb)
+	if st != 1 {
+		return 0, 0
+	}
+
+	totalClusters := sb.TotalSectors / sb.ClusterSize
+	mapSecCount := (sb.MapBytes + 255) / 256
+	mapBufAddr := word(&rbfMapBuf[0])
+
+	for s := word(0); s < mapSecCount; s++ {
+		mapLSN := word(1) + s
+		st = hal.DiskTransfer(drive, mapLSN, 1, mapBufAddr, 0)
+		if st != 1 {
+			return 0, 0
+		}
+
+		for b := word(0); b < 256; b++ {
+			byteIdx := s*256 + b
+			if byteIdx >= sb.MapBytes {
+				break
+			}
+			val := peekb(mapBufAddr + b)
+			if val != 0xFF {
+				for bit := word(0); bit < 8; bit++ {
+					mask := byte(1 << (7 - bit))
+					if (val & mask) == 0 {
+						clusterNum := byteIdx*8 + bit
+						if clusterNum >= totalClusters {
+							return 0, 0
+						}
+
+						// Found start of free cluster run
+						allocCnt := word(0)
+						curByte := b
+						curBit := bit
+						for allocCnt < count {
+							if (s*256 + curByte) >= sb.MapBytes {
+								break
+							}
+							bVal := peekb(mapBufAddr + curByte)
+							bMask := byte(1 << (7 - curBit))
+							if (bVal & bMask) != 0 {
+								break // cluster is used
+							}
+							pokeb(mapBufAddr+curByte, bVal|bMask)
+							allocCnt++
+							curBit++
+							if curBit == 8 {
+								curBit = 0
+								curByte++
+								if curByte >= 256 {
+									break // don't span across map sectors in single write
+								}
+							}
+						}
+
+						st = hal.DiskTransfer(drive, mapLSN, 1, mapBufAddr, 1)
+						if st != 1 {
+							return 0, 0
+						}
+
+						startLSN := clusterNum * sb.ClusterSize
+						return startLSN, allocCnt
+					}
+				}
+			}
+		}
+	}
+	return 0, 0 // Disk full
+}
+
+// RBFFreeClusters marks count clusters starting at lsn as free in the bitmap
+func RBFFreeClusters(drive byte, lsn word, count word) {
+	var sb RBFSuperblock
+	st := RBFReadSuperblock(drive, &sb)
+	if st != 1 {
+		return
+	}
+
+	mapBufAddr := word(&rbfMapBuf[0])
+	curMapLSN := word(0xFFFF)
+
+	for c := word(0); c < count; c++ {
+		clusterNum := (lsn / sb.ClusterSize) + c
+		byteIdx := clusterNum / 8
+		bit := clusterNum % 8
+		mapLSN := word(1) + (byteIdx / 256)
+		secOff := byteIdx % 256
+
+		if mapLSN != curMapLSN {
+			if curMapLSN != 0xFFFF {
+				hal.DiskTransfer(drive, curMapLSN, 1, mapBufAddr, 1)
+			}
+			st = hal.DiskTransfer(drive, mapLSN, 1, mapBufAddr, 0)
+			if st != 1 {
+				return
+			}
+			curMapLSN = mapLSN
+		}
+
+		mask := byte(1 << (7 - bit))
+		val := peekb(mapBufAddr + secOff)
+		pokeb(mapBufAddr+secOff, val&^mask)
+	}
+
+	if curMapLSN != 0xFFFF {
+		hal.DiskTransfer(drive, curMapLSN, 1, mapBufAddr, 1)
+	}
+}
+
+// RBFAddDirEntry adds entry (name, fdLSN) to directory dirFD
+func RBFAddDirEntry(drive byte, dirFDLSN word, dirFD *RBFFileDescriptor, name *byte, fdLSN word) byte {
+	dirBufAddr := word(&rbfDirBuf[0])
+	totalSectors := (dirFD.FileSize + 255) / 256
+
+	// 1. Search for an existing deleted slot (byte 0 == 0) within current FileSize
+	for s := word(0); s < totalSectors; s++ {
+		physLSN := RBFLogicalToPhys(dirFD, s)
+		if physLSN == 0 {
+			break
+		}
+		st := hal.DiskTransfer(drive, physLSN, 1, dirBufAddr, 0)
+		if st != 1 {
+			return 244 // E_READ
+		}
+
+		for e := word(0); e < 8; e++ {
+			entryOffset := s*256 + e*32
+			if entryOffset >= dirFD.FileSize {
+				break
+			}
+			entryAddr := dirBufAddr + e*32
+			if peekb(entryAddr) == 0 {
+				// Found empty slot!
+				RBFFormatDirEntry(entryAddr, name, fdLSN)
+				st = hal.DiskTransfer(drive, physLSN, 1, dirBufAddr, 1)
+				if st != 1 {
+					return 245 // E_WRITE
+				}
+				return 0
+			}
+		}
+	}
+
+	// 2. No deleted slots found: append to directory
+	newOffset := dirFD.FileSize
+	secIdx := newOffset / 256
+	secOff := newOffset % 256
+
+	if secOff > 0 {
+		// Existing last sector has room
+		physLSN := RBFLogicalToPhys(dirFD, secIdx)
+		st := hal.DiskTransfer(drive, physLSN, 1, dirBufAddr, 0)
+		if st != 1 {
+			return 244
+		}
+		RBFFormatDirEntry(dirBufAddr+secOff, name, fdLSN)
+		st = hal.DiskTransfer(drive, physLSN, 1, dirBufAddr, 1)
+		if st != 1 {
+			return 245 // E_WRITE
+		}
+	} else {
+		// Need new sector for directory
+		newLSN, newCnt := RBFAllocClusters(drive, 1)
+		if newCnt == 0 {
+			return 246 // E_DFULL
+		}
+		for i := word(0); i < 256; i++ {
+			pokeb(dirBufAddr+i, 0)
+		}
+		RBFFormatDirEntry(dirBufAddr, name, fdLSN)
+		st := hal.DiskTransfer(drive, newLSN, 1, dirBufAddr, 1)
+		if st != 1 {
+			RBFFreeClusters(drive, newLSN, 1)
+			return 245
+		}
+
+		lastIdx := word(dirFD.SegCount) - 1
+		if dirFD.SegCount > 0 && dirFD.Segments[lastIdx].LSN+dirFD.Segments[lastIdx].Count == newLSN {
+			dirFD.Segments[lastIdx].Count += 1
+		} else {
+			if dirFD.SegCount >= RBF_MAX_SEGMENTS {
+				RBFFreeClusters(drive, newLSN, 1)
+				return 246
+			}
+			dirFD.Segments[dirFD.SegCount].LSN = newLSN
+			dirFD.Segments[dirFD.SegCount].Count = 1
+			dirFD.SegCount++
+		}
+	}
+
+	dirFD.FileSize += 32
+	st := RBFWriteFD(drive, dirFDLSN, dirFD)
+	if st != 1 {
+		return 245
 	}
 	return 0
 }
@@ -313,4 +586,260 @@ func RBFResolvePath(path *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isE
 	}
 
 	return drive, currFDLSN
+}
+
+// RBFResolveParent splits path into (drive, parentDirFDLSN, fileNamePtr).
+func RBFResolveParent(path *byte, defaultDrive byte, cwdLSN word) (byte, word, *byte) {
+	drive, remPath := ParsePathDrive(path)
+	if drive == 0xFF {
+		drive = defaultDrive
+	}
+
+	p := word(remPath)
+	lastSlash := word(0)
+	hasSlash := false
+	idx := word(0)
+	for {
+		c := peekb(p + idx)
+		if c == 0 || c == ' ' || c == '\r' || c == '\n' {
+			break
+		}
+		if c == '/' {
+			hasSlash = true
+			lastSlash = p + idx
+		}
+		idx++
+	}
+
+	if !hasSlash {
+		curDirLSN := cwdLSN
+		if curDirLSN == 0 {
+			var sb RBFSuperblock
+			st := RBFReadSuperblock(drive, &sb)
+			if st == 1 {
+				curDirLSN = sb.RootDirLSN
+			}
+		}
+		return drive, curDirLSN, remPath
+	}
+
+	if lastSlash == p {
+		var sb RBFSuperblock
+		st := RBFReadSuperblock(drive, &sb)
+		if st != 1 {
+			return 0xFF, 0, remPath
+		}
+		return drive, sb.RootDirLSN, (*byte)(lastSlash + 1)
+	}
+
+	pokeb(lastSlash, 0)
+	pDrive, parentFDLSN := RBFResolvePath(path, defaultDrive, cwdLSN, 0, 0)
+	pokeb(lastSlash, '/')
+	return pDrive, parentFDLSN, (*byte)(lastSlash + 1)
+}
+
+// RBFCreateFile creates or truncates a file in parent directory parentDirFDLSN
+func RBFCreateFile(drive byte, parentDirFDLSN word, fileName *byte, attr byte) (word, byte) {
+	var dirFD RBFFileDescriptor
+	st := RBFReadFD(drive, parentDirFDLSN, &dirFD)
+	if st != 1 {
+		return 0, 216 // E_PNNF
+	}
+
+	existingFDLSN := RBFScanDirectory(drive, &dirFD, fileName)
+	if existingFDLSN != 0 {
+		var existFD RBFFileDescriptor
+		st = RBFReadFD(drive, existingFDLSN, &existFD)
+		if st == 1 {
+			for i := word(0); i < word(existFD.SegCount); i++ {
+				RBFFreeClusters(drive, existFD.Segments[i].LSN, existFD.Segments[i].Count)
+			}
+			existFD.FileSize = 0
+			existFD.SegCount = 0
+			RBFWriteFD(drive, existingFDLSN, &existFD)
+			return existingFDLSN, 0
+		}
+	}
+
+	newFDLSN, cnt := RBFAllocClusters(drive, 1)
+	if cnt == 0 {
+		return 0, 246 // E_DFULL
+	}
+
+	var newFD RBFFileDescriptor
+	newFD.Attributes = attr | 0x03 // read/write
+	newFD.FileSize = 0
+	newFD.SegCount = 0
+	st = RBFWriteFD(drive, newFDLSN, &newFD)
+	if st != 1 {
+		RBFFreeClusters(drive, newFDLSN, 1)
+		return 0, 245 // E_WRITE
+	}
+
+	err := RBFAddDirEntry(drive, parentDirFDLSN, &dirFD, fileName, newFDLSN)
+	if err != 0 {
+		RBFFreeClusters(drive, newFDLSN, 1)
+		return 0, err
+	}
+
+	return newFDLSN, 0
+}
+
+// RBFWriteFile writes count bytes from srcTask at srcAddr to file fdLSN at filePos
+func RBFWriteFile(drive byte, fdLSN word, filePos word, srcTask byte, srcAddr word, count word) (word, word, byte) {
+	if count == 0 {
+		return 0, 0, 0
+	}
+
+	var fd RBFFileDescriptor
+	st := RBFReadFD(drive, fdLSN, &fd)
+	if st != 1 {
+		return 0, 0, 244 // E_READ
+	}
+
+	allocSectors := word(0)
+	for i := word(0); i < word(fd.SegCount); i++ {
+		allocSectors += fd.Segments[i].Count
+	}
+
+	newEnd := filePos + count
+	neededSectors := (newEnd + 255) / 256
+
+	for allocSectors < neededSectors {
+		diff := neededSectors - allocSectors
+		newLSN, newCnt := RBFAllocClusters(drive, diff)
+		if newCnt == 0 {
+			return 0, fd.FileSize, 246 // E_DFULL
+		}
+
+		lastIdx := word(fd.SegCount) - 1
+		if fd.SegCount > 0 && fd.Segments[lastIdx].LSN+fd.Segments[lastIdx].Count == newLSN {
+			fd.Segments[lastIdx].Count += newCnt
+		} else {
+			if fd.SegCount >= RBF_MAX_SEGMENTS {
+				RBFFreeClusters(drive, newLSN, newCnt)
+				return 0, fd.FileSize, 246
+			}
+			fd.Segments[fd.SegCount].LSN = newLSN
+			fd.Segments[fd.SegCount].Count = newCnt
+			fd.SegCount++
+		}
+		allocSectors += newCnt
+	}
+
+	bytesDone := word(0)
+	curPos := filePos
+
+	for bytesDone < count {
+		logSec := curPos / 256
+		secOff := curPos % 256
+		physLSN := RBFLogicalToPhys(&fd, logSec)
+		if physLSN == 0 {
+			break
+		}
+
+		chunk := 256 - secOff
+		rem := count - bytesDone
+		if chunk > rem {
+			chunk = rem
+		}
+
+		if secOff == 0 && chunk == 256 {
+			st = hal.DiskTransfer(drive, physLSN, srcTask, srcAddr+bytesDone, 1)
+			if st != 1 {
+				break
+			}
+		} else {
+			if curPos < fd.FileSize || secOff > 0 {
+				st = hal.DiskTransfer(drive, physLSN, 1, word(&rbfSectorBuf[0]), 0)
+				if st != 1 {
+					break
+				}
+			} else {
+				for k := word(0); k < 256; k++ {
+					rbfSectorBuf[k] = 0
+				}
+			}
+
+			if srcTask == 1 {
+				klib.memcpy((*byte)(word(&rbfSectorBuf[0])+secOff), (*byte)(srcAddr+bytesDone), chunk)
+			} else {
+				hal.DMACopy(srcTask, srcAddr+bytesDone, 1, word(&rbfSectorBuf[0])+secOff, chunk)
+			}
+
+			st = hal.DiskTransfer(drive, physLSN, 1, word(&rbfSectorBuf[0]), 1)
+			if st != 1 {
+				break
+			}
+		}
+
+		bytesDone += chunk
+		curPos += chunk
+	}
+
+	if curPos > fd.FileSize {
+		fd.FileSize = curPos
+	}
+
+	st = RBFWriteFD(drive, fdLSN, &fd)
+	if st != 1 {
+		return bytesDone, fd.FileSize, 245 // E_WRITE
+	}
+
+	return bytesDone, fd.FileSize, 0
+}
+
+// RBFDeleteFile deletes fileName from directory parentDirFDLSN
+func RBFDeleteFile(drive byte, parentDirFDLSN word, fileName *byte) byte {
+	var dirFD RBFFileDescriptor
+	st := RBFReadFD(drive, parentDirFDLSN, &dirFD)
+	if st != 1 {
+		return 216 // E_PNNF
+	}
+
+	totalSectors := (dirFD.FileSize + 255) / 256
+	dirBufAddr := word(&rbfDirBuf[0])
+
+	for s := word(0); s < totalSectors; s++ {
+		physLSN := RBFLogicalToPhys(&dirFD, s)
+		if physLSN == 0 {
+			break
+		}
+		st = hal.DiskTransfer(drive, physLSN, 1, dirBufAddr, 0)
+		if st != 1 {
+			return 244
+		}
+
+		for e := word(0); e < 8; e++ {
+			entryOffset := s*256 + e*32
+			if entryOffset >= dirFD.FileSize {
+				return 216
+			}
+			entryAddr := dirBufAddr + e*32
+			if peekb(entryAddr) == 0 {
+				continue
+			}
+
+			if RBFMatchName(entryAddr, fileName) {
+				fdLSN := readWord24(entryAddr + 29)
+
+				var fileFD RBFFileDescriptor
+				st = RBFReadFD(drive, fdLSN, &fileFD)
+				if st == 1 {
+					for i := word(0); i < word(fileFD.SegCount); i++ {
+						RBFFreeClusters(drive, fileFD.Segments[i].LSN, fileFD.Segments[i].Count)
+					}
+				}
+				RBFFreeClusters(drive, fdLSN, 1)
+
+				pokeb(entryAddr, 0)
+				st = hal.DiskTransfer(drive, physLSN, 1, dirBufAddr, 1)
+				if st != 1 {
+					return 245 // E_WRITE
+				}
+				return 0
+			}
+		}
+	}
+	return 216 // E_PNNF
 }

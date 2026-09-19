@@ -216,6 +216,19 @@ func Dispatch(callNum byte) {
 		return
 	}
 
+	if callNum == I_DELETE {
+		count := CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
+		err := proc.ProcDelete(curPID, &pathBuf[0])
+		if err == 0 {
+			UserFrame.X += count
+			UserFrame.CC &^= 1
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1
+		}
+		return
+	}
+
 	if callNum == F_LINK {
 		// Module linking: not currently in RAM, return E$MNF (218) to fallback to disk
 		UserFrame.B = 218

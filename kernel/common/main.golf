@@ -49,6 +49,41 @@ func main() {
 		path.SysClose(pLog)
 	}
 
+	// 3b. Test RBF File Creation, Write, Readback, and Deletion
+	testFilePath := (*byte)("/d0/TESTFILE")
+	pCreate, errCreate := path.SysCreate(0, testFilePath, path.MODE_WRITE, 0, 0, 0)
+	if errCreate == 0 && pCreate != 0xFF {
+		dev.KLog((*byte)("RBF:CREATE:OK"))
+		testMsg := (*byte)("Hatvan RBF Write Test OK\n")
+		wn, werr := path.SysWrite(pCreate, 0, testMsg, 25)
+		if werr == 0 && wn == 25 {
+			dev.KLog((*byte)("RBF:WRITE:OK"))
+		}
+		path.SysClose(pCreate)
+
+		// Read back and verify contents
+		pRead, errRead := path.SysOpen(0, testFilePath, path.MODE_READ, 0, 0, 0)
+		if errRead == 0 && pRead != 0xFF {
+			var readBuf [32]byte
+			rn, rerr := path.SysRead(pRead, 0, &readBuf[0], 25)
+			if rerr == 0 && rn == 25 {
+				if klib.memeq(&readBuf[0], testMsg, 25) {
+					dev.KLog((*byte)("RBF:READBACK:OK"))
+				}
+			}
+			path.SysClose(pRead)
+		}
+
+		// Delete test file and verify it's gone
+		delErr := path.SysDelete(0, testFilePath, 0, 0, 0)
+		if delErr == 0 {
+			pCheck, errCheck := path.SysOpen(0, testFilePath, path.MODE_READ, 0, 0, 0)
+			if errCheck != 0 && pCheck == 0xFF {
+				dev.KLog((*byte)("RBF:DELETE:OK"))
+			}
+		}
+	}
+
 	if pTerm != 0xFF {
 		path.SysClose(pTerm)
 	}

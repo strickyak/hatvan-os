@@ -202,8 +202,8 @@ test: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_68K) -disk0=$(DISK_IMAGE) -input="exit\n" $(KERNEL_68K)
 
 test-interactive: $(BUILD_DIR) vms kernels cmds disk
-	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nCAT /proc/p\nexit\n" $(KERNEL_6809)
-	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHO hello from 68k userspace\nCAT /proc/p\nexit\n" $(KERNEL_68K)
+	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nECHO redirection works on 6809 > /d0/redir9.txt\nCAT /d0/redir9.txt\nCAT /proc/p\nexit\n" $(KERNEL_6809)
+	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHO hello from 68k userspace\nECHO redirection works on 68k > /d0/redirk.txt\nCAT /d0/redirk.txt\nCAT /proc/p\nexit\n" $(KERNEL_68K)
 
 # --- Clean ---
 clean:

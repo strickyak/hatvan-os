@@ -11,6 +11,9 @@ const RBF_CMD_READ_FD = 4
 const RBF_CMD_READ_FILE = 5
 const RBF_CMD_GET_FD_INF = 6
 const RBF_CMD_READ_SB = 7
+const RBF_CMD_CREATE_FILE = 8
+const RBF_CMD_WRITE_FILE = 9
+const RBF_CMD_DELETE_FILE = 10
 
 // Mailbox offsets at $0080 in Task 1 RAM
 const MB_CMD = 0
@@ -172,6 +175,82 @@ func ReadSuperblock(drive byte, targetTask byte, targetAddr word) byte {
 	mb[MB_DRIVE] = drive
 	mb[MB_TARGET_TASK] = targetTask
 	writeW32(MB_TARGET_ADDR, targetAddr)
+
+	return Call()
+}
+
+// CreateFile asks Task 1 to create or truncate a file at pathStr.
+// Returns (finalDrive, fdLSN, attr, errCode).
+func CreateFile(pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word, mode byte) (byte, word, byte, byte) {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+	mb[MB_CMD] = RBF_CMD_CREATE_FILE
+	mb[MB_DRIVE] = defaultDrive
+	mb[MB_PARAM] = mode
+	writeW16(MB_AUX_LSN1, cwdLSN)
+	writeW16(MB_AUX_LSN2, cxdLSN)
+
+	p := word(pathStr)
+	for i := word(0); i < 31; i++ {
+		c := peekb(p + i)
+		mb[MB_PATH_STR+i] = c
+		if c == 0 {
+			break
+		}
+	}
+	mb[MB_PATH_STR+31] = 0
+
+	st := Call()
+	if st != 0 {
+		return 0xFF, 0, 0, st
+	}
+
+	finalDrive := mb[MB_DRIVE]
+	fdLSN := (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
+	attr := mb[MB_OUT_BYTE1]
+	return finalDrive, fdLSN, attr, 0
+}
+
+// WriteFile requests Task 1 to write count bytes from srcTask at srcAddr
+// into file (drive, fdLSN) at filePos.
+// Returns (bytesWritten, errCode).
+func WriteFile(drive byte, fdLSN word, filePos word, srcTask byte, srcAddr word, count word) (word, byte) {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+	mb[MB_CMD] = RBF_CMD_WRITE_FILE
+	mb[MB_DRIVE] = drive
+	mb[MB_TARGET_TASK] = srcTask
+	writeW32(MB_TARGET_ADDR, srcAddr)
+	writeW32(MB_LSN, fdLSN)
+	writeW16(MB_COUNT, count)
+	writeW32(MB_FILE_POS, filePos)
+
+	st := Call()
+	bytesWritten := (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
+	return bytesWritten, st
+}
+
+// DeleteFile requests Task 1 to delete file at pathStr.
+func DeleteFile(pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word) byte {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+	mb[MB_CMD] = RBF_CMD_DELETE_FILE
+	mb[MB_DRIVE] = defaultDrive
+	writeW16(MB_AUX_LSN1, cwdLSN)
+	writeW16(MB_AUX_LSN2, cxdLSN)
+
+	p := word(pathStr)
+	for i := word(0); i < 31; i++ {
+		c := peekb(p + i)
+		mb[MB_PATH_STR+i] = c
+		if c == 0 {
+			break
+		}
+	}
+	mb[MB_PATH_STR+31] = 0
 
 	return Call()
 }

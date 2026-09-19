@@ -247,6 +247,15 @@ func ProcCreate(pid byte, pathStr *byte, mode byte) (byte, byte) {
 	return slot, 0
 }
 
+// ProcDelete deletes a file for the given process
+func ProcDelete(pid byte, pathStr *byte) byte {
+	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+		return E_PROCUNDEF
+	}
+	p := &ProcTable[pid]
+	return path.SysDelete(pid, pathStr, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN)
+}
+
 // ProcClose closes a per-process path descriptor
 func ProcClose(pid byte, procPath byte) byte {
 	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {

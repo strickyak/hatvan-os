@@ -9,6 +9,7 @@ import "proc"
 var lineBuf [128]byte
 var cmdName [32]byte
 var argBuf [128]byte
+var redirBuf [64]byte
 
 func printStr(s *byte) {
 	n := klib.strlen(s)
@@ -55,24 +56,55 @@ func RunCommand(line *byte) byte {
 	}
 	pokeb(word(&cmdName[0])+cmdLen, 0)
 
-	// 3. Extract arguments into argBuf (CR terminated)
+	// 3. Extract arguments into argBuf (CR terminated), checking for '>'
 	for peekb(word(p)) == ' ' {
 		p = (*byte)(word(p) + 1)
 	}
 
 	argLen := word(0)
-	for argLen < 126 {
+	redirLen := word(0)
+	isRedir := false
+
+	for {
 		c := peekb(word(p))
 		if c == 0 || c == '\r' || c == '\n' {
 			break
 		}
-		pokeb(word(&argBuf[0])+argLen, c)
-		argLen++
+		if c == '>' {
+			isRedir = true
+			p = (*byte)(word(p) + 1)
+			break
+		}
+		if argLen < 126 {
+			pokeb(word(&argBuf[0])+argLen, c)
+			argLen++
+		}
 		p = (*byte)(word(p) + 1)
+	}
+
+	for argLen > 0 && peekb(word(&argBuf[0])+argLen-1) == ' ' {
+		argLen--
 	}
 	pokeb(word(&argBuf[0])+argLen, '\r')
 	pokeb(word(&argBuf[0])+argLen+1, 0)
 	argLen++ // count includes '\r'
+
+	pokeb(word(&redirBuf[0]), 0)
+	if isRedir {
+		for peekb(word(p)) == ' ' {
+			p = (*byte)(word(p) + 1)
+		}
+		for redirLen < 63 {
+			c := peekb(word(p))
+			if c == 0 || c == ' ' || c == '\r' || c == '\n' {
+				break
+			}
+			pokeb(word(&redirBuf[0])+redirLen, c)
+			redirLen++
+			p = (*byte)(word(p) + 1)
+		}
+		pokeb(word(&redirBuf[0])+redirLen, 0)
+	}
 
 	// 4. Check builtin commands
 	if klib.streq(&cmdName[0], (*byte)("help")) {
@@ -156,6 +188,20 @@ func RunCommand(line *byte) byte {
 	}
 
 	if cpid > 0 {
+		if redirBuf[0] != 0 {
+			curP := &proc.ProcTable[cpid]
+			newPathId, cErr := path.SysCreate(cpid, &redirBuf[0], path.MODE_WRITE, curP.CwdDrive, curP.CwdFDLSN, curP.CxdFDLSN)
+			if cErr == 0 {
+				oldPathId := curP.Paths[1]
+				if oldPathId != 0xFF {
+					path.SysClose(oldPathId)
+				}
+				curP.Paths[1] = newPathId
+			} else {
+				printStr((*byte)("cannot create redirection file\n"))
+			}
+		}
+
 		proc.ProcTable[proc.CurrentPID].State = proc.PROC_WAITING
 		hal.LaunchProcess(cpid, proc.ProcTable[cpid].SavedSP, proc.ProcTable[cpid].SavedPC)
 		wpid, wst, werr := proc.SysWait()

@@ -141,9 +141,33 @@ func SysCreate(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN wo
 	if devType == dev.DEV_PROC {
 		return 0xFF, E_BMODE
 	}
-	// For disk files, attempt open; if not found, creating new RBF file requires allocation
-	pId, err := SysOpen(task, pathStr, mode|MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
-	return pId, err
+
+	finalDrive, fdLSN, attr, err := rbf_ipc.CreateFile(pathStr, defaultDrive, cwdLSN, cxdLSN, mode)
+	if err != 0 || finalDrive == 0xFF || fdLSN == 0 {
+		return 0xFF, err
+	}
+
+	pathId, pd := PathAlloc()
+	if pathId == 0xFF {
+		return 0xFF, E_PTHFUL
+	}
+
+	pd.DevType = dev.DEV_DISK
+	pd.Drive = finalDrive
+	pd.Mode = mode | MODE_WRITE
+	pd.FDLSN = fdLSN
+	pd.FileSize = 0
+	pd.FilePos = 0
+	return pathId, 0
+}
+
+// SysDelete deletes a file from the disk filesystem
+func SysDelete(task byte, pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word) byte {
+	devType, _, _ := dev.ParsePathDevice(pathStr, defaultDrive)
+	if devType != dev.DEV_DISK {
+		return E_BMODE
+	}
+	return rbf_ipc.DeleteFile(pathStr, defaultDrive, cwdLSN, cxdLSN)
 }
 
 // SysClose closes an open path descriptor
@@ -231,8 +255,19 @@ func SysWrite(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 		return count, 0
 	}
 
-	// DEV_DISK writes (for files)
-	return count, 0
+	if pd.DevType == dev.DEV_DISK {
+		bytesWritten, err := rbf_ipc.WriteFile(pd.Drive, pd.FDLSN, pd.FilePos, task, word(ubuf), count)
+		if err != 0 {
+			return 0, err
+		}
+		pd.FilePos += bytesWritten
+		if pd.FilePos > pd.FileSize {
+			pd.FileSize = pd.FilePos
+		}
+		return bytesWritten, 0
+	}
+
+	return 0, E_BMODE
 }
 
 // SysSeek sets the byte position of an open file
