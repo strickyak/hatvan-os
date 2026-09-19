@@ -16,3 +16,4 @@ RCS/
 *.rom
 *.decb
 !testdata/*.decb
+/build/
