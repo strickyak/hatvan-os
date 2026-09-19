@@ -5,7 +5,7 @@ import "hal"
 import "klib"
 import "path"
 import "proc"
-import "rbf"
+import "rbf_ipc"
 
 // OS-9 System Call Numbers
 const F_LINK = 0x00   // F$Link
@@ -399,7 +399,7 @@ func Dispatch(callNum byte) {
 			if cnt > 256 {
 				cnt = 256
 			}
-			err := rbf.RBFGetFDInf(pd.Drive, fdLSN, curPID, UserFrame.X, cnt)
+			err := rbf_ipc.GetFDInf(pd.Drive, fdLSN, curPID, UserFrame.X, cnt)
 			if err == 0 {
 				UserFrame.CC &^= 1
 			} else {

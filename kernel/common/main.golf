@@ -2,19 +2,16 @@ package main
 
 import "hal"
 import "klib"
-import "rbf"
 import "dev"
 import "path"
 import "proc"
 import "syscall"
 import "sh"
 
-var bootSB rbf.RBFSuperblock
-
 func main() {
 	dev.KLog((*byte)("Hatvan OS"))
 
-	// Initialize path subsystem
+	proc.ProcInit()
 	path.PathInit()
 	syscall.SyscallInit()
 
@@ -57,37 +54,35 @@ func main() {
 	}
 
 	// 4. Test Process Management & 4 Standard Paths Inheritance (Phase 4)
-	proc.ProcInit()
-
-	// Allocate root Process 1 (e.g. Shell)
+	// Allocate root Process (e.g. Shell)
 	p1PID, p1 := proc.ProcAlloc(0)
-	if p1PID == 1 && p1 != (*proc.Process)(0) {
+	if p1PID > 0 && p1 != (*proc.Process)(0) {
 		klib.strcpy(&p1.CmdName[0], (*byte)("sh"))
-		// Open 4 standard paths for Process 1:
+		// Open 4 standard paths for Process:
 		// 0: stdin (/term)
 		// 1: stdout (/term)
 		// 2: stderr (/term)
 		// 3: stdlog (/log)
-		pIn, _ := proc.ProcOpen(1, termPath, path.MODE_READ)
-		pOut, _ := proc.ProcOpen(1, termPath, path.MODE_WRITE)
-		pErr, _ := proc.ProcOpen(1, termPath, path.MODE_WRITE)
-		pLogProc, _ := proc.ProcOpen(1, logPath, path.MODE_WRITE)
+		pIn, _ := proc.ProcOpen(p1PID, termPath, path.MODE_READ)
+		pOut, _ := proc.ProcOpen(p1PID, termPath, path.MODE_WRITE)
+		pErr, _ := proc.ProcOpen(p1PID, termPath, path.MODE_WRITE)
+		pLogProc, _ := proc.ProcOpen(p1PID, logPath, path.MODE_WRITE)
 
 		if pIn == 0 && pOut == 1 && pErr == 2 && pLogProc == 3 {
-			// Now fork/allocate child Process 2 from parent Process 1
-			p2PID, p2 := proc.ProcAlloc(1)
-			if p2PID == 2 && p2 != (*proc.Process)(0) {
+			// Now fork/allocate child Process from parent Process
+			p2PID, p2 := proc.ProcAlloc(p1PID)
+			if p2PID > 0 && p2 != (*proc.Process)(0) {
 				// Verify child inherited all 4 standard paths
 				if p2.Paths[0] == p1.Paths[0] && p2.Paths[1] == p1.Paths[1] && p2.Paths[2] == p1.Paths[2] && p2.Paths[3] == p1.Paths[3] {
 					dev.KLog((*byte)("PROC:INHERIT4:OK"))
 				}
 
 				// Free child process
-				proc.ProcFree(2)
+				proc.ProcFree(p2PID)
 			}
 
 			// 5. Test SysFork with OS-9 Module (/d0/Cmds9/TESTCMD)
-			proc.SetCurrentPID(1)
+			proc.SetCurrentPID(p1PID)
 			os9Cmd := (*byte)("/d0/Cmds9/TESTCMD")
 			paramStr := (*byte)("testarg")
 			c1PID, c1Err := proc.SysFork(os9Cmd, paramStr, 7)
@@ -140,7 +135,7 @@ func main() {
 			}
 
 			// 9. Test User Process Execution in User Space (Phase 5)
-			proc.SetCurrentPID(1)
+			proc.SetCurrentPID(p1PID)
 			echoCmd := (*byte)("ECHO")
 			paramEcho := (*byte)("hello world\r")
 			pEcho, pEchoErr := proc.SysFork(echoCmd, paramEcho, 12)
@@ -157,20 +152,20 @@ func main() {
 			}
 
 			// Free parent process
-			proc.ProcFree(1)
+			proc.ProcFree(p1PID)
 			dev.KLog((*byte)("PROC:LIFECYCLE:OK"))
 		}
 	}
 
 	// 10. Resident Mini-Shell (Phase 5)
 	pShellPID, pShell := proc.ProcAlloc(0)
-	if pShellPID == 1 && pShell != (*proc.Process)(0) {
+	if pShellPID > 0 && pShell != (*proc.Process)(0) {
 		klib.strcpy(&pShell.CmdName[0], (*byte)("sh"))
-		proc.ProcOpen(1, termPath, path.MODE_READ)
-		proc.ProcOpen(1, termPath, path.MODE_WRITE)
-		proc.ProcOpen(1, termPath, path.MODE_WRITE)
-		proc.ProcOpen(1, logPath, path.MODE_WRITE)
-		proc.SetCurrentPID(1)
+		proc.ProcOpen(pShellPID, termPath, path.MODE_READ)
+		proc.ProcOpen(pShellPID, termPath, path.MODE_WRITE)
+		proc.ProcOpen(pShellPID, termPath, path.MODE_WRITE)
+		proc.ProcOpen(pShellPID, logPath, path.MODE_WRITE)
+		proc.SetCurrentPID(pShellPID)
 
 		// Initialize shell cwd to /d0 and cxd to /d0/Cmds9 or /d0/CmdsK
 		proc.SysChgDir((*byte)("/d0"), 0)
@@ -182,28 +177,28 @@ func main() {
 
 		// Test /proc/p file system (read and readln)
 		procPath := (*byte)("/proc/p")
-		pProc, pProcErr := proc.ProcOpen(1, procPath, path.MODE_READ)
+		pProc, pProcErr := proc.ProcOpen(pShellPID, procPath, path.MODE_READ)
 		if pProcErr == 0 && pProc != 0xFF {
 			var pBuf [256]byte
-			rn, rerr := proc.ProcRead(1, pProc, &pBuf[0], 255)
+			rn, rerr := proc.ProcRead(pShellPID, pProc, &pBuf[0], 255)
 			if rerr == 0 && rn > 0 {
 				dev.KLog((*byte)("PROCFS:READ:OK"))
 			}
-			proc.ProcClose(1, pProc)
+			proc.ProcClose(pShellPID, pProc)
 		}
 
-		pProcLn, pProcLnErr := proc.ProcOpen(1, procPath, path.MODE_READ)
+		pProcLn, pProcLnErr := proc.ProcOpen(pShellPID, procPath, path.MODE_READ)
 		if pProcLnErr == 0 && pProcLn != 0xFF {
 			var lnBuf [64]byte
-			ln, lnErr := proc.ProcReadLn(1, pProcLn, &lnBuf[0], 64)
+			ln, lnErr := proc.ProcReadLn(pShellPID, pProcLn, &lnBuf[0], 64)
 			if lnErr == 0 && ln > 0 {
 				dev.KLog((*byte)("PROCFS:READLN:OK"))
 			}
-			proc.ProcClose(1, pProcLn)
+			proc.ProcClose(pShellPID, pProcLn)
 		}
 
 		// Test invalid /proc subpath returns E_PNNF
-		pBad, pBadErr := proc.ProcOpen(1, (*byte)("/proc/nonexistent"), path.MODE_READ)
+		pBad, pBadErr := proc.ProcOpen(pShellPID, (*byte)("/proc/nonexistent"), path.MODE_READ)
 		if pBadErr == path.E_PNNF && pBad == 0xFF {
 			dev.KLog((*byte)("PROCFS:BADPATH:OK"))
 		}

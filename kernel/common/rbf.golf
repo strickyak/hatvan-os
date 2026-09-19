@@ -78,33 +78,33 @@ func toUpper(c byte) byte {
 
 // RBFReadSector reads sector lsn of drive into destination buffer dst
 func RBFReadSector(drive byte, lsn word, dst *byte) byte {
-	return hal.DiskTransfer(drive, lsn, 0, word(dst), 0)
+	return hal.DiskTransfer(drive, lsn, 1, word(dst), 0)
 }
 
 // RBFGetFDInf reads fdLSN sector and copies count bytes into task memory at dstAddr
 func RBFGetFDInf(drive byte, fdLSN word, task byte, dstAddr word, count word) byte {
 	bufAddr := word(&rbfSectorBuf[0])
-	st := hal.DiskTransfer(drive, fdLSN, 0, bufAddr, 0)
+	st := hal.DiskTransfer(drive, fdLSN, 1, bufAddr, 0)
 	if st != 1 {
 		return 244 // E_READ
 	}
-	if task == 0 {
+	if task == 1 {
 		klib.memcpy((*byte)(dstAddr), (*byte)(bufAddr), count)
 	} else {
-		hal.DMACopy(0, bufAddr, task, dstAddr, count)
+		hal.DMACopy(1, bufAddr, task, dstAddr, count)
 	}
 	return 0
 }
 
 // RBFWriteSector writes sector lsn of drive from source buffer src
 func RBFWriteSector(drive byte, lsn word, src *byte) byte {
-	return hal.DiskTransfer(drive, lsn, 0, word(src), 1)
+	return hal.DiskTransfer(drive, lsn, 1, word(src), 1)
 }
 
 // RBFReadSuperblock reads and parses the LSN 0 Identification Sector
 func RBFReadSuperblock(drive byte, sb *RBFSuperblock) byte {
 	bufAddr := word(&rbfSectorBuf[0])
-	st := hal.DiskTransfer(drive, 0, 0, bufAddr, 0)
+	st := hal.DiskTransfer(drive, 0, 1, bufAddr, 0)
 	if st != 1 {
 		return st
 	}
@@ -122,7 +122,7 @@ func RBFReadSuperblock(drive byte, sb *RBFSuperblock) byte {
 // RBFReadFD reads and decodes the File Descriptor sector at fdLSN
 func RBFReadFD(drive byte, fdLSN word, fd *RBFFileDescriptor) byte {
 	bufAddr := word(&rbfSectorBuf[0])
-	st := hal.DiskTransfer(drive, fdLSN, 0, bufAddr, 0)
+	st := hal.DiskTransfer(drive, fdLSN, 1, bufAddr, 0)
 	if st != 1 {
 		return st
 	}
@@ -197,7 +197,7 @@ func RBFScanDirectory(drive byte, dirFD *RBFFileDescriptor, targetName *byte) wo
 			break
 		}
 
-		st := hal.DiskTransfer(drive, physLSN, 0, dirBufAddr, 0)
+		st := hal.DiskTransfer(drive, physLSN, 1, dirBufAddr, 0)
 		if st != 1 {
 			break
 		}

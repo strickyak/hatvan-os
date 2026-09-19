@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -23,6 +24,7 @@ var (
 	disk1Flag      = flag.String("disk1", "", "disk image file for /d1")
 	disk2Flag      = flag.String("disk2", "", "disk image file for /d2")
 	disk3Flag      = flag.String("disk3", "", "disk image file for /d3")
+	task1Flag      = flag.String("task1", "", "optional binary (DECB) to load into Task 1")
 	hypercallsFlag  = flag.Bool("hypercalls", false, "enable GOMAR-compatible hypercall traps ($12,$21,<hop>)")
 	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
 )
@@ -92,6 +94,23 @@ func main() {
 		if decb.HasExec {
 			cpu.PC = decb.ExecAddr
 		}
+	}
+
+	// Load Task 1 if specified or companion rbf_6809.decb exists
+	task1Path := *task1Flag
+	if task1Path == "" {
+		candidate := filepath.Join(filepath.Dir(binPath), "rbf_6809.decb")
+		if _, err := os.Stat(candidate); err == nil {
+			task1Path = candidate
+		}
+	}
+	if task1Path != "" {
+		d1, err := gep9.LoadDECBFile(task1Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading Task 1 DECB %q: %v\n", task1Path, err)
+			os.Exit(1)
+		}
+		bus.LoadDECBIntoTask(1, d1)
 	}
 
 	// 3. Scan for OS-9 modules in memory

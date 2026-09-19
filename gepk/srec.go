@@ -11,6 +11,11 @@ import (
 // LoadSRecords parses Motorola S-Records from reader and writes them into Task 0 memory.
 // Returns the entry address if specified by an S7/S8/S9 termination record.
 func (b *Bus) LoadSRecords(r io.Reader) (entryAddr uint32, hasEntry bool, err error) {
+	return b.LoadSRecordsIntoTask(0, r)
+}
+
+// LoadSRecordsIntoTask parses Motorola S-Records from reader and writes them into the specified task memory.
+func (b *Bus) LoadSRecordsIntoTask(task uint8, r io.Reader) (entryAddr uint32, hasEntry bool, err error) {
 	scanner := bufio.NewScanner(r)
 	lineNum := 0
 
@@ -65,7 +70,7 @@ func (b *Bus) LoadSRecords(r io.Reader) (entryAddr uint32, hasEntry bool, err er
 			data := payload[2:]
 			b.mu.Lock()
 			for i, v := range data {
-				b.Tasks[0].writeByte(addr+uint32(i), v)
+				b.Tasks[task].writeByte(addr+uint32(i), v)
 			}
 			b.mu.Unlock()
 
@@ -77,7 +82,7 @@ func (b *Bus) LoadSRecords(r io.Reader) (entryAddr uint32, hasEntry bool, err er
 			data := payload[3:]
 			b.mu.Lock()
 			for i, v := range data {
-				b.Tasks[0].writeByte(addr+uint32(i), v)
+				b.Tasks[task].writeByte(addr+uint32(i), v)
 			}
 			b.mu.Unlock()
 
@@ -89,7 +94,7 @@ func (b *Bus) LoadSRecords(r io.Reader) (entryAddr uint32, hasEntry bool, err er
 			data := payload[4:]
 			b.mu.Lock()
 			for i, v := range data {
-				b.Tasks[0].writeByte(addr+uint32(i), v)
+				b.Tasks[task].writeByte(addr+uint32(i), v)
 			}
 			b.mu.Unlock()
 

@@ -1,0 +1,177 @@
+package rbf_ipc
+
+import "hal"
+import "klib"
+
+const RBF_CMD_NOP = 0
+const RBF_CMD_READ_SECTOR = 1
+const RBF_CMD_WRITE_SECTOR = 2
+const RBF_CMD_RESOLVE_PATH = 3
+const RBF_CMD_READ_FD = 4
+const RBF_CMD_READ_FILE = 5
+const RBF_CMD_GET_FD_INF = 6
+const RBF_CMD_READ_SB = 7
+
+// Mailbox offsets at $0080 in Task 1 RAM
+const MB_CMD = 0
+const MB_DRIVE = 1
+const MB_TARGET_TASK = 2
+const MB_STATUS = 3
+const MB_TARGET_ADDR = 4  // 4 bytes: 4..7
+const MB_LSN = 8          // 4 bytes: 8..11
+const MB_COUNT = 12       // 2 bytes: 12..13
+const MB_PARAM = 12       // alias for Count
+const MB_AUX_LSN1 = 14    // 2 bytes: 14..15 (cwdLSN)
+const MB_AUX_LSN2 = 16    // 2 bytes: 16..17 (cxdLSN)
+const MB_FILE_POS = 18    // 4 bytes: 18..21 (filePos)
+const MB_PATH_STR = 24    // 32 bytes: 24..55
+const MB_OUT_WORD1 = 56   // 2 bytes: 56..57 (OutFDLSN / BytesRead)
+const MB_OUT_BYTE1 = 58   // 1 byte: 58 (Attributes)
+const MB_OUT_BYTE2 = 59   // 1 byte: 59
+const MB_OUT_LONG1 = 60   // 4 bytes: 60..63 (FileSize)
+
+var mb [64]byte
+
+func writeW32(idx word, val word) {
+	mb[idx] = 0
+	mb[idx+1] = 0
+	mb[idx+2] = byte(val >> 8)
+	mb[idx+3] = byte(val)
+	if sizeof[word]() > 2 {
+		mb[idx] = byte(val >> 24)
+		mb[idx+1] = byte(val >> 16)
+	}
+}
+
+func writeW16(idx word, val word) {
+	mb[idx] = byte(val >> 8)
+	mb[idx+1] = byte(val)
+}
+
+// Call sends the request in mb to Task 1 and waits for completion
+func Call() byte {
+	// 1. DMA copy 64-byte mailbox into Task 1 at $0080
+	hal.DMACopy(0, word(&mb[0]), 1, 0x0080, 64)
+
+	// 2. Invoke Task 1 (TaskFuse + RTI -> Task 1 runs -> SWI2 F$Sleep -> returns)
+	hal.RBFCall()
+
+	// 3. DMA copy 64-byte mailbox back from Task 1
+	hal.DMACopy(1, 0x0080, 0, word(&mb[0]), 64)
+
+	return mb[MB_STATUS]
+}
+
+// ResolvePath asks Task 1 to traverse directories and resolve pathStr.
+// Returns (finalDrive, fdLSN, attr, fileSize, errCode).
+func ResolvePath(pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isExec byte) (byte, word, byte, word, byte) {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+	mb[MB_CMD] = RBF_CMD_RESOLVE_PATH
+	mb[MB_DRIVE] = defaultDrive
+	mb[MB_PARAM] = isExec
+	writeW16(MB_AUX_LSN1, cwdLSN)
+	writeW16(MB_AUX_LSN2, cxdLSN)
+
+	p := word(pathStr)
+	for i := word(0); i < 31; i++ {
+		c := peekb(p + i)
+		mb[MB_PATH_STR+i] = c
+		if c == 0 {
+			break
+		}
+	}
+	mb[MB_PATH_STR+31] = 0
+
+	st := Call()
+	if st != 0 {
+		return 0xFF, 0, 0, 0, st
+	}
+
+	finalDrive := mb[MB_DRIVE]
+	fdLSN := (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
+	attr := mb[MB_OUT_BYTE1]
+	fileSize := (word(mb[MB_OUT_LONG1+2]) << 8) | word(mb[MB_OUT_LONG1+3])
+	if sizeof[word]() > 2 {
+		fileSize = (word(mb[MB_OUT_LONG1]) << 24) | (word(mb[MB_OUT_LONG1+1]) << 16) | fileSize
+	}
+
+	return finalDrive, fdLSN, attr, fileSize, 0
+}
+
+// ReadFile requests Task 1 to read up to count bytes from file (drive, fdLSN)
+// at filePos directly into targetTask at targetAddr.
+// Returns (bytesRead, errCode).
+func ReadFile(drive byte, fdLSN word, filePos word, targetTask byte, targetAddr word, count word) (word, byte) {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+	mb[MB_CMD] = RBF_CMD_READ_FILE
+	mb[MB_DRIVE] = drive
+	mb[MB_TARGET_TASK] = targetTask
+	writeW32(MB_TARGET_ADDR, targetAddr)
+	writeW32(MB_LSN, fdLSN)
+	writeW16(MB_COUNT, count)
+	writeW32(MB_FILE_POS, filePos)
+
+	st := Call()
+	bytesRead := (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
+	return bytesRead, st
+}
+
+// ReadSector requests Task 1 to read physical disk sector lsn into targetTask at targetAddr.
+func ReadSector(drive byte, lsn word, targetTask byte, targetAddr word) byte {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+	mb[MB_CMD] = RBF_CMD_READ_SECTOR
+	mb[MB_DRIVE] = drive
+	mb[MB_TARGET_TASK] = targetTask
+	writeW32(MB_TARGET_ADDR, targetAddr)
+	writeW32(MB_LSN, lsn)
+
+	return Call()
+}
+
+// WriteSector requests Task 1 to write physical disk sector lsn from targetTask at targetAddr.
+func WriteSector(drive byte, lsn word, targetTask byte, targetAddr word) byte {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+	mb[MB_CMD] = RBF_CMD_WRITE_SECTOR
+	mb[MB_DRIVE] = drive
+	mb[MB_TARGET_TASK] = targetTask
+	writeW32(MB_TARGET_ADDR, targetAddr)
+	writeW32(MB_LSN, lsn)
+
+	return Call()
+}
+
+// GetFDInf reads count bytes from FD sector fdLSN into targetTask at targetAddr.
+func GetFDInf(drive byte, fdLSN word, targetTask byte, targetAddr word, count word) byte {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+	mb[MB_CMD] = RBF_CMD_GET_FD_INF
+	mb[MB_DRIVE] = drive
+	mb[MB_TARGET_TASK] = targetTask
+	writeW32(MB_TARGET_ADDR, targetAddr)
+	writeW32(MB_LSN, fdLSN)
+	writeW16(MB_COUNT, count)
+
+	return Call()
+}
+
+// ReadSuperblock reads LSN 0 superblock into targetTask at targetAddr.
+func ReadSuperblock(drive byte, targetTask byte, targetAddr word) byte {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+	mb[MB_CMD] = RBF_CMD_READ_SB
+	mb[MB_DRIVE] = drive
+	mb[MB_TARGET_TASK] = targetTask
+	writeW32(MB_TARGET_ADDR, targetAddr)
+
+	return Call()
+}

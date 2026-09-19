@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -25,6 +26,7 @@ var (
 	disk1Flag       = flag.String("disk1", "", "disk image file for drive 1")
 	disk2Flag       = flag.String("disk2", "", "disk image file for drive 2")
 	disk3Flag       = flag.String("disk3", "", "disk image file for drive 3")
+	task1Flag       = flag.String("task1", "", "optional binary (S-Record) to load into Task 1")
 	baseAddrFlag    = flag.Uint("base", 0, "base memory address for raw binary image (default 0)")
 	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
 )
@@ -92,6 +94,28 @@ func main() {
 		cpu.Reset()
 		if *baseAddrFlag != 0 {
 			cpu.PC = uint32(*baseAddrFlag)
+		}
+	}
+
+	// Load Task 1 if specified or companion rbf_68k.srec exists
+	task1Path := *task1Flag
+	if task1Path == "" {
+		candidate := filepath.Join(filepath.Dir(binPath), "rbf_68k.srec")
+		if _, err := os.Stat(candidate); err == nil {
+			task1Path = candidate
+		}
+	}
+	if task1Path != "" {
+		f1, err := os.Open(task1Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening Task 1 file %q: %v\n", task1Path, err)
+			os.Exit(1)
+		}
+		defer f1.Close()
+		_, _, err = bus.LoadSRecordsIntoTask(1, f1)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading Task 1 S-Records %q: %v\n", task1Path, err)
+			os.Exit(1)
 		}
 	}
 

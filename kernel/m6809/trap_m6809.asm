@@ -5,19 +5,32 @@
     pragma cescapes
 
 user_sp_table:
-    fdb 0,0,0,0,0,0,0,0
+    fill 0,32
 
 saved_kernel_sp_table:
-    fdb 0,0,0,0,0,0,0,0
+    fill 0,32
 
 saved_parent_pid_table:
-    fcb 0,0,0,0,0,0,0,0
+    fill 0,16
 
 saved_user_frame_table:
-    fill 0,96
+    fill 0,192
 
 call_num:
     fcb 0
+
+rbf_temp_pc:
+    fdb 0
+
+rbf_init_frame:
+    fcb $D0             ; CC: all flags set, interrupts masked
+    fcb 0               ; A
+    fcb 0               ; B
+    fcb 0               ; DP
+    fdb 0               ; X
+    fdb 0               ; Y
+    fdb 0               ; U
+    fdb $4000           ; PC
 
 ; SWI2 Trap Entry Point (Vector at $FFF4)
 ; Hardware pushed (PC, U, Y, X, DP, B, A, CC) onto user task stack.
@@ -26,6 +39,11 @@ trap_swi2:
     ; 0. Reset Direct Page to page 0 for kernel execution
     clra
     tfr a,dp
+
+    ; Check if trap came from Task 1 (RBF driver returning via F$Sleep)
+    ldb v_proc.CurrentPID
+    cmpb #1
+    lbeq .handle_rbf_return
 
     ; 1. Save user stack pointer in user_sp_table[CurrentPID]
     tfr s,x
@@ -137,6 +155,117 @@ trap_swi2:
     ldd ,x++
     std ,y++
 
+    rts
+
+.handle_rbf_return:
+    ; Hardware pushed 12-byte RTI frame on Task 1 stack.
+    ; Register S is Task 1 SP. PC on Task 1 stack is at S + 10.
+    ; Advance PC past the $0A inline opcode byte:
+    lda #1
+    sta $FF21           ; srcTask = 1
+    tfr s,d
+    addd #10
+    std $FF22           ; srcAddr = S + 10
+    clr $FF24           ; dstTask = 0
+    ldd #rbf_temp_pc
+    std $FF25           ; dstAddr = rbf_temp_pc
+    ldb #2
+    stb $FF27           ; DMA read 2 bytes
+.rbf_ret_dma1:
+    ldb $FF27
+    beq .rbf_ret_dma1
+
+    ldd rbf_temp_pc
+    addd #1
+    std rbf_temp_pc
+
+    clr $FF21           ; srcTask = 0
+    ldd #rbf_temp_pc
+    std $FF22           ; srcAddr = rbf_temp_pc
+    lda #1
+    sta $FF24           ; dstTask = 1
+    tfr s,d
+    addd #10
+    std $FF25           ; dstAddr = S + 10
+    ldb #2
+    stb $FF27           ; DMA write 2 bytes
+.rbf_ret_dma2:
+    ldb $FF27
+    beq .rbf_ret_dma2
+
+    ; Save Task 1 SP in user_sp_table[1]
+    tfr s,x
+    ldy #user_sp_table
+    stx 2,y
+
+    ; Restore kernel stack pointer from saved_kernel_sp_table[1]
+    ldy #saved_kernel_sp_table
+    lds 2,y
+
+    ; Restore caller PID from kernel stack
+    puls a
+    sta v_proc.CurrentPID
+
+    ; Return to RBFCall caller in Task 0!
+    rts
+
+f_hal__RBFCall:
+    ; Push caller PID onto kernel stack
+    lda v_proc.CurrentPID
+    pshs a
+
+    ; Set CurrentPID = 1 (Task 1: RBF)
+    lda #1
+    sta v_proc.CurrentPID
+
+    ; Save kernel stack pointer in saved_kernel_sp_table[1]
+    ldy #saved_kernel_sp_table
+    sts 2,y
+
+    ; Load Task 1 stack pointer from user_sp_table[1]
+    ldy #user_sp_table
+    lds 2,y
+
+    ; Arm TaskFuse with target task 1
+    lda #1
+    sta $FF20
+
+    ; RTI switches to Task 1!
+    rti
+
+f_hal__InitRBF:
+    ; Stack on entry from MiniGolf:
+    ;   0,s: return PC (2 bytes)
+    ;   2,s: entryPC (2 bytes)
+    ldd 2,s
+    std rbf_init_frame+10
+
+    ; DMA initial 12-byte RTI frame to Task 1 at $FDF4
+    clr $FF21
+    ldd #rbf_init_frame
+    std $FF22
+    lda #1
+    sta $FF24
+    ldd #$FDF4
+    std $FF25
+    ldb #12
+    stb $FF27
+.rbf_init_dma:
+    ldb $FF27
+    beq .rbf_init_dma
+
+    ; user_sp_table[1] = $FDF4
+    ldd #$FDF4
+    ldy #user_sp_table
+    std 2,y
+
+    ; Call RBF once to let it initialize and enter hal.Sleep()
+    jsr f_hal__RBFCall
+    rts
+
+f_hal__Sleep:
+    swi2
+    fcb $0A
     rts
 
 ; launch_user_process launches user task PID for execution

@@ -100,3 +100,7 @@ func PurgeTaskMem(task byte) {
 func SetTaskFlags(flags byte) {
 	vpokeb(PORT_TASKFLAGS, flags)
 }
+
+func RBFCall()
+func Sleep()
+func InitRBF(entryPC word)

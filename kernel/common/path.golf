@@ -2,7 +2,7 @@ package path
 
 import "hal"
 import "klib"
-import "rbf"
+import "rbf_ipc"
 import "dev"
 
 const MAX_PATHS = 16
@@ -112,8 +112,8 @@ func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word
 		isExec = 1
 	}
 
-	finalDrive, fdLSN := rbf.RBFResolvePath(pathStr, defaultDrive, cwdLSN, cxdLSN, isExec)
-	if finalDrive == 0xFF || fdLSN == 0 {
+	finalDrive, fdLSN, attr, fileSize, err := rbf_ipc.ResolvePath(pathStr, defaultDrive, cwdLSN, cxdLSN, isExec)
+	if err != 0 || finalDrive == 0xFF || fdLSN == 0 {
 		PathFree(pathId)
 		return 0xFF, E_PNNF
 	}
@@ -121,20 +121,13 @@ func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word
 	pd.Drive = finalDrive
 	pd.FDLSN = fdLSN
 
-	var fd rbf.RBFFileDescriptor
-	st := rbf.RBFReadFD(finalDrive, fdLSN, &fd)
-	if st != 1 {
-		PathFree(pathId)
-		return 0xFF, E_READ
-	}
-
 	// If mode requests directory, verify FD has directory bit set ($80)
-	if (mode&MODE_DIR) != 0 && (fd.Attributes&0x80) == 0 {
+	if (mode&MODE_DIR) != 0 && (attr&0x80) == 0 {
 		PathFree(pathId)
 		return 0xFF, E_BMODE
 	}
 
-	pd.FileSize = fd.FileSize
+	pd.FileSize = fileSize
 	return pathId, 0
 }
 
@@ -208,50 +201,11 @@ func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 		toRead = pd.FileSize - pd.FilePos
 	}
 
-	var fd rbf.RBFFileDescriptor
-	st := rbf.RBFReadFD(pd.Drive, pd.FDLSN, &fd)
-	if st != 1 {
-		return 0, E_READ
+	bytesRead, err := rbf_ipc.ReadFile(pd.Drive, pd.FDLSN, pd.FilePos, task, word(ubuf), toRead)
+	if err != 0 {
+		return 0, err
 	}
-
-	bytesRead := word(0)
-	dstAddr := word(ubuf)
-
-	for bytesRead < toRead {
-		logSec := pd.FilePos / 256
-		secOff := pd.FilePos % 256
-
-		physLSN := rbf.RBFLogicalToPhys(&fd, logSec)
-		if physLSN == 0 {
-			break
-		}
-
-		if pd.BufLSN != physLSN {
-			secBufAddr := word(&pd.SectorBuf[0])
-			st = hal.DiskTransfer(pd.Drive, physLSN, 0, secBufAddr, 0)
-			if st != 1 {
-				break
-			}
-			pd.BufLSN = physLSN
-		}
-
-		chunk := 256 - secOff
-		rem := toRead - bytesRead
-		if chunk > rem {
-			chunk = rem
-		}
-
-		srcAddr := word(&pd.SectorBuf[0]) + secOff
-		if task == 0 {
-			klib.memcpy((*byte)(dstAddr+bytesRead), (*byte)(srcAddr), chunk)
-		} else {
-			hal.DMACopy(0, srcAddr, task, dstAddr+bytesRead, chunk)
-		}
-
-		pd.FilePos += chunk
-		bytesRead += chunk
-	}
-
+	pd.FilePos += bytesRead
 	return bytesRead, 0
 }
 

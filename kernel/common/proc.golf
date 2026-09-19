@@ -2,7 +2,7 @@ package proc
 
 import "hal"
 import "klib"
-import "rbf"
+import "rbf_ipc"
 import "dev"
 import "path"
 import "loader"
@@ -83,7 +83,7 @@ func ProcInit() {
 		for k := word(0); k < PROC_MAX_PATHS; k++ {
 			p.Paths[k] = 0xFF
 		}
-		if i > 0 {
+		if i > 1 {
 			hal.PurgeTaskMem(byte(i))
 		}
 	}
@@ -94,6 +94,20 @@ func ProcInit() {
 		ProcTable[0].SavedSP = 0x3800
 	}
 	klib.strcpy(&ProcTable[0].CmdName[0], (*byte)("kernel"))
+
+	// Process 1 is Task 1 ([RBF])
+	ProcTable[1].State = PROC_WAITING
+	ProcTable[1].ParentPID = 0
+	ProcTable[1].TaskID = 1
+	ProcTable[1].SavedSP = 0xFE00
+	klib.strcpy(&ProcTable[1].CmdName[0], (*byte)("[RBF]"))
+	hal.SetTaskFlags(1)
+	if hal.ARCH == '9' {
+		hal.InitRBF(0x4000)
+	} else {
+		hal.InitRBF(0x00001000)
+	}
+
 	CurrentPID = 0
 }
 
@@ -155,7 +169,7 @@ func ProcAlloc(parentPID byte) (byte, *Process) {
 
 // ProcFree terminates a process slot and closes all associated paths
 func ProcFree(pid byte) {
-	if pid == 0 || pid >= MAX_PROCS {
+	if pid <= 1 || pid >= MAX_PROCS {
 		return
 	}
 	p := &ProcTable[pid]
@@ -567,14 +581,12 @@ func SysChgDir(pathStr *byte, mode byte) byte {
 		isExec = 1
 	}
 
-	finalDrive, fdLSN := rbf.RBFResolvePath(pathStr, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN, isExec)
-	if finalDrive == 0xFF || fdLSN == 0 {
+	finalDrive, fdLSN, attr, fileSize, err := rbf_ipc.ResolvePath(pathStr, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN, isExec)
+	if err != 0 || finalDrive == 0xFF || fdLSN == 0 {
 		return path.E_PNNF
 	}
 
-	var fd rbf.RBFFileDescriptor
-	st := rbf.RBFReadFD(finalDrive, fdLSN, &fd)
-	if st != 1 || (fd.Attributes&0x80) == 0 {
+	if (attr & 0x80) == 0 {
 		return path.E_BMODE
 	}
 
