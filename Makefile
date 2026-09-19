@@ -6,7 +6,7 @@ BUILD_DIR   := $(REPO_DIR)/build
 # Toolchains
 GO          ?= go
 PYTHON      ?= python3
-MINIGOLF_DIR ?= /home/strick/github.com/strickyak/minigolf
+MINIGOLF_DIR ?= $(shell cd ../minigolf && pwd)
 MINIGOLF    ?= $(BUILD_DIR)/minigolf
 ASM68K      ?= $(BUILD_DIR)/asm68k
 LWASM       ?= lwasm
@@ -138,8 +138,8 @@ test: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_68K) -disk0=$(DISK_IMAGE) $(KERNEL_68K)
 
 test-interactive: $(BUILD_DIR) vms kernels cmds disk
-	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809\nexit\n" $(KERNEL_6809)
-	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHOK hello from 68k\nexit\n" $(KERNEL_68K)
+	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nexit\n" $(KERNEL_6809)
+	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHOK hello from 68k userspace\nexit\n" $(KERNEL_68K)
 
 # --- Clean ---
 clean:
