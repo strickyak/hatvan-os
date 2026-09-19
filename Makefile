@@ -23,7 +23,7 @@ KERNEL_68K  := $(BUILD_DIR)/kernel_68k.srec
 
 # Command Targets
 CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb
-CMDS_68K    := $(BUILD_DIR)/echok.decb
+CMDS_68K    := $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb
 
 # Disk Images
 DISK_IMAGE  := $(BUILD_DIR)/disk0.dsk
@@ -91,7 +91,7 @@ $(BUILD_DIR)/full_68k.s: $(REPO_DIR)/kernel/m68k/trap_m68k.s $(BUILD_DIR)/kernel
 	cat $(REPO_DIR)/kernel/m68k/trap_m68k.s $(BUILD_DIR)/kernel_68k.s > $@
 
 $(BUILD_DIR)/kernel_68k.srec: $(BUILD_DIR)/full_68k.s $(ASM68K) | $(BUILD_DIR)
-	$(ASM68K) -o $@ $<
+	$(ASM68K) -l $@.list -o $@ $<
 
 # --- Userland Commands ---
 cmds: $(CMDS_6809) $(CMDS_68K)
@@ -112,20 +112,34 @@ $(BUILD_DIR)/testdecb.decb: $(REPO_DIR)/cmds/testdecb.asm | $(BUILD_DIR)
 	cp -f $(BUILD_DIR)/testdecb.decb.map $(BUILD_DIR)/testdecb.map 2>/dev/null || true
 
 $(BUILD_DIR)/echok.srec: $(REPO_DIR)/cmds/echok.s $(ASM68K) | $(BUILD_DIR)
-	$(ASM68K) -o $@ $<
+	$(ASM68K) -l $@.list -o $@ $<
 
 $(BUILD_DIR)/echok.decb: $(BUILD_DIR)/echok.srec $(SREC2DECB) | $(BUILD_DIR)
+	$(PYTHON) $(SREC2DECB) $< $@
+
+$(BUILD_DIR)/dirk.srec: $(REPO_DIR)/cmds/dirk.s $(ASM68K) | $(BUILD_DIR)
+	$(ASM68K) -l $@.list -o $@ $<
+
+$(BUILD_DIR)/dirk.decb: $(BUILD_DIR)/dirk.srec $(SREC2DECB) | $(BUILD_DIR)
+	$(PYTHON) $(SREC2DECB) $< $@
+
+$(BUILD_DIR)/dumpk.srec: $(REPO_DIR)/cmds/dumpk.s $(ASM68K) | $(BUILD_DIR)
+	$(ASM68K) -l $@.list -o $@ $<
+
+$(BUILD_DIR)/dumpk.decb: $(BUILD_DIR)/dumpk.srec $(SREC2DECB) | $(BUILD_DIR)
 	$(PYTHON) $(SREC2DECB) $< $@
 
 # --- OS-9 Disk Images ---
 disk: $(DISK_IMAGE) $(TEST_DISK)
 
-$(DISK_IMAGE): $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/echok.decb | $(BUILD_DIR)
+$(DISK_IMAGE): $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb | $(BUILD_DIR)
 	rm -f $@ $(TEST_DISK)
 	$(OS9) format -e -n'HATVAN' -l'40000' $@
 	$(OS9) makdir $@,CMDS
 	$(OS9) copy -r -l $(BUILD_DIR)/echo.mod $@,CMDS/ECHO
 	$(OS9) copy -r -l $(BUILD_DIR)/echok.decb $@,CMDS/ECHOK
+	$(OS9) copy -r -l $(BUILD_DIR)/dirk.decb $@,CMDS/DIRK
+	$(OS9) copy -r -l $(BUILD_DIR)/dumpk.decb $@,CMDS/DUMPK
 	$(OS9) copy -r -l $(BUILD_DIR)/testcmd.mod $@,CMDS/TESTCMD
 	$(OS9) copy -r -l $(BUILD_DIR)/testdecb.decb $@,CMDS/TESTDECB
 	cp -f $@ $(TEST_DISK)

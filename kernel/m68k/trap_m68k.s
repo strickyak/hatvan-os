@@ -125,14 +125,16 @@ trap_0:
     ; Sp points to a6.
     ; 56(sp) is D0, 52(sp) is D1, 48(sp) is D2
     ; 60(sp) is SR (word), 62(sp) is PC (long)
-    move.b  v_syscall.UserFrame+1, 59(sp)
-    move.b  v_syscall.UserFrame+2, 55(sp)
-    move.l  v_syscall.UserFrame+8, 48(sp)
+    move.b  v_syscall.UserFrame+1, 55(sp) ; D1 = A (path ID)
+    move.b  v_syscall.UserFrame+1, 59(sp) ; D0 = A (return value)
+    move.l  v_syscall.UserFrame+8, 48(sp) ; D2 = Y (count)
 
     ; Update Carry bit in saved SR:
     move.b  v_syscall.UserFrame, d0
     and.l   #1, d0
     beq     .no_carry
+    move.b  v_syscall.UserFrame+2, 55(sp) ; D1 = B (error code)
+    move.b  v_syscall.UserFrame+2, 59(sp) ; D0 = B (error code)
     or.w    #1, 60(sp)
     bra     .done_cc
 .no_carry:
@@ -184,6 +186,7 @@ f_hal__LaunchProcess:
     ; Reserve stack space below parameter string for USP:
     move.l  a0, a1
     sub.l   #128, a1
+    and.l   #$FFFFFFFE, a1
     ; move.l a1, usp ($4E61)
     dc.w    $4E61
     move.b  d0, $00FF0020       ; Set TaskReg to user PID

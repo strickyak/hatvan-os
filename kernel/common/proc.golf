@@ -324,6 +324,7 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
 	paramLenVal := word(0)
 	if paramStr != (*byte)(0) && paramLen > 0 {
 		sp -= (paramLen + 1)
+		sp &^= 1
 		hal.DMACopy(0, word(paramStr), childProc.TaskID, sp, paramLen)
 		cr := byte('\r')
 		hal.DMACopy(0, word(&cr), childProc.TaskID, sp+paramLen, 1)
