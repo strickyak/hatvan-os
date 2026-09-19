@@ -83,6 +83,9 @@ func ProcInit() {
 		for k := word(0); k < PROC_MAX_PATHS; k++ {
 			p.Paths[k] = 0xFF
 		}
+		if i > 0 {
+			hal.PurgeTaskMem(byte(i))
+		}
 	}
 
 	// Process 0 is Task 0 (Kernel)
@@ -164,6 +167,7 @@ func ProcFree(pid byte) {
 		}
 	}
 	p.State = PROC_FREE
+	hal.PurgeTaskMem(p.TaskID)
 }
 
 // ProcOpen opens a path for the given process and assigns a per-process path descriptor
@@ -391,15 +395,6 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
 			paramEnd = codeStart & 0xFF00
 			dpVal = 0
 			uVal = 0
-
-			// Zero 2048 bytes of process data area starting at $0000
-			var zeroBuf [64]byte
-			for zi := word(0); zi < 64; zi++ {
-				zeroBuf[zi] = 0
-			}
-			for off := word(0); off < 2048; off += 64 {
-				hal.DMACopy(0, word(&zeroBuf[0]), childProc.TaskID, off, 64)
-			}
 		}
 
 		sp := paramEnd
@@ -464,6 +459,7 @@ func SysExit(status byte) {
 
 	p.ExitStatus = status
 	p.State = PROC_ZOMBIE
+	hal.PurgeTaskMem(p.TaskID)
 
 	// Wake parent if waiting
 	if p.ParentPID < MAX_PROCS && ProcTable[p.ParentPID].State == PROC_WAITING {

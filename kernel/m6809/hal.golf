@@ -26,6 +26,8 @@ const PORT_DMADSTTASK = 0xFF24
 const PORT_DMADSTADDR = 0xFF25 // 2 bytes (Hi, Lo)
 const PORT_DMACNT = 0xFF27
 
+const PORT_PURGETASKMEM = 0xFF2F
+
 func PutChar(b byte) {
 	vpokeb(PORT_TERMOUT, b)
 }
@@ -103,4 +105,10 @@ func LaunchProcess(pid byte, sp word, pc word)
 
 func HasInput() bool {
 	return (vpeekb(PORT_REGSTAT) & 2) != 0
+}
+
+func PurgeTaskMem(task byte) {
+	if task != 0 {
+		vpokeb(PORT_PURGETASKMEM, task)
+	}
 }

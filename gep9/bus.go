@@ -204,6 +204,9 @@ func (b *Bus) readIO(addr uint16) byte {
 		b.DmaStatus = 0 // Reset on read
 		return st
 
+	case 0xFF2F: // PurgeTaskMem
+		return 0
+
 	default:
 		panic(fmt.Errorf("%w: read at unmapped 0x%04X in Task 0", ErrKernelIOPanic, addr))
 	}
@@ -282,6 +285,11 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 		b.DmaDstAddr = (b.DmaDstAddr & 0xFF00) | uint16(val)
 	case 0xFF27: // DMA Copy command: length 1..255, 0 = 256
 		b.executeDMACopy(val)
+
+	case 0xFF2F: // PurgeTaskMem: zero task memory if val != 0
+		if val != 0 {
+			b.purgeTaskMem(val)
+		}
 
 	default:
 		panic(fmt.Errorf("%w: write at unmapped 0x%04X in Task 0", ErrKernelIOPanic, addr))
@@ -442,6 +450,15 @@ func (b *Bus) executeDMACopy(lengthByte byte) {
 	}
 
 	b.DmaStatus = 1 // OKAY
+}
+
+func (b *Bus) purgeTaskMem(task uint8) {
+	if task == 0 {
+		return // Never purge Task 0 (kernel)
+	}
+	for i := range b.Memory[task] {
+		b.Memory[task][i] = 0
+	}
 }
 
 // LoadDECBIntoTask zeroes memory and loads a DECB structure into the specified task.

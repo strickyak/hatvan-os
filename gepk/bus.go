@@ -348,6 +348,9 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		}
 		return byte(b.DmaStatus >> 8)
 
+	case 0x00FF005E: // PurgeTaskMem (0x00FF005E or 0x00FF005F)
+		return 0
+
 	default:
 		panic(fmt.Errorf("%w: read at unmapped port 0x%06X in Task 0", ErrKernelIOPanic, addr))
 	}
@@ -486,6 +489,11 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 	case 0x00FF0032: // DMA.CmdSt
 		if val != 0 {
 			b.executeDMACopy()
+		}
+
+	case 0x00FF005E: // PurgeTaskMem (0x00FF005E or 0x00FF005F)
+		if val != 0 {
+			b.purgeTaskMem(val)
 		}
 
 	default:
@@ -646,6 +654,19 @@ func (b *Bus) executeDMACopy() {
 	}
 
 	b.DmaStatus = 1 // OKAY
+}
+
+func (b *Bus) purgeTaskMem(task uint8) {
+	if task == 0 {
+		return // Never purge Task 0 (kernel)
+	}
+	tm := b.Tasks[task]
+	if tm == nil {
+		return
+	}
+	for i := range tm.Pages {
+		tm.Pages[i] = nil
+	}
 }
 
 // LoadRawImage loads a binary memory image directly into Task 0 starting at baseAddr.

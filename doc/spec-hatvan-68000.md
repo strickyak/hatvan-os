@@ -155,6 +155,8 @@ $00FF0028   W      DMA.DstTask DMA Destination Task ID (0 to 255)
 $00FF002A   L      DMA.DstAddr DMA 32-bit Destination Address
 $00FF002E   L      DMA.Count   DMA Byte Count (1 to 16,777,216 bytes)
 $00FF0032   W      DMA.CmdSt   DMA Command / Status Register
+
+$00FF005E   B      PurgeTaskMem Purge / zero task memory (task 1 to 255)
 ```
 
 ### Character Console & 60Hz Timer (`$00FF0000..$00FF000A`)
@@ -204,6 +206,10 @@ A hardware DMA engine allows fast inter-task and intra-task block transfers with
 * **`DMA.CmdSt` (`$00FF0032`)**:
   * Write: `1 = Start Transfer`. Initiates transfer and sets status to `0` (busy).
   * Read: `0 = Busy`, `1 = OKAY`, `>1 = Error`.
+
+### Task Memory Management (`$00FF005E`)
+* **`PurgeTaskMem` (`$00FF005E`)**:
+  * Write: writing a non-zero task number frees that task's sparse 64KB memory pages (or zeroes its memory), guaranteeing that newly allocated tasks start with clean zero-filled memory. Writing 0 is ignored (Task 0 kernel memory is protected).
 
 ---
 

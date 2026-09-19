@@ -83,6 +83,8 @@ A hardware DMA copy engine enables cross-task and intra-task block transfers:
   * `>1` (other) = Error (causes an unrecoverable kernel PANIC)
   * Reading a non-zero status resets status back to 0.
 
+* `$FF2F` : `PurgeTaskMem` : Writing a non-zero task number zeroes that task's entire 64K memory space (or frees it in sparse VM implementations). Writing 0 is ignored (Task 0 kernel memory is protected).
+
 This engine is used by the kernel to inspect the post-SWI2 syscall byte in user code, pass buffers between user space and kernel space, and access the user register frame.
 
 ## Hatvan OS Features
