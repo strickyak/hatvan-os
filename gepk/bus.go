@@ -236,6 +236,9 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 			b.evalInterrupts()
 			return ch
 		}
+		if b.StdinChan == nil {
+			return 0x04
+		}
 		return 0 // Non-blocking: 0 if no char ready
 
 	case 0x00FF0004: // Reg.Stat
@@ -570,10 +573,9 @@ func (b *Bus) pollStdinInternal() {
 		case ch, ok := <-b.StdinChan:
 			if !ok {
 				b.StdinChan = nil
-				if added || len(b.ConsoleIn) > 0 {
-					b.RegStat |= 0x0002
-					b.evalInterrupts()
-				}
+				b.ConsoleIn = append(b.ConsoleIn, 0x04)
+				b.RegStat |= 0x0002
+				b.evalInterrupts()
 				return
 			}
 			if ch == '\n' {

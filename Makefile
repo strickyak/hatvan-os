@@ -134,8 +134,8 @@ $(TEST_DISK): $(DISK_IMAGE)
 
 # --- Testing ---
 test: $(BUILD_DIR) vms kernels cmds disk
-	$(VM_6809) --disk0=$(DISK_IMAGE) $(KERNEL_6809)
-	$(VM_68K) -disk0=$(DISK_IMAGE) $(KERNEL_68K)
+	$(VM_6809) --disk0=$(DISK_IMAGE) --input="exit\n" $(KERNEL_6809)
+	$(VM_68K) -disk0=$(DISK_IMAGE) -input="exit\n" $(KERNEL_68K)
 
 test-interactive: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nexit\n" $(KERNEL_6809)

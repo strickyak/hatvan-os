@@ -187,10 +187,8 @@ func main() {
 			dev.KLog((*byte)("SHELL:EXEC:OK"))
 		}
 
-		// If interactive console input is ready, enter resident shell loop
-		if hal.HasInput() {
-			sh.RunShell()
-		}
+		// Enter resident shell loop
+		sh.RunShell()
 	}
 
 	hal.Exit(0)

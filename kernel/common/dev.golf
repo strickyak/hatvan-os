@@ -137,6 +137,27 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 			continue
 		}
 
+		// Handle Ctrl-D (EOF)
+		if c == 4 {
+			if count == 0 {
+				return 0
+			}
+			endChar := byte('\n')
+			if lineMode == 1 {
+				endChar = '\r'
+			}
+
+			if task == 0 {
+				pokeb(dstAddr+count, endChar)
+				pokeb(dstAddr+count+1, 0)
+			} else {
+				hal.DMACopy(0, word(&endChar), task, dstAddr+count, 1)
+				zero := byte(0)
+				hal.DMACopy(0, word(&zero), task, dstAddr+count+1, 1)
+			}
+			return count + 1
+		}
+
 		// Regular printable ASCII characters
 		if c >= 32 && c <= 126 {
 			if count < maxLen-1 {

@@ -142,6 +142,9 @@ func (b *Bus) readIO(addr uint16) byte {
 			b.evalIRQ()
 			return ch
 		}
+		if b.StdinChan == nil {
+			return 0x04
+		}
 		return 0 // Non-blocking: returns 0 if no character ready
 
 	case 0xFF02: // Reg.Stat
@@ -347,10 +350,9 @@ func (b *Bus) pollStdinLocked() {
 		case ch, ok := <-b.StdinChan:
 			if !ok {
 				b.StdinChan = nil
-				if added || len(b.ConsoleIn) > 0 {
-					b.RegStat |= 0x02
-					b.evalIRQ()
-				}
+				b.ConsoleIn = append(b.ConsoleIn, 0x04)
+				b.RegStat |= 0x02
+				b.evalIRQ()
 				return
 			}
 			if ch == '\n' {
