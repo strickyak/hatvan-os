@@ -36,7 +36,7 @@ M68K_SRCS   := $(wildcard $(REPO_DIR)/kernel/m68k/*.golf) $(REPO_DIR)/kernel/m68
 
 .PHONY: all vms kernels cmds disk test test-interactive clean
 
-all: $(BUILD_DIR) vms kernels cmds disk
+all: $(BUILD_DIR) vms kernels cmds disk test-interactive
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -48,7 +48,7 @@ $(MINIGOLF):
 
 $(ASM68K):
 	@mkdir -p $(dir $@)
-	cd /home/strick/github.com/strickyak/minigolf && $(GO) build -o $(ASM68K) ./asm68k
+	cd /home/strick/github.com/strickyak/minigolf && $(GO) build -o $(ASM68K) ./cmd/asm68k
 
 # --- Emulators ---
 vms: $(VM_6809) $(VM_68K)
@@ -134,11 +134,11 @@ $(DISK_IMAGE): $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testd
 $(TEST_DISK): $(DISK_IMAGE)
 
 # --- Testing ---
-test: all
+test: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_6809) --disk0=$(DISK_IMAGE) $(KERNEL_6809)
 	$(VM_68K) -disk0=$(DISK_IMAGE) $(KERNEL_68K)
 
-test-interactive: all
+test-interactive: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809\nexit\n" $(KERNEL_6809)
 	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHOK hello from 68k\nexit\n" $(KERNEL_68K)
 
