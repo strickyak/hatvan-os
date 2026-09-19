@@ -318,17 +318,71 @@ func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (
 	return count, 0
 }
 
-// SysWritLn writes count bytes followed by a line terminator
+// SysWritLn writes a line from ubuf up to count bytes or until \r or \n
 func SysWritLn(pathId byte, task byte, ubuf *byte, count word, lineMode byte) (word, byte) {
-	n, err := SysWrite(pathId, task, ubuf, count)
+	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+		return 0, E_BPNUM
+	}
+	pd := &PathTable[pathId]
+	if (pd.Mode&MODE_WRITE) == 0 && pd.DevType != dev.DEV_TERM && pd.DevType != dev.DEV_LOG {
+		return 0, E_BMODE
+	}
+
+	var lineBuf [256]byte
+	toCopy := count
+	if toCopy > 256 {
+		toCopy = 256
+	}
+
+	uAddr := word(ubuf)
+	if task == 0 {
+		klib.memcpy(&lineBuf[0], (*byte)(uAddr), toCopy)
+	} else {
+		hal.DMACopy(task, uAddr, 0, word(&lineBuf[0]), toCopy)
+	}
+
+	lineLen := word(0)
+	hasTerm := false
+	for lineLen < toCopy {
+		c := lineBuf[lineLen]
+		lineLen++
+		isTerm := false
+		if lineMode == 1 {
+			if c == '\r' {
+				isTerm = true
+			}
+		} else {
+			if c == '\n' || c == '\r' {
+				isTerm = true
+			}
+		}
+		if isTerm {
+			hasTerm = true
+			break
+		}
+	}
+
+	n, err := SysWrite(pathId, 0, &lineBuf[0], lineLen)
 	if err != 0 {
 		return n, err
 	}
 
-	endChar := byte('\n')
-	if lineMode == 1 {
-		endChar = '\r'
+	if !hasTerm {
+		endChar := byte('\n')
+		if lineMode == 1 {
+			endChar = '\r'
+		}
+		SysWrite(pathId, 0, &endChar, 1)
+		return n + 1, 0
 	}
-	SysWrite(pathId, 0, &endChar, 1)
-	return n + 1, 0
+
+	if pd.DevType == dev.DEV_TERM {
+		c := lineBuf[lineLen-1]
+		if c == '\r' {
+			nl := byte('\n')
+			SysWrite(pathId, 0, &nl, 1)
+		}
+	}
+
+	return n, 0
 }

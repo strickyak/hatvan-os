@@ -56,6 +56,10 @@ func RunCommand(line *byte) byte {
 	pokeb(word(&cmdName[0])+cmdLen, 0)
 
 	// 3. Extract arguments into argBuf (CR terminated)
+	for peekb(word(p)) == ' ' {
+		p = (*byte)(word(p) + 1)
+	}
+
 	argLen := word(0)
 	for argLen < 126 {
 		c := peekb(word(p))

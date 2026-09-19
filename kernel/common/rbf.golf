@@ -81,6 +81,21 @@ func RBFReadSector(drive byte, lsn word, dst *byte) byte {
 	return hal.DiskTransfer(drive, lsn, 0, word(dst), 0)
 }
 
+// RBFGetFDInf reads fdLSN sector and copies count bytes into task memory at dstAddr
+func RBFGetFDInf(drive byte, fdLSN word, task byte, dstAddr word, count word) byte {
+	bufAddr := word(&rbfSectorBuf[0])
+	st := hal.DiskTransfer(drive, fdLSN, 0, bufAddr, 0)
+	if st != 1 {
+		return 244 // E_READ
+	}
+	if task == 0 {
+		klib.memcpy((*byte)(dstAddr), (*byte)(bufAddr), count)
+	} else {
+		hal.DMACopy(0, bufAddr, task, dstAddr, count)
+	}
+	return 0
+}
+
 // RBFWriteSector writes sector lsn of drive from source buffer src
 func RBFWriteSector(drive byte, lsn word, src *byte) byte {
 	return hal.DiskTransfer(drive, lsn, 0, word(src), 1)

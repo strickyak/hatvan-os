@@ -1,9 +1,11 @@
 package syscall
 
+import "dev"
 import "hal"
 import "klib"
 import "path"
 import "proc"
+import "rbf"
 
 // OS-9 System Call Numbers
 const F_FORK = 0x03  // F$Fork
@@ -13,6 +15,7 @@ const F_EXIT = 0x06  // F$Exit
 const F_MEM = 0x07   // F$Mem
 const F_SLEEP = 0x0A // F$Sleep
 const F_ID = 0x0C    // F$ID
+const F_TIME = 0x15  // F$Time
 
 const I_OPEN = 0x84   // I$Open
 const I_CREATE = 0x85 // I$Create
@@ -48,14 +51,14 @@ func SyscallInit() {
 }
 
 // CopyUserString copies a string from user task space into kernel buffer.
-// Stops at NUL, CR, or LF. Returns string length.
+// Stops at NUL, CR, LF, space, or comma. Returns string length.
 func CopyUserString(task byte, userAddr word, dst *byte, maxLen word) word {
 	count := word(0)
 	dstAddr := word(dst)
 	for count < maxLen-1 {
 		c := byte(0)
 		hal.DMACopy(task, userAddr+count, 0, word(&c), 1)
-		if c == 0 || c == '\r' || c == '\n' {
+		if c == 0 || c == '\r' || c == '\n' || c == ' ' || c == ',' {
 			break
 		}
 		pokeb(dstAddr+count, c)
@@ -86,10 +89,11 @@ func Dispatch(callNum byte) {
 	curPID := proc.CurrentPID
 
 	if callNum == I_OPEN {
-		CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
+		count := CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
 		slot, err := proc.ProcOpen(curPID, &pathBuf[0], UserFrame.A)
 		if err == 0 {
 			UserFrame.A = slot
+			UserFrame.X += count
 			UserFrame.CC &^= 1 // clear CC.C
 		} else {
 			UserFrame.B = err
@@ -99,10 +103,11 @@ func Dispatch(callNum byte) {
 	}
 
 	if callNum == I_CREATE {
-		CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
+		count := CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
 		slot, err := proc.ProcCreate(curPID, &pathBuf[0], UserFrame.A)
 		if err == 0 {
 			UserFrame.A = slot
+			UserFrame.X += count
 			UserFrame.CC &^= 1
 		} else {
 			UserFrame.B = err
@@ -174,7 +179,11 @@ func Dispatch(callNum byte) {
 		if UserFrame.A < proc.PROC_MAX_PATHS {
 			pathId := proc.ProcTable[curPID].Paths[UserFrame.A]
 			if pathId != 0xFF {
-				err := path.SysSeek(pathId, UserFrame.X)
+				seekPos := UserFrame.U
+				if hal.ARCH == 'k' {
+					seekPos = UserFrame.X
+				}
+				err := path.SysSeek(pathId, seekPos)
 				if err == 0 {
 					UserFrame.CC &^= 1
 					return
@@ -190,9 +199,10 @@ func Dispatch(callNum byte) {
 	}
 
 	if callNum == I_CHGDIR {
-		CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
+		count := CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
 		err := proc.SysChgDir(&pathBuf[0], UserFrame.A)
 		if err == 0 {
+			UserFrame.X += count
 			UserFrame.CC &^= 1
 		} else {
 			UserFrame.B = err
@@ -240,6 +250,80 @@ func Dispatch(callNum byte) {
 	}
 
 	if callNum == F_SLEEP {
+		UserFrame.CC &^= 1
+		return
+	}
+
+	if callNum == F_TIME {
+		var timeBuf [6]byte
+		timeBuf[0] = 1 // Year 1901
+		timeBuf[1] = 1 // Month 1
+		timeBuf[2] = 1 // Day 1
+		timeBuf[3] = 1 // Hour 1
+		timeBuf[4] = 1 // Minute 1
+		timeBuf[5] = 1 // Second 1
+		hal.DMACopy(0, word(&timeBuf[0]), curPID, UserFrame.X, 6)
+		UserFrame.CC &^= 1
+		return
+	}
+
+	if callNum == I_GETSTT {
+		pathSlot := UserFrame.A
+		if pathSlot >= proc.PROC_MAX_PATHS {
+			UserFrame.B = proc.E_BPNUM
+			UserFrame.CC |= 1
+			return
+		}
+		pathId := proc.ProcTable[curPID].Paths[pathSlot]
+		if pathId == 0xFF || pathId >= path.MAX_PATHS {
+			UserFrame.B = proc.E_BPNUM
+			UserFrame.CC |= 1
+			return
+		}
+		pd := &path.PathTable[pathId]
+
+		code := UserFrame.B
+		if code == 0x26 { // SS.ScSiz (screen size)
+			UserFrame.X = 80
+			UserFrame.CC &^= 1
+			return
+		}
+
+		if code == 0x06 { // SS.EOF (check EOF)
+			if pd.FilePos >= pd.FileSize {
+				UserFrame.B = path.E_EOF
+				UserFrame.CC |= 1
+			} else {
+				UserFrame.CC &^= 1
+			}
+			return
+		}
+
+		if code == 0x20 { // SS.FDInf (file descriptor sector info)
+			fdLSN := UserFrame.U
+			if sizeof[word]() > 2 {
+				fdLSN = (word(UserFrame.Y>>8) << 16) | UserFrame.U
+			}
+			cnt := UserFrame.Y & 0xFF
+			if cnt > 256 {
+				cnt = 256
+			}
+			err := rbf.RBFGetFDInf(pd.Drive, fdLSN, curPID, UserFrame.X, cnt)
+			if err == 0 {
+				UserFrame.CC &^= 1
+			} else {
+				UserFrame.B = err
+				UserFrame.CC |= 1
+			}
+			return
+		}
+
+		UserFrame.B = path.E_BMODE
+		UserFrame.CC |= 1
+		return
+	}
+
+	if callNum == I_SETSTT {
 		UserFrame.CC &^= 1
 		return
 	}

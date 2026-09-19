@@ -334,18 +334,40 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
 	if hal.ARCH == 'k' {
 		childProc.SavedSP = sp
 	} else if hal.ARCH == '9' {
+		dpVal := byte(0)
+		uVal := word(0)
+
+		// Check if loaded binary is an OS-9 module (magic $87 $CD at $0200)
+		var checkMagic [2]byte
+		hal.DMACopy(childProc.TaskID, 0x0200, 0, word(&checkMagic[0]), 2)
+		if checkMagic[0] == 0x87 && checkMagic[1] == 0xCD {
+			childProc.LineMode = 1
+			uBase := (0x0200 + binSize + 0x00FF) & 0xFF00
+			dpVal = byte(uBase >> 8)
+			uVal = uBase
+
+			// Zero 2048 bytes of process data area starting at uBase
+			var zeroBuf [64]byte
+			for zi := word(0); zi < 64; zi++ {
+				zeroBuf[zi] = 0
+			}
+			for off := word(0); off < 2048; off += 64 {
+				hal.DMACopy(0, word(&zeroBuf[0]), childProc.TaskID, uBase+off, 64)
+			}
+		}
+
 		frameAddr := sp - 12
 		var initFrame [12]byte
 		initFrame[0] = 0x80                   // CC: FlagE (Entire frame)
 		initFrame[1] = 0                      // A
 		initFrame[2] = 0                      // B
-		initFrame[3] = 0                      // DP
+		initFrame[3] = dpVal                  // DP (matches U page!)
 		initFrame[4] = byte(paramAddr >> 8)   // X MSB
 		initFrame[5] = byte(paramAddr)        // X LSB
 		initFrame[6] = byte(paramLenVal >> 8) // Y MSB
 		initFrame[7] = byte(paramLenVal)      // Y LSB
-		initFrame[8] = 0xFE                   // U MSB ($FE00)
-		initFrame[9] = 0x00                   // U LSB
+		initFrame[8] = byte(uVal >> 8)        // U MSB
+		initFrame[9] = byte(uVal)             // U LSB
 		initFrame[10] = byte(entryPC >> 8)    // PC MSB
 		initFrame[11] = byte(entryPC)         // PC LSB
 
