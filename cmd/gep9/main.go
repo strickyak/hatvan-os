@@ -215,6 +215,7 @@ func main() {
 			cyclesSinceInputCheck = 0
 			if maxDuration > 0 && time.Since(startTime) >= maxDuration {
 				fmt.Fprintf(os.Stderr, "\n[gep9: reached maximum realtime limit of %.1f seconds]\n", *maxSecondsFlag)
+				printRegisters(cpu)
 				break
 			}
 			if initialInputPending {

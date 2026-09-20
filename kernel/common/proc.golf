@@ -279,6 +279,40 @@ func ProcClose(pid byte, procPath byte) byte {
 	return 0
 }
 
+// ProcDup duplicates an open path, assigning the lowest available path slot
+func ProcDup(pid byte, procPath byte) (byte, byte) {
+	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+		return 0xFF, E_PROCUNDEF
+	}
+	if procPath >= PROC_MAX_PATHS {
+		return 0xFF, E_BPNUM
+	}
+	p := &ProcTable[pid]
+	pathId := p.Paths[procPath]
+	if pathId == 0xFF {
+		return 0xFF, E_BPNUM
+	}
+
+	slot := byte(0xFF)
+	for k := word(0); k < PROC_MAX_PATHS; k++ {
+		if p.Paths[k] == 0xFF {
+			slot = byte(k)
+			break
+		}
+	}
+	if slot == 0xFF {
+		return 0xFF, E_PTHFUL
+	}
+
+	err := path.SysDup(pathId)
+	if err != 0 {
+		return 0xFF, err
+	}
+
+	p.Paths[slot] = pathId
+	return slot, 0
+}
+
 // ProcRead reads from a per-process path into user buffer
 func ProcRead(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
 	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {

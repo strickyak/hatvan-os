@@ -2,6 +2,9 @@ package gep9
 
 import (
 	"fmt"
+	"os"
+
+	"github.com/strickyak/hatvan-os/gep9/data"
 )
 
 func (c *CPU) executeInstruction() int {
@@ -66,6 +69,17 @@ func (c *CPU) executePage0(op byte) int {
 		return 3
 	case 0x3B: // RTI
 		c.ExecuteRTI()
+		if os.Getenv("HATVAN_TRACE_SWI2") != "" && c.Bus.CurrentTask >= 2 {
+			if int(c.Bus.CurrentTask) < len(c.PendingTraps) {
+				if pt := c.PendingTraps[c.Bus.CurrentTask]; pt != nil {
+					c.PendingTraps[c.Bus.CurrentTask] = nil
+					resStr := data.FormatResult(pt.Call, pt.CallNum, c.CC, c.A, c.B, c.GetD(), c.X, c.Y, c.U, pt.BufAddr, func(addr uint16, maxLen int) string {
+						return c.ReadUserPreview(c.Bus.CurrentTask, addr, maxLen)
+					})
+					fmt.Fprintf(os.Stderr, "    <== [PID %d] %s\n", c.Bus.CurrentTask, resStr)
+				}
+			}
+		}
 		if (c.CC & FlagE) != 0 {
 			if (c.MD & 0x01) != 0 {
 				return 17 // 6309 native frame
@@ -479,6 +493,35 @@ func (c *CPU) executePage1() int {
 	op := c.fetchByte()
 	switch op {
 	case 0x3F: // SWI2
+		if os.Getenv("HATVAN_TRACE_SWI2") != "" && c.Bus.CurrentTask >= 2 {
+			callNum := c.Bus.ReadByte(c.PC)
+			var bufStr string
+			if callNum == 0x8C || callNum == 0x8A {
+				n := int(c.Y)
+				if n > 32 { n = 32 }
+				for i := 0; i < n; i++ {
+					b := c.Bus.ReadByte(c.X + uint16(i))
+					bufStr += fmt.Sprintf(" %02X", b)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "[PID %d PC=%04X SWI2: $%02X (A=%02X B=%02X X=%04X Y=%04X U=%04X): %s]\n", c.Bus.CurrentTask, c.PC-1, callNum, c.A, c.B, c.X, c.Y, c.U, bufStr)
+			call := data.FindCall(callNum)
+			pretty := data.FormatCall(call, callNum, c.A, c.B, c.GetD(), c.X, c.Y, c.U, func(addr uint16) string {
+				return c.ReadUserString(c.Bus.CurrentTask, addr)
+			}, func(addr uint16, maxLen int) string {
+				return c.ReadUserPreview(c.Bus.CurrentTask, addr, maxLen)
+			})
+			fmt.Fprintf(os.Stderr, "    ==> %s\n", pretty)
+			if int(c.Bus.CurrentTask) < len(c.PendingTraps) {
+				c.PendingTraps[c.Bus.CurrentTask] = &PendingTrap{
+					CallNum: callNum,
+					Call:    call,
+					Task:    c.Bus.CurrentTask,
+					PC:      c.PC - 1,
+					BufAddr: c.X,
+				}
+			}
+		}
 		c.PushInterruptFrame(true)
 		c.triggerVector(0xFFF4)
 		return 20

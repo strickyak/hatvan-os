@@ -1,5 +1,12 @@
 package gep9
 
+import (
+	"fmt"
+	"strings"
+
+	"github.com/strickyak/hatvan-os/gep9/data"
+)
+
 const (
 	FlagC = 1 << 0
 	FlagV = 1 << 1
@@ -10,6 +17,15 @@ const (
 	FlagF = 1 << 6
 	FlagE = 1 << 7
 )
+
+// PendingTrap tracks an active kernel trap invocation for a user task.
+type PendingTrap struct {
+	CallNum byte
+	Call    *data.Call
+	Task    byte
+	PC      uint16
+	BufAddr uint16
+}
 
 // CPU implements the Hitachi 6309 / Motorola 6809 processor core.
 type CPU struct {
@@ -36,6 +52,8 @@ type CPU struct {
 
 	irqLine  bool
 	firqLine bool
+
+	PendingTraps [16]*PendingTrap
 }
 
 // NewCPU constructs an initialized CPU wired to the given bus.
@@ -174,6 +192,61 @@ func (c *CPU) setCarry(cond bool) {
 	} else {
 		c.CC &^= FlagC
 	}
+}
+
+// ReadUserString reads a NUL-, CR-, or LF-terminated string from user task memory.
+func (c *CPU) ReadUserString(task byte, addr uint16) string {
+	if int(task) >= len(c.Bus.Memory) {
+		return ""
+	}
+	mem := c.Bus.Memory[task]
+	var b []byte
+	for i := 0; i < 64; i++ {
+		cur := addr + uint16(i)
+		if cur >= 0xFF00 {
+			break
+		}
+		ch := mem[cur]
+		if ch == 0 || ch == '\r' || ch == '\n' {
+			break
+		}
+		if (ch < 32 || ch > 126) && ch != 0 {
+			break
+		}
+		b = append(b, ch)
+	}
+	return string(b)
+}
+
+// ReadUserPreview reads a preview of bytes from user task memory, escaping non-printables.
+func (c *CPU) ReadUserPreview(task byte, addr uint16, maxLen int) string {
+	if int(task) >= len(c.Bus.Memory) {
+		return ""
+	}
+	if maxLen > 32 {
+		maxLen = 32
+	}
+	mem := c.Bus.Memory[task]
+	var res strings.Builder
+	for i := 0; i < maxLen; i++ {
+		cur := addr + uint16(i)
+		if cur >= 0xFF00 {
+			break
+		}
+		ch := mem[cur]
+		if ch == '\n' {
+			res.WriteString(`\n`)
+		} else if ch == '\r' {
+			res.WriteString(`\r`)
+		} else if ch == '\t' {
+			res.WriteString(`\t`)
+		} else if ch >= 32 && ch <= 126 {
+			res.WriteByte(ch)
+		} else {
+			res.WriteString(fmt.Sprintf("{%d}", ch))
+		}
+	}
+	return res.String()
 }
 
 func (c *CPU) setOverflow(cond bool) {

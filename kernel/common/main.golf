@@ -104,6 +104,13 @@ func main() {
 		pLogProc, _ := proc.ProcOpen(p1PID, logPath, path.MODE_WRITE)
 
 		if pIn == 0 && pOut == 1 && pErr == 2 && pLogProc == 3 {
+			// Test ProcDup: dup path 1 (stdout) -> should get lowest free slot (4)
+			pDup, dupErr := proc.ProcDup(p1PID, 1)
+			if dupErr == 0 && pDup == 4 && p1.Paths[4] == p1.Paths[1] {
+				proc.ProcClose(p1PID, pDup)
+				dev.KLog((*byte)("PROC:DUP:OK"))
+			}
+
 			// Now fork/allocate child Process from parent Process
 			p2PID, p2 := proc.ProcAlloc(p1PID)
 			if p2PID > 0 && p2 != (*proc.Process)(0) {

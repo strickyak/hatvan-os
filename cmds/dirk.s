@@ -49,6 +49,10 @@ extract_loop:
     dbra    d3, extract_loop
 
 print_entry:
+    ; Append newline to name_buf
+    move.b  #10, (a1)+
+    addq.l  #1, d2
+
     ; Print filename via I$WritLn ($8C)
     ; D0 = $8C, D1 = 1 (stdout), A0 = name_buf, D2 = length
     lea     name_buf, a0

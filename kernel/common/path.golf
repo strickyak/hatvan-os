@@ -179,6 +179,15 @@ func SysClose(pathId byte) byte {
 	return 0
 }
 
+// SysDup duplicates an open path descriptor by incrementing its reference count
+func SysDup(pathId byte) byte {
+	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+		return E_BPNUM
+	}
+	PathTable[pathId].RefCount++
+	return 0
+}
+
 // SysRead reads up to count bytes from pathId into ubuf in task space
 func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
@@ -377,22 +386,13 @@ func SysWritLn(pathId byte, task byte, ubuf *byte, count word, lineMode byte) (w
 	}
 
 	lineLen := word(0)
-	hasTerm := false
 	for lineLen < toCopy {
 		c := lineBuf[lineLen]
-		lineLen++
-		isTerm := false
-		if lineMode == 1 {
-			if c == '\r' {
-				isTerm = true
-			}
-		} else {
-			if c == '\n' || c == '\r' {
-				isTerm = true
-			}
+		if c == 0 {
+			break
 		}
-		if isTerm {
-			hasTerm = true
+		lineLen++
+		if c == '\r' || c == '\n' {
 			break
 		}
 	}
@@ -400,15 +400,6 @@ func SysWritLn(pathId byte, task byte, ubuf *byte, count word, lineMode byte) (w
 	n, err := SysWrite(pathId, 0, &lineBuf[0], lineLen)
 	if err != 0 {
 		return n, err
-	}
-
-	if !hasTerm {
-		endChar := byte('\n')
-		if lineMode == 1 {
-			endChar = '\r'
-		}
-		SysWrite(pathId, 0, &endChar, 1)
-		return n + 1, 0
 	}
 
 	return n, 0

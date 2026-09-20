@@ -16,16 +16,23 @@ skip_sp:
 find_len:
     move.b  (a1)+, d0
     cmp.b   #$0D, d0
-    beq     found_end
+    beq     found_term
     cmp.b   #$0A, d0
-    beq     found_end
+    beq     found_term
     tst.b   d0
-    beq     found_end
+    beq     found_nul
     addq.l  #1, d2
     bra     find_len
 
-found_end:
-    ; D2 holds length of string to print
+found_term:
+    addq.l  #1, d2          ; Include CR or LF
+    bra     do_write
+
+found_nul:
+    move.b  #10, -1(a1)     ; Replace NUL with newline
+    addq.l  #1, d2
+
+do_write:
 
     ; Call I$WritLn ($8C)
     ; D0 = $8C

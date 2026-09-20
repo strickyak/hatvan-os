@@ -22,6 +22,7 @@ const F_PERR = 0x0F   // F$PErr
 const F_PRSNAM = 0x10 // F$PrsNam
 const F_TIME = 0x15   // F$Time
 
+const I_DUP = 0x82    // I$Dup
 const I_OPEN = 0x84   // I$Open
 const I_CREATE = 0x85 // I$Create
 const I_CHGDIR = 0x86 // I$ChgDir
@@ -124,6 +125,18 @@ func Dispatch(callNum byte) {
 	if callNum == I_CLOSE {
 		err := proc.ProcClose(curPID, UserFrame.A)
 		if err == 0 {
+			UserFrame.CC &^= 1
+		} else {
+			UserFrame.B = err
+			UserFrame.CC |= 1
+		}
+		return
+	}
+
+	if callNum == I_DUP {
+		newSlot, err := proc.ProcDup(curPID, UserFrame.A)
+		if err == 0 {
+			UserFrame.A = newSlot
 			UserFrame.CC &^= 1
 		} else {
 			UserFrame.B = err

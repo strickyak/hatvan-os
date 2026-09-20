@@ -81,6 +81,9 @@ format_bytes:
     subq.l  #1, d5
     bne     format_bytes
 
+    ; Append newline to line_buf
+    move.b  #10, (a1)+
+
     ; 4. Calculate line length: A1 - line_buf
     lea     line_buf, a0
     move.l  a1, d2
