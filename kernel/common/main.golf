@@ -206,7 +206,7 @@ func main() {
 	hal.EnableTimer()
 	pShellPID, pShell := proc.ProcAlloc(0)
 	if pShellPID > 0 && pShell != (*tables.Process)(0) {
-		klib.strcpy(&pShell.CmdName[0], (*byte)("builtin-shell"))
+		klib.strcpy(&pShell.CmdName[0], (*byte)("hatvan-shell"))
 		proc.ProcOpen(pShellPID, termPath, path.MODE_READ)
 		proc.ProcOpen(pShellPID, termPath, path.MODE_WRITE)
 		proc.ProcOpen(pShellPID, termPath, path.MODE_WRITE)

@@ -267,7 +267,7 @@ func RunCommand(line *byte) byte {
 // RunShell runs an interactive shell prompt loop reading from console into Task 0 lineBuf
 func RunShell() {
 	for {
-		printStr((*byte)("# "))
+		printStr((*byte)("....hatvan% "))
 
 		n := dev.TermReadLn(0, word(&lineBuf[0]), 128, 0)
 		if n == 0 {

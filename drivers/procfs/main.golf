@@ -127,15 +127,15 @@ func formatProcesses(curPID byte) word {
 	buf := &procfsBuf[0]
 	pos := word(0)
 
-	// Column headers: PID, PPID, STATE, SP, CMD
-	bufAppendStr(buf, &pos, (*byte)("  PID  PPID STATE      SP  CMD\n"))
+	// Column headers: PID, PPID, TASK, STATE, SP, CMD
+	bufAppendStr(buf, &pos, (*byte)("  PID  PPID  TASK  STATE     SP  CMD\n"))
 
 	for i := word(0); i < MAX_PROCS; i++ {
 		p := &tables.Shared.ProcTable[i]
 		if p.State == PROC_FREE {
 			continue
 		}
-		if pos+45 >= 2040 {
+		if pos+50 >= 2040 {
 			break
 		}
 
@@ -145,22 +145,27 @@ func formatProcesses(curPID byte) word {
 
 		// PPID (column width 4)
 		bufAppendDec(buf, &pos, p.ParentPID, 4)
-		bufAppendByte(buf, &pos, ' ')
+		bufAppendStr(buf, &pos, (*byte)("  "))
 
-		// STATE (column width 5 + space)
+		// TASK (column width 4)
+		bufAppendDec(buf, &pos, p.TaskID, 4)
+		bufAppendStr(buf, &pos, (*byte)("  "))
+
+		// STATE (column width 5)
 		if p.PID == curPID {
-			bufAppendStr(buf, &pos, (*byte)("RUN   "))
+			bufAppendStr(buf, &pos, (*byte)("RUN  "))
 		} else if p.State == PROC_READY {
-			bufAppendStr(buf, &pos, (*byte)("READY "))
+			bufAppendStr(buf, &pos, (*byte)("READY"))
 		} else if p.State == PROC_WAITING {
-			bufAppendStr(buf, &pos, (*byte)("WAIT  "))
+			bufAppendStr(buf, &pos, (*byte)("WAIT "))
 		} else if p.State == PROC_ZOMBIE {
-			bufAppendStr(buf, &pos, (*byte)("ZOMB  "))
+			bufAppendStr(buf, &pos, (*byte)("ZOMB "))
 		} else if p.State == PROC_RUNNING {
-			bufAppendStr(buf, &pos, (*byte)("RUN   "))
+			bufAppendStr(buf, &pos, (*byte)("RUN  "))
 		} else {
-			bufAppendStr(buf, &pos, (*byte)("???   "))
+			bufAppendStr(buf, &pos, (*byte)("???  "))
 		}
+		bufAppendStr(buf, &pos, (*byte)("  "))
 
 		// SP ($XXXX)
 		bufAppendByte(buf, &pos, '$')
