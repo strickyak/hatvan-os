@@ -81,6 +81,11 @@ saved_parent_pid_table_m68k:
     dc.b    0, 0, 0, 0, 0, 0, 0, 0
     even
 
+launched_from_kernel_m68k:
+    dc.b    0, 0, 0, 0, 0, 0, 0, 0
+    dc.b    0, 0, 0, 0, 0, 0, 0, 0
+    even
+
 in_kernel_m68k:
     dc.b    1
     even
@@ -108,6 +113,7 @@ saved_task1_sr_m68k:
     even
 
 trap_0:
+    ori.w   #$0700, sr          ; Disable interrupts during kernel trap handling
     move.b  #1, in_kernel_m68k  ; Enter kernel mode
     ; Check if trap came from Task 1 (RBF driver returning via F$Sleep)
     cmp.b   #1, v_proc.CurrentPID
@@ -203,6 +209,13 @@ trap_0:
     moveq   #0, d0
     move.b  v_proc.CurrentPID, d0
 
+    ; Check if this process was launched via LaunchProcess
+    lea     launched_from_kernel_m68k, a0
+    tst.b   0(a0, d0.w)
+    beq     .m68k_no_caller_waiting
+
+    clr.b   0(a0, d0.w)
+
     ; Restore parent PID from saved_parent_pid_table_m68k[childPID]
     lea     saved_parent_pid_table_m68k, a0
     move.b  0(a0, d0.w), v_proc.CurrentPID
@@ -214,6 +227,14 @@ trap_0:
     move.l  0(a0, d0.w), sp
     movem.l (sp)+, d2-d7/a2-a6
     rts
+
+.m68k_no_caller_waiting:
+    ; Process exited without LaunchProcess caller (background or concurrent):
+    ; Switch to next runnable process via scheduler
+    jsr     f_proc__ScheduleNext
+    move.b  d0, v_proc.CurrentPID
+    move.b  d0, $00FF0020       ; Set TaskReg to nextPID
+    bra     .l6_resume_same
 
 .m68k_rbf_return:
     ; Task 1 returned via trap #0.
@@ -341,6 +362,8 @@ f_hal__InitUserContext:
 f_hal__FreeUserContext:
     ; 4(sp) = PID
     move.l  4(sp), d0
+    lea     launched_from_kernel_m68k, a0
+    clr.b   0(a0, d0.w)
     mulu    #72, d0
     lea     user_context_table_m68k, a0
     clr.l   66(a0, d0.l)
@@ -351,8 +374,11 @@ f_hal__FreeUserContext:
     rts
 
 f_hal__LaunchProcess:
-    ; MiniGolf caller pushed:
-    ;   0(sp): return PC (4 bytes)
+    ori.w   #$0700, sr          ; Disable interrupts during context switch
+    ; 4(sp) = PID
+    ; 8(sp) = initial SP / paramAddr
+    ; 12(sp) = initial PC
+    ; On entry:
     ;   4(sp): PID (4 bytes)
     ;   8(sp): SP (4 bytes)
     ;   12(sp): PC (4 bytes)
@@ -366,6 +392,10 @@ f_hal__LaunchProcess:
     ; Save parent PID in saved_parent_pid_table_m68k[childPID]
     lea     saved_parent_pid_table_m68k, a1
     move.b  v_proc.CurrentPID, 0(a1, d0.w)
+
+    ; Mark as launched from kernel
+    lea     launched_from_kernel_m68k, a1
+    move.b  #1, 0(a1, d0.w)
 
     ; Save kernel SP in saved_kernel_sp_table_m68k[childPID]
     lea     saved_kernel_sp_table_m68k, a1
@@ -475,17 +505,11 @@ trap_level6:
     tst.l   0(a0, d1.l)
     bne     .l6_ksp_ok
 
-    ; Inherit kernel SP and parent PID from oldPID
+    ; Inherit kernel SP from oldPID for trap handling
     moveq   #0, d2
     move.b  v_proc.CurrentPID, d2
     lsl.l   #2, d2
     move.l  0(a0, d2.l), 0(a0, d1.l)
-
-    move.b  v_proc.CurrentPID, d2
-    lea     saved_parent_pid_table_m68k, a1
-    move.b  0(a1, d2.w), d3
-    move.b  d0, d2
-    move.b  d3, 0(a1, d2.w)
 
 .l6_ksp_ok:
     move.b  d0, v_proc.CurrentPID

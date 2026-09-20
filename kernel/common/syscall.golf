@@ -57,7 +57,7 @@ func SyscallInit() {
 }
 
 // CopyUserString copies a string from user task space into kernel buffer.
-// Stops at NUL, CR, LF, space, or comma. Returns string length.
+// Stops at NUL, CR, LF, space, comma, or high-bit terminated character. Returns string length.
 func CopyUserString(task byte, userAddr word, dst *byte, maxLen word) word {
 	count := word(0)
 	dstAddr := word(dst)
@@ -65,6 +65,11 @@ func CopyUserString(task byte, userAddr word, dst *byte, maxLen word) word {
 		c := byte(0)
 		hal.DMACopy(task, userAddr+count, 0, word(&c), 1)
 		if c == 0 || c == '\r' || c == '\n' || c == ' ' || c == ',' {
+			break
+		}
+		if (c & 0x80) != 0 {
+			pokeb(dstAddr+count, c&0x7F)
+			count++
 			break
 		}
 		pokeb(dstAddr+count, c)
@@ -329,11 +334,12 @@ func Dispatch(callNum byte) {
 	}
 
 	if callNum == F_FORK {
-		CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
+		count := CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
 		plen := CopyUserParams(curPID, UserFrame.U, &paramBuf[0], UserFrame.Y)
 		childPID, err := proc.SysFork(&pathBuf[0], &paramBuf[0], plen)
 		if err == 0 {
 			UserFrame.A = childPID
+			UserFrame.X += count
 			UserFrame.CC &^= 1
 		} else {
 			UserFrame.B = err

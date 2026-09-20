@@ -13,6 +13,9 @@ saved_kernel_sp_table:
 saved_parent_pid_table:
     fill 0,16
 
+launched_from_kernel:
+    fill 0,16
+
 saved_user_frame_table:
     fill 0,192
 
@@ -43,6 +46,7 @@ rbf_init_frame:
 ; Hardware pushed (PC, U, Y, X, DP, B, A, CC) onto user task stack.
 ; CPU switched to Task 0 during vector fetch. Register S is user SP.
 trap_swi2:
+    orcc #$50           ; Disable IRQ/FIRQ during kernel trap handling
     inc in_kernel       ; Enter kernel mode
     ; 0. Reset Direct Page to page 0 for kernel execution
     clra
@@ -139,8 +143,15 @@ trap_swi2:
     rti
 
 .process_exited:
-    ; Process exited: restore parent PID and resume caller in Task 0
+    ; Process exited: check if this process was launched via LaunchProcess
     ldb v_proc.CurrentPID
+    ldx #launched_from_kernel
+    lda b,x
+    beq .no_caller_waiting
+
+    clr b,x             ; clear launched_from_kernel[CurrentPID]
+
+    ; Restore parent PID and resume caller in Task 0
     ldx #saved_parent_pid_table
     lda b,x
     sta v_proc.CurrentPID
@@ -165,6 +176,22 @@ trap_swi2:
     std ,y++
 
     rts
+
+.no_caller_waiting:
+    ; Process exited in background or multitasking without LaunchProcess caller:
+    ; Switch to next runnable process via scheduler
+    jsr f_proc__ScheduleNext
+    ; Next PID in B
+    stb v_proc.CurrentPID
+
+    clr in_kernel
+    ldb v_proc.CurrentPID
+    lslb
+    ldy #user_sp_table
+    lds b,y
+    lsrb
+    stb $FF20           ; Arm TaskFuse with target PID
+    rti
 
 .handle_rbf_return:
     ; Hardware pushed 12-byte RTI frame on Task 1 stack.
@@ -284,6 +311,7 @@ f_hal__Sleep:
 ;   3,s: initial SP (2 bytes)
 launch_process:
 f_hal__LaunchProcess:
+    orcc #$50           ; Disable IRQ/FIRQ during stack/context switch
     ; Save parent's UserFrame into saved_user_frame_table
     lda v_proc.CurrentPID
     ldb #12
@@ -309,6 +337,10 @@ f_hal__LaunchProcess:
     lda v_proc.CurrentPID
 
     ldy #saved_parent_pid_table
+    sta b,y
+
+    ldy #launched_from_kernel
+    lda #1
     sta b,y
 
     lslb
@@ -341,6 +373,8 @@ f_hal__InitUserContext:
 
 f_hal__FreeUserContext:
     ldb 2,s
+    ldy #launched_from_kernel
+    clr b,y
     lslb
     ldy #user_sp_table
     ldx #0
@@ -389,16 +423,11 @@ trap_irq:
     ldx b,y
     bne .irq_ksp_ok
 
+    ; Inherit kernel SP from CurrentPID for SWI2 handling
     lda v_proc.CurrentPID
     lsla
     ldx a,y
     stx b,y
-
-    lda v_proc.CurrentPID
-    ldy #saved_parent_pid_table
-    lda a,y
-    ldb ,s              ; B = nextPID
-    sta b,y
 
 .irq_ksp_ok:
     puls b              ; B = nextPID

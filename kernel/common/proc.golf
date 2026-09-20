@@ -531,28 +531,48 @@ func SysExit(status byte) {
 
 // SysWait waits for any child process to terminate and returns (childPID, status, errCode)
 func SysWait() (byte, byte, byte) {
-	hasChildren := false
+	for {
+		hasChildren := false
 
-	for i := word(1); i < MAX_PROCS; i++ {
-		p := &ProcTable[i]
-		if p.ParentPID == CurrentPID && p.State != PROC_FREE {
-			hasChildren = true
-			if p.State == PROC_READY {
-				hal.LaunchProcess(byte(i), p.SavedSP, p.SavedPC)
+		for i := word(1); i < MAX_PROCS; i++ {
+			p := &ProcTable[i]
+			if p.ParentPID == CurrentPID && p.State != PROC_FREE {
+				hasChildren = true
+				if p.State == PROC_ZOMBIE {
+					cpid := byte(i)
+					st := p.ExitStatus
+					ProcFree(cpid)
+					ProcTable[CurrentPID].State = PROC_RUNNING
+					return cpid, st, 0
+				}
+				if p.State == PROC_READY || p.State == PROC_RUNNING {
+					ProcTable[CurrentPID].State = PROC_WAITING
+					hal.LaunchProcess(byte(i), p.SavedSP, p.SavedPC)
+					if p.State == PROC_ZOMBIE {
+						cpid := byte(i)
+						st := p.ExitStatus
+						ProcFree(cpid)
+						ProcTable[CurrentPID].State = PROC_RUNNING
+						return cpid, st, 0
+					}
+				}
 			}
-			if p.State == PROC_ZOMBIE {
-				cpid := byte(i)
-				st := p.ExitStatus
-				ProcFree(cpid)
-				return cpid, st, 0
+		}
+
+		if !hasChildren {
+			ProcTable[CurrentPID].State = PROC_RUNNING
+			return 0, 0, E_NOCHILD
+		}
+
+		// If children exist but none is ready/zombie, let any ready/running process run
+		ProcTable[CurrentPID].State = PROC_WAITING
+		for i := word(2); i < MAX_PROCS; i++ {
+			if byte(i) != CurrentPID && (ProcTable[i].State == PROC_READY || ProcTable[i].State == PROC_RUNNING) {
+				hal.LaunchProcess(byte(i), ProcTable[i].SavedSP, ProcTable[i].SavedPC)
+				break
 			}
 		}
 	}
-
-	if hasChildren {
-		return 0, 0, E_NOTREADY
-	}
-	return 0, 0, E_NOCHILD
 }
 
 func updateProcPath(dstPath *byte, pathStr *byte, drive byte) {

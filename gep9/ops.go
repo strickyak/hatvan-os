@@ -76,7 +76,7 @@ func (c *CPU) executePage0(op byte) int {
 					resStr := data.FormatResult(pt.Call, pt.CallNum, c.CC, c.A, c.B, c.GetD(), c.X, c.Y, c.U, pt.BufAddr, func(addr uint16, maxLen int) string {
 						return c.ReadUserPreview(c.Bus.CurrentTask, addr, maxLen)
 					})
-					fmt.Fprintf(os.Stderr, "    <== [PID %d] %s\n", c.Bus.CurrentTask, resStr)
+					fmt.Fprintf(os.Stderr, "    <== [PID %d PC=%04X S=%04X] %s\n", c.Bus.CurrentTask, c.PC, c.S, resStr)
 				}
 			}
 		}
@@ -504,7 +504,7 @@ func (c *CPU) executePage1() int {
 					bufStr += fmt.Sprintf(" %02X", b)
 				}
 			}
-			fmt.Fprintf(os.Stderr, "[PID %d PC=%04X SWI2: $%02X (A=%02X B=%02X X=%04X Y=%04X U=%04X): %s]\n", c.Bus.CurrentTask, c.PC-1, callNum, c.A, c.B, c.X, c.Y, c.U, bufStr)
+			fmt.Fprintf(os.Stderr, "[PID %d PC=%04X SWI2: $%02X (A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X): %s]\n", c.Bus.CurrentTask, c.PC-1, callNum, c.A, c.B, c.X, c.Y, c.U, c.S, bufStr)
 			call := data.FindCall(callNum)
 			pretty := data.FormatCall(call, callNum, c.A, c.B, c.GetD(), c.X, c.Y, c.U, func(addr uint16) string {
 				return c.ReadUserString(c.Bus.CurrentTask, addr)

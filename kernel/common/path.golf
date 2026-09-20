@@ -392,8 +392,14 @@ func SysWritLn(pathId byte, task byte, ubuf *byte, count word, lineMode byte) (w
 			break
 		}
 		lineLen++
-		if c == '\r' || c == '\n' {
-			break
+		if lineMode == 1 {
+			if c == '\r' {
+				break
+			}
+		} else {
+			if c == '\r' || c == '\n' {
+				break
+			}
 		}
 	}
 

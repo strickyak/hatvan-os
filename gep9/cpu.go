@@ -194,7 +194,7 @@ func (c *CPU) setCarry(cond bool) {
 	}
 }
 
-// ReadUserString reads a NUL-, CR-, or LF-terminated string from user task memory.
+// ReadUserString reads a NUL-, CR-, LF-, or high-bit-terminated string from user task memory.
 func (c *CPU) ReadUserString(task byte, addr uint16) string {
 	if int(task) >= len(c.Bus.Memory) {
 		return ""
@@ -210,7 +210,14 @@ func (c *CPU) ReadUserString(task byte, addr uint16) string {
 		if ch == 0 || ch == '\r' || ch == '\n' {
 			break
 		}
-		if (ch < 32 || ch > 126) && ch != 0 {
+		if (ch & 0x80) != 0 {
+			clean := ch & 0x7F
+			if clean >= 32 && clean <= 126 {
+				b = append(b, clean)
+			}
+			break
+		}
+		if ch < 32 || ch > 126 {
 			break
 		}
 		b = append(b, ch)
