@@ -24,7 +24,8 @@ var (
 	disk1Flag      = flag.String("disk1", "", "disk image file for /d1")
 	disk2Flag      = flag.String("disk2", "", "disk image file for /d2")
 	disk3Flag      = flag.String("disk3", "", "disk image file for /d3")
-	task1Flag      = flag.String("task1", "", "optional binary (DECB) to load into Task 1")
+	task1Flag       = flag.String("task1", "", "optional binary (DECB) to load into Task 1")
+	task2Flag       = flag.String("task2", "", "optional binary (DECB) to load into Task 2")
 	hypercallsFlag  = flag.Bool("hypercalls", false, "enable GOMAR-compatible hypercall traps ($12,$21,<hop>)")
 	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
 	curlyEscapeFlag = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
@@ -118,6 +119,23 @@ func main() {
 			os.Exit(1)
 		}
 		bus.LoadDECBIntoTask(1, d1)
+	}
+
+	// Load Task 2 if specified or companion procfs_6809.decb exists
+	task2Path := *task2Flag
+	if task2Path == "" {
+		candidate := filepath.Join(filepath.Dir(binPath), "procfs_6809.decb")
+		if _, err := os.Stat(candidate); err == nil {
+			task2Path = candidate
+		}
+	}
+	if task2Path != "" {
+		d2, err := gep9.LoadDECBFile(task2Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading Task 2 DECB %q: %v\n", task2Path, err)
+			os.Exit(1)
+		}
+		bus.LoadDECBIntoTask(2, d2)
 	}
 
 	// 3. Scan for OS-9 modules in memory

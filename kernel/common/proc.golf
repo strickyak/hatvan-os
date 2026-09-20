@@ -3,6 +3,7 @@ package proc
 import "hal"
 import "klib"
 import "rbf_ipc"
+import "procfs_ipc"
 import "dev"
 import "path"
 import "loader"
@@ -104,7 +105,7 @@ func ProcInit() {
 		for k := word(0); k < PROC_MAX_PATHS; k++ {
 			p.Paths[k] = 0xFF
 		}
-		if i > 1 {
+		if i > 2 {
 			hal.PurgeTaskMem(byte(i))
 		}
 	}
@@ -122,11 +123,24 @@ func ProcInit() {
 	ProcTable[1].TaskID = 1
 	ProcTable[1].SavedSP = 0xFE00
 	klib.strcpy(&ProcTable[1].CmdName[0], (*byte)("[RBF]"))
-	hal.SetTaskFlags(1)
+	hal.SetTaskFlags(1, 1)
 	if hal.ARCH == '9' {
 		hal.InitRBF(0x4000)
 	} else {
 		hal.InitRBF(0x00001000)
+	}
+
+	// Process 2 is Task 2 ([PROCFS])
+	ProcTable[2].State = PROC_WAITING
+	ProcTable[2].ParentPID = 0
+	ProcTable[2].TaskID = 2
+	ProcTable[2].SavedSP = 0xFE00
+	klib.strcpy(&ProcTable[2].CmdName[0], (*byte)("[PROCFS]"))
+	hal.SetTaskFlags(2, 1)
+	if hal.ARCH == '9' {
+		hal.InitProcfs(0x4000)
+	} else {
+		hal.InitProcfs(0x00001000)
 	}
 
 	CurrentPID = 0
@@ -193,7 +207,7 @@ func ProcAlloc(parentPID byte) (byte, *Process) {
 
 // ProcFree terminates a process slot and closes all associated paths
 func ProcFree(pid byte) {
-	if pid <= 1 || pid >= MAX_PROCS {
+	if pid <= 2 || pid >= MAX_PROCS {
 		return
 	}
 	p := &ProcTable[pid]
@@ -587,7 +601,7 @@ func SysWait() (byte, byte, byte) {
 
 		// If children exist but none is ready/zombie, let any ready/running process run
 		SetProcState(CurrentPID, PROC_WAITING)
-		for i := word(2); i < MAX_PROCS; i++ {
+		for i := word(3); i < MAX_PROCS; i++ {
 			if byte(i) != CurrentPID && !IsAncestor(byte(i), CurrentPID) && (ProcTable[i].State == PROC_READY || ProcTable[i].State == PROC_RUNNING) {
 				hal.LaunchProcess(byte(i), ProcTable[i].SavedSP, ProcTable[i].SavedPC)
 				break
@@ -694,125 +708,7 @@ func SysChgDir(pathStr *byte, mode byte) byte {
 
 // ==================== /proc Filesystem ====================
 
-func bufAppendByte(buf *byte, pos *word, b byte) {
-	p := *pos
-	if p < 1020 {
-		pokeb(word(buf)+p, b)
-		*pos = p + 1
-	}
-}
-
-func bufAppendStr(buf *byte, pos *word, s *byte) {
-	p := word(s)
-	for {
-		c := peekb(p)
-		if c == 0 {
-			break
-		}
-		bufAppendByte(buf, pos, c)
-		p++
-	}
-}
-
-func bufAppendDec(buf *byte, pos *word, val byte, width byte) {
-	var tmp [4]byte
-	n := word(0)
-	v := val
-	if v == 0 {
-		tmp[0] = '0'
-		n = 1
-	} else {
-		for v > 0 {
-			rem := v % 10
-			tmp[n] = '0' + rem
-			n++
-			v = v / 10
-		}
-	}
-	for n < word(width) {
-		bufAppendByte(buf, pos, ' ')
-		width--
-	}
-	for n > 0 {
-		n--
-		bufAppendByte(buf, pos, tmp[n])
-	}
-}
-
-func bufAppendHexWord(buf *byte, pos *word, val word) {
-	for i := word(0); i < 4; i++ {
-		shift := (3 - i) * 4
-		nib := byte((val >> shift) & 0xF)
-		if nib < 10 {
-			bufAppendByte(buf, pos, '0'+nib)
-		} else {
-			bufAppendByte(buf, pos, 'A'+nib-10)
-		}
-	}
-}
-
-// ProcfsFormatProcesses generates a table of active processes into dev.ProcfsBuf
-func ProcfsFormatProcesses(pathId byte) byte {
-	pd := &path.PathTable[pathId]
-	buf := &dev.ProcfsBuf[0]
-	pos := word(0)
-
-	// Column headers: PID, PPID, STATE, SP, CMD
-	bufAppendStr(buf, &pos, (*byte)("  PID  PPID STATE      SP  CMD\n"))
-
-	for i := word(0); i < MAX_PROCS; i++ {
-		p := &ProcTable[i]
-		if p.State == PROC_FREE {
-			continue
-		}
-		if pos+45 >= 1020 {
-			break
-		}
-
-		// PID (column width 5)
-		bufAppendDec(buf, &pos, p.PID, 5)
-		bufAppendStr(buf, &pos, (*byte)("  "))
-
-		// PPID (column width 4)
-		bufAppendDec(buf, &pos, p.ParentPID, 4)
-		bufAppendByte(buf, &pos, ' ')
-
-		// STATE (column width 5 + space)
-		if p.PID == CurrentPID {
-			bufAppendStr(buf, &pos, (*byte)("RUN   "))
-		} else if p.State == PROC_READY {
-			bufAppendStr(buf, &pos, (*byte)("READY "))
-		} else if p.State == PROC_WAITING {
-			bufAppendStr(buf, &pos, (*byte)("WAIT  "))
-		} else if p.State == PROC_ZOMBIE {
-			bufAppendStr(buf, &pos, (*byte)("ZOMB  "))
-		} else if p.State == PROC_RUNNING {
-			bufAppendStr(buf, &pos, (*byte)("RUN   "))
-		} else {
-			bufAppendStr(buf, &pos, (*byte)("???   "))
-		}
-
-		// SP ($XXXX)
-		bufAppendByte(buf, &pos, '$')
-		bufAppendHexWord(buf, &pos, p.SavedSP)
-		bufAppendStr(buf, &pos, (*byte)("  "))
-
-		// CMD
-		if p.CmdName[0] != 0 {
-			bufAppendStr(buf, &pos, &p.CmdName[0])
-		} else {
-			bufAppendStr(buf, &pos, (*byte)("-"))
-		}
-		bufAppendByte(buf, &pos, '\n')
-	}
-
-	pokeb(word(buf)+pos, 0)
-	pd.FileSize = pos
-	pd.FilePos = 0
-	return 0
-}
-
-// ProcfsOpen dispatches /proc subpaths
+// ProcfsOpen dispatches /proc subpaths via Task 2 IPC
 func ProcfsOpen(pathId byte, pathStr *byte) byte {
 	devType, _, remPath := dev.ParsePathDevice(pathStr, 0)
 	if devType != dev.DEV_PROC {
@@ -836,14 +732,15 @@ func ProcfsOpen(pathId byte, pathStr *byte) byte {
 	}
 	comp[idx] = 0
 
-	// Dispatch valid /proc paths
-	if klib.streq(&comp[0], (*byte)("p")) {
-		return ProcfsFormatProcesses(pathId)
+	fileSize, err := procfs_ipc.Open(&comp[0], CurrentPID)
+	if err != 0 {
+		return err
 	}
 
-	// Additional valid paths to /proc can easily be added here later.
-
-	return path.E_PNNF
+	pd := &path.PathTable[pathId]
+	pd.FileSize = fileSize
+	pd.FilePos = 0
+	return 0
 }
 
 // ScheduleNext selects the next runnable process (PROC_READY or PROC_RUNNING) in round-robin order.
@@ -851,11 +748,11 @@ func ScheduleNext() byte {
 	start := CurrentPID
 	for offset := word(1); offset <= MAX_PROCS; offset++ {
 		next := byte((word(start) + offset) % MAX_PROCS)
-		if next <= 1 {
+		if next <= 2 {
 			continue
 		}
 		if ProcTable[next].State == PROC_READY || ProcTable[next].State == PROC_RUNNING {
-			if start > 1 && ProcTable[start].State == PROC_RUNNING {
+			if start > 2 && ProcTable[start].State == PROC_RUNNING {
 				SetProcState(start, PROC_READY)
 			}
 			SetProcState(next, PROC_RUNNING)

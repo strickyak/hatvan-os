@@ -27,6 +27,7 @@ var (
 	disk2Flag       = flag.String("disk2", "", "disk image file for drive 2")
 	disk3Flag       = flag.String("disk3", "", "disk image file for drive 3")
 	task1Flag       = flag.String("task1", "", "optional binary (S-Record) to load into Task 1")
+	task2Flag       = flag.String("task2", "", "optional binary (S-Record) to load into Task 2")
 	baseAddrFlag    = flag.Uint("base", 0, "base memory address for raw binary image (default 0)")
 	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
 	curlyEscapeFlag = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
@@ -118,10 +119,31 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error opening Task 1 file %q: %v\n", task1Path, err)
 			os.Exit(1)
 		}
-		defer f1.Close()
 		_, _, err = bus.LoadSRecordsIntoTask(1, f1)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading Task 1 S-Records %q: %v\n", task1Path, err)
+			os.Exit(1)
+		}
+	}
+
+	// Load Task 2 if specified or companion procfs_68k.srec exists
+	task2Path := *task2Flag
+	if task2Path == "" {
+		candidate := filepath.Join(filepath.Dir(binPath), "procfs_68k.srec")
+		if _, err := os.Stat(candidate); err == nil {
+			task2Path = candidate
+		}
+	}
+	if task2Path != "" {
+		f2, err := os.Open(task2Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening Task 2 file %q: %v\n", task2Path, err)
+			os.Exit(1)
+		}
+		defer f2.Close()
+		_, _, err = bus.LoadSRecordsIntoTask(2, f2)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading Task 2 S-Records %q: %v\n", task2Path, err)
 			os.Exit(1)
 		}
 	}

@@ -112,8 +112,20 @@ func TestBusTaskFlagsIOBlessing(t *testing.T) {
 	bus.TaskReg = 2
 	assertPanic(func() { bus.ReadByte(0x00FF0000) }, "Unblessed Task 2 ReadByte")
 
+	// 4b. Supervisor blesses Task 2 via $00FF005A = 2, $00FF005C = 0x01
+	bus.CurrentFC = FCSupervisorData
+	bus.WriteByte(0x00FF005A, 2)
+	bus.WriteByte(0x00FF005C, 0x01)
+	bus.CurrentFC = FCUserData
+	bus.TaskReg = 2
+	bus.WriteByte(0x00FF0010, 0x02) // Access succeeds
+	if bus.DiskDrive != 2 {
+		t.Fatalf("expected DiskDrive=2 from blessed Task 2, got %d", bus.DiskDrive)
+	}
+
 	// 5. Purging Task 1 revokes blessing
 	bus.CurrentFC = FCSupervisorData
+	bus.WriteByte(0x00FF005A, 1)
 	bus.WriteByte(0x00FF005E, 0x01) // Purge Task 1
 	if got := bus.ReadByte(0x00FF005C); got != 0x00 {
 		t.Fatalf("ReadByte(0x00FF005C) after purge = 0x%02X, want 0x00", got)

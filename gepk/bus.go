@@ -89,8 +89,9 @@ type Bus struct {
 	DmaCount   uint32
 	DmaStatus  uint16
 
-	// Hatvan TaskFlags ($00FF005C)
-	TaskFlags [256]byte
+	// Hatvan TaskFlags ($00FF005A..$00FF005C)
+	TaskFlagsTarget byte
+	TaskFlags       [256]byte
 
 	// Callback when highest active interrupt level changes (0 = none, 1..7)
 	OnInterruptLevelChanged func(level uint8)
@@ -99,10 +100,11 @@ type Bus struct {
 // NewBus constructs an initialized Bus with Task 0 allocated.
 func NewBus() *Bus {
 	b := &Bus{
-		CurrentFC:  FCSupervisorProg,
-		TaskReg:    1,
-		ConsoleOut: os.Stdout,
-		LogOut:     os.Stderr,
+		CurrentFC:       FCSupervisorProg,
+		TaskReg:         1,
+		TaskFlagsTarget: 1,
+		ConsoleOut:      os.Stdout,
+		LogOut:          os.Stderr,
 	}
 	for i := range b.Tasks {
 		b.Tasks[i] = &TaskMemory{}
@@ -370,8 +372,11 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		}
 		return byte(b.DmaStatus >> 8)
 
+	case 0x00FF005A: // TaskFlagsTarget (0x00FF005A or 0x00FF005B)
+		return b.TaskFlagsTarget
+
 	case 0x00FF005C: // TaskFlagsRegister (0x00FF005C or 0x00FF005D)
-		return b.TaskFlags[1]
+		return b.TaskFlags[b.TaskFlagsTarget]
 
 	case 0x00FF005E: // PurgeTaskMem (0x00FF005E or 0x00FF005F)
 		return 0
@@ -522,8 +527,11 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 			b.executeDMACopy()
 		}
 
-	case 0x00FF005C: // TaskFlagsRegister (0x00FF005C or 0x00FF005D): sets flags for Task 1 (Bit 0 = allow I/O)
-		b.TaskFlags[1] = val
+	case 0x00FF005A: // TaskFlagsTarget (0x00FF005A or 0x00FF005B)
+		b.TaskFlagsTarget = val
+
+	case 0x00FF005C: // TaskFlagsRegister (0x00FF005C or 0x00FF005D): sets flags for TaskFlagsTarget
+		b.TaskFlags[b.TaskFlagsTarget] = val
 
 	case 0x00FF005E: // PurgeTaskMem (0x00FF005E or 0x00FF005F)
 		if val != 0 {

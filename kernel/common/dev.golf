@@ -10,8 +10,6 @@ const DEV_NULL = 3
 const DEV_DISK = 4
 const DEV_PROC = 5
 
-var ProcfsBuf [1024]byte
-
 // ParsePathDevice examines path for device prefixes:
 // "/term", "/log", "/null", "/proc", "/d0".."/d3".
 // Returns (devType, driveNum, remainingPathPtr).
@@ -121,7 +119,7 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 			if c != 0 {
 				break
 			}
-			for i := word(2); i < proc.MAX_PROCS; i++ {
+			for i := word(3); i < proc.MAX_PROCS; i++ {
 				if byte(i) != proc.CurrentPID && !proc.IsAncestor(byte(i), proc.CurrentPID) && (proc.ProcTable[i].State == proc.PROC_READY || proc.ProcTable[i].State == proc.PROC_RUNNING) {
 					hal.LaunchProcess(byte(i), proc.ProcTable[i].SavedSP, proc.ProcTable[i].SavedPC)
 					break

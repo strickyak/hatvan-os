@@ -110,14 +110,24 @@ saved_task1_pc_m68k:
     dc.l    0
 saved_task1_sr_m68k:
     dc.w    0
+saved_kernel_sp_procfs_m68k:
+    dc.l    0
+saved_task2_sp_m68k:
+    dc.l    0
+saved_task2_pc_m68k:
+    dc.l    0
+saved_task2_sr_m68k:
+    dc.w    0
     even
 
 trap_0:
     ori.w   #$0700, sr          ; Disable interrupts during kernel trap handling
     move.b  #1, in_kernel_m68k  ; Enter kernel mode
-    ; Check if trap came from Task 1 (RBF driver returning via F$Sleep)
+    ; Check if trap came from driver tasks (Task 1: RBF, Task 2: PROCFS) returning via F$Sleep
     cmp.b   #1, v_proc.CurrentPID
-    beq     .m68k_rbf_return
+    beq     .m68k_driver_return
+    cmp.b   #2, v_proc.CurrentPID
+    beq     .m68k_driver_return
 
     ; On entry:
     ; Hardware pushed:
@@ -236,6 +246,9 @@ trap_0:
     move.b  d0, $00FF0020       ; Set TaskReg to nextPID
     bra     .l6_resume_same
 
+.m68k_driver_return:
+    cmp.b   #1, v_proc.CurrentPID
+    bne     .m68k_procfs_return
 .m68k_rbf_return:
     ; Task 1 returned via trap #0.
     ; SP points to SR (word) and PC (long) pushed by trap #0.
@@ -271,6 +284,41 @@ trap_0:
     move.l  (sp)+, d2
 
     ; Return to RBFCall caller in Task 0!
+    rts
+
+.m68k_procfs_return:
+    ; Task 2 returned via trap #0.
+    move.l  usp, a0
+    move.l  a0, saved_task2_sp_m68k
+
+    ; Pop SR and PC into saved variables
+    move.w  (sp)+, saved_task2_sr_m68k
+    move.l  (sp)+, saved_task2_pc_m68k
+
+    ; Restore kernel stack pointer
+    move.l  saved_kernel_sp_procfs_m68k, sp
+
+    ; Restore caller PID from kernel stack
+    move.b  (sp), v_proc.CurrentPID
+    addq.l  #2, sp
+
+    ; Restore TaskReg to caller PID
+    move.b  v_proc.CurrentPID, $00FF0020
+
+    ; Restore Task 0 callee-saved registers
+    move.l  (sp)+, a6
+    move.l  (sp)+, a5
+    move.l  (sp)+, a4
+    move.l  (sp)+, a3
+    move.l  (sp)+, a2
+    move.l  (sp)+, d7
+    move.l  (sp)+, d6
+    move.l  (sp)+, d5
+    move.l  (sp)+, d4
+    move.l  (sp)+, d3
+    move.l  (sp)+, d2
+
+    ; Return to ProcfsCall caller in Task 0!
     rts
 
 f_hal__RBFCall:
@@ -317,6 +365,52 @@ f_hal__InitRBF:
 
     ; Call RBF once so it runs its init and enters hal.Sleep()
     jsr     f_hal__RBFCall
+    rts
+
+f_hal__ProcfsCall:
+    ; Save Task 0 callee-saved registers
+    move.l  d2, -(sp)
+    move.l  d3, -(sp)
+    move.l  d4, -(sp)
+    move.l  d5, -(sp)
+    move.l  d6, -(sp)
+    move.l  d7, -(sp)
+    move.l  a2, -(sp)
+    move.l  a3, -(sp)
+    move.l  a4, -(sp)
+    move.l  a5, -(sp)
+    move.l  a6, -(sp)
+
+    ; Push caller PID onto kernel stack (word-aligned)
+    subq.l  #2, sp
+    move.b  v_proc.CurrentPID, (sp)
+
+    ; Set CurrentPID = 2 (Task 2: PROCFS)
+    move.b  #2, v_proc.CurrentPID
+
+    ; Save kernel stack pointer
+    move.l  sp, saved_kernel_sp_procfs_m68k
+
+    ; Set TaskReg to Task 2 ($00FF0020)
+    move.b  #2, $00FF0020
+
+    ; Set USP to Task 2 stack pointer
+    move.l  saved_task2_sp_m68k, a0
+    move.l  a0, usp
+
+    ; Push Task 2 PC and SR for RTE
+    move.l  saved_task2_pc_m68k, -(sp)
+    move.w  saved_task2_sr_m68k, -(sp)
+    rte
+
+f_hal__InitProcfs:
+    ; 4(sp) is entryPC
+    move.l  4(sp), saved_task2_pc_m68k
+    move.l  #$0007FE00, saved_task2_sp_m68k
+    move.w  #$0000, saved_task2_sr_m68k
+
+    ; Call PROCFS once so it runs its init and enters hal.Sleep()
+    jsr     f_hal__ProcfsCall
     rts
 
 f_hal__Sleep:

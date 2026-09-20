@@ -53,8 +53,9 @@ type Bus struct {
 	DmaDstAddr uint16 // $FF25..$FF26
 	DmaStatus  byte   // $FF27 (0 = busy, 1 = OKAY, >1 = error)
 
-	// Hatvan TaskFlags ($FF2E)
-	TaskFlags [256]byte
+	// Hatvan TaskFlags ($FF2D..$FF2E)
+	TaskFlagsTarget byte // $FF2D: target task to configure (default: 1)
+	TaskFlags       [256]byte
 
 	// Callback when IRQ line state changes
 	OnIRQChanged func(asserted bool)
@@ -67,9 +68,10 @@ type Bus struct {
 // NewBus constructs an initialized Bus with all memory zeroed.
 func NewBus() *Bus {
 	return &Bus{
-		CurrentTask: 0,
-		ConsoleOut:  os.Stdout,
-		LogOut:      os.Stderr,
+		CurrentTask:     0,
+		TaskFlagsTarget: 1,
+		ConsoleOut:      os.Stdout,
+		LogOut:          os.Stderr,
 	}
 }
 
@@ -206,8 +208,10 @@ func (b *Bus) readIO(addr uint16) byte {
 		b.DmaStatus = 0 // Reset on read
 		return st
 
+	case 0xFF2D:
+		return b.TaskFlagsTarget
 	case 0xFF2E: // TaskFlagsRegister
-		return b.TaskFlags[1]
+		return b.TaskFlags[b.TaskFlagsTarget]
 
 	case 0xFF2F: // PurgeTaskMem
 		return 0
@@ -297,8 +301,10 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 	case 0xFF27: // DMA Copy command: length 1..255, 0 = 256
 		b.executeDMACopy(val)
 
-	case 0xFF2E: // TaskFlagsRegister: sets flags for Task 1 (Bit 0 = allow I/O)
-		b.TaskFlags[1] = val
+	case 0xFF2D: // TaskFlagsTarget: target task to configure
+		b.TaskFlagsTarget = val
+	case 0xFF2E: // TaskFlagsRegister: sets flags for TaskFlagsTarget (Bit 0 = allow I/O)
+		b.TaskFlags[b.TaskFlagsTarget] = val
 
 	case 0xFF2F: // PurgeTaskMem: zero task memory if val != 0
 		if val != 0 {

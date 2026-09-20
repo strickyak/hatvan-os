@@ -26,6 +26,7 @@ const PORT_DMADSTTASK = 0xFF24
 const PORT_DMADSTADDR = 0xFF25 // 2 bytes (Hi, Lo)
 const PORT_DMACNT = 0xFF27
 
+const PORT_TASKFLAGSTASK = 0xFF2D
 const PORT_TASKFLAGS = 0xFF2E
 const PORT_PURGETASKMEM = 0xFF2F
 
@@ -122,13 +123,16 @@ func PurgeTaskMem(task byte) {
 	}
 }
 
-func SetTaskFlags(flags byte) {
+func SetTaskFlags(task byte, flags byte) {
+	vpokeb(PORT_TASKFLAGSTASK, task)
 	vpokeb(PORT_TASKFLAGS, flags)
 }
 
 func RBFCall()
 func Sleep()
 func InitRBF(entryPC word)
+func ProcfsCall()
+func InitProcfs(entryPC word)
 func InitUserContext(pid byte, sp word, pc word)
 func FreeUserContext(pid byte)
 

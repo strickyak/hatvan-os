@@ -1,0 +1,270 @@
+package main
+
+import "hal"
+import "klib"
+
+const MAX_PROCS = 16
+
+const PROC_FREE = 0
+const PROC_READY = 1
+const PROC_RUNNING = 2
+const PROC_WAITING = 3
+const PROC_ZOMBIE = 4
+
+type Process struct {
+	PID         byte
+	State       byte
+	ParentPID   byte
+	TaskID      byte
+	ExitStatus  byte
+	SavedSP     word
+	SavedPC     word
+	SavedU      word
+	Paths       [16]byte
+	CwdDrive    byte
+	CwdFDLSN    word
+	CwdPath     [32]byte
+	CxdDrive    byte
+	CxdFDLSN    word
+	CxdPath     [32]byte
+	LineMode    byte
+	CodeStart   word
+	CodeSize    word
+	DataTop     word
+	StackBottom word
+	CmdName     [16]byte
+}
+
+const PROCFS_CMD_NOP = 0
+const PROCFS_CMD_OPEN = 1
+const PROCFS_CMD_READ = 2
+
+// Mailbox layout at $0080 in Task 2 RAM
+const MB_CMD = 0x0080
+const MB_TARGET_TASK = 0x0081
+const MB_STATUS = 0x0082
+const MB_CURRENT_PID = 0x0083
+const MB_TARGET_ADDR = 0x0084 // 4 bytes: 0x0084..0x0087
+const MB_FILE_POS = 0x0088    // 4 bytes: 0x0088..0x008B
+const MB_COUNT = 0x008C       // 2 bytes: 0x008C..0x008D
+const MB_PROC_ADDR = 0x0090   // 4 bytes: 0x0090..0x0093 (Task 0 ProcTable address)
+const MB_PROC_SIZE = 0x0094   // 2 bytes: 0x0094..0x0095 (Task 0 ProcTable size)
+const MB_PATH_STR = 0x0098    // 32 bytes: 0x0098..0x00B7 (subpath, e.g. "p")
+const MB_OUT_SIZE = 0x00B8    // 4 bytes: 0x00B8..0x00BB (FileSize or BytesRead)
+
+var localProcTable [MAX_PROCS]Process
+var procfsBuf [2048]byte
+var procfsSize word
+
+func readW16(addr word) word {
+	hi := word(peekb(addr))
+	lo := word(peekb(addr + 1))
+	return (hi << 8) | lo
+}
+
+func readW32(addr word) word {
+	b0 := word(peekb(addr))
+	b1 := word(peekb(addr + 1))
+	b2 := word(peekb(addr + 2))
+	b3 := word(peekb(addr + 3))
+	res := (b2 << 8) | b3
+	if sizeof[word]() > 2 {
+		res = (b0 << 24) | (b1 << 16) | res
+	}
+	return res
+}
+
+func writeW16(addr word, val word) {
+	pokeb(addr, byte(val>>8))
+	pokeb(addr+1, byte(val))
+}
+
+func writeW32(addr word, val word) {
+	pokeb(addr, 0)
+	pokeb(addr+1, 0)
+	pokeb(addr+2, byte(val>>8))
+	pokeb(addr+3, byte(val))
+	if sizeof[word]() > 2 {
+		pokeb(addr, byte(val>>24))
+		pokeb(addr+1, byte(val>>16))
+	}
+}
+
+func bufAppendByte(buf *byte, pos *word, b byte) {
+	p := *pos
+	if p < 2040 {
+		pokeb(word(buf)+p, b)
+		*pos = p + 1
+	}
+}
+
+func bufAppendStr(buf *byte, pos *word, s *byte) {
+	p := word(s)
+	for {
+		c := peekb(p)
+		if c == 0 {
+			break
+		}
+		bufAppendByte(buf, pos, c)
+		p++
+	}
+}
+
+func bufAppendDec(buf *byte, pos *word, val byte, width byte) {
+	var tmp [4]byte
+	n := word(0)
+	v := val
+	if v == 0 {
+		tmp[0] = '0'
+		n = 1
+	} else {
+		for v > 0 {
+			rem := v % 10
+			tmp[n] = '0' + rem
+			n++
+			v = v / 10
+		}
+	}
+	for n < word(width) {
+		bufAppendByte(buf, pos, ' ')
+		width--
+	}
+	for n > 0 {
+		n--
+		bufAppendByte(buf, pos, tmp[n])
+	}
+}
+
+func bufAppendHexWord(buf *byte, pos *word, val word) {
+	for i := word(0); i < 4; i++ {
+		shift := (3 - i) * 4
+		nib := byte((val >> shift) & 0xF)
+		if nib < 10 {
+			bufAppendByte(buf, pos, '0'+nib)
+		} else {
+			bufAppendByte(buf, pos, 'A'+nib-10)
+		}
+	}
+}
+
+func formatProcesses(curPID byte) word {
+	buf := &procfsBuf[0]
+	pos := word(0)
+
+	// Column headers: PID, PPID, STATE, SP, CMD
+	bufAppendStr(buf, &pos, (*byte)("  PID  PPID STATE      SP  CMD\n"))
+
+	for i := word(0); i < MAX_PROCS; i++ {
+		p := &localProcTable[i]
+		if p.State == PROC_FREE {
+			continue
+		}
+		if pos+45 >= 2040 {
+			break
+		}
+
+		// PID (column width 5)
+		bufAppendDec(buf, &pos, p.PID, 5)
+		bufAppendStr(buf, &pos, (*byte)("  "))
+
+		// PPID (column width 4)
+		bufAppendDec(buf, &pos, p.ParentPID, 4)
+		bufAppendByte(buf, &pos, ' ')
+
+		// STATE (column width 5 + space)
+		if p.PID == curPID {
+			bufAppendStr(buf, &pos, (*byte)("RUN   "))
+		} else if p.State == PROC_READY {
+			bufAppendStr(buf, &pos, (*byte)("READY "))
+		} else if p.State == PROC_WAITING {
+			bufAppendStr(buf, &pos, (*byte)("WAIT  "))
+		} else if p.State == PROC_ZOMBIE {
+			bufAppendStr(buf, &pos, (*byte)("ZOMB  "))
+		} else if p.State == PROC_RUNNING {
+			bufAppendStr(buf, &pos, (*byte)("RUN   "))
+		} else {
+			bufAppendStr(buf, &pos, (*byte)("???   "))
+		}
+
+		// SP ($XXXX)
+		bufAppendByte(buf, &pos, '$')
+		bufAppendHexWord(buf, &pos, p.SavedSP)
+		bufAppendStr(buf, &pos, (*byte)("  "))
+
+		// CMD
+		if p.CmdName[0] != 0 {
+			bufAppendStr(buf, &pos, &p.CmdName[0])
+		} else {
+			bufAppendStr(buf, &pos, (*byte)("-"))
+		}
+		bufAppendByte(buf, &pos, '\n')
+	}
+
+	pokeb(word(buf)+pos, 0)
+	return pos
+}
+
+func dispatch() {
+	cmd := peekb(MB_CMD)
+
+	if cmd == PROCFS_CMD_NOP {
+		pokeb(MB_STATUS, 0)
+		return
+	}
+
+	if cmd == PROCFS_CMD_OPEN {
+		subpath := (*byte)(MB_PATH_STR)
+		if !klib.streq(subpath, (*byte)("p")) {
+			pokeb(MB_STATUS, 216) // E_PNNF
+			writeW32(MB_OUT_SIZE, 0)
+			return
+		}
+
+		procAddr := readW32(MB_PROC_ADDR)
+		procSize := readW16(MB_PROC_SIZE)
+		curPID := peekb(MB_CURRENT_PID)
+
+		// Option A: Use Task 2's I/O privileges to DMA copy ProcTable from Task 0
+		hal.DMACopy(0, procAddr, 2, word(&localProcTable[0]), procSize)
+
+		procfsSize = formatProcesses(curPID)
+		writeW32(MB_OUT_SIZE, procfsSize)
+		pokeb(MB_STATUS, 0)
+		return
+	}
+
+	if cmd == PROCFS_CMD_READ {
+		filePos := readW32(MB_FILE_POS)
+		count := readW16(MB_COUNT)
+		targetTask := peekb(MB_TARGET_TASK)
+		targetAddr := readW32(MB_TARGET_ADDR)
+
+		if filePos >= procfsSize {
+			pokeb(MB_STATUS, 211) // E_EOF
+			writeW32(MB_OUT_SIZE, 0)
+			return
+		}
+
+		toRead := count
+		if filePos+toRead > procfsSize {
+			toRead = procfsSize - filePos
+		}
+
+		// Option A: DMA copy formatted chunk directly into targetTask memory
+		srcAddr := word(&procfsBuf[0]) + filePos
+		hal.DMACopy(2, srcAddr, targetTask, targetAddr, toRead)
+
+		writeW32(MB_OUT_SIZE, toRead)
+		pokeb(MB_STATUS, 0)
+		return
+	}
+
+	pokeb(MB_STATUS, 214) // E_BMODE
+}
+
+func main() {
+	for {
+		hal.Sleep()
+		dispatch()
+	}
+}

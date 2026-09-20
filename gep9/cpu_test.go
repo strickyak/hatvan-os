@@ -341,8 +341,19 @@ func TestTaskFlagsIOBlessing(t *testing.T) {
 		bus.ReadByte(0xFF00)
 	}()
 
+	// 4b. Task 0 blesses Task 2 via $FF2D = 2, $FF2E = 0x01
+	bus.CurrentTask = 0
+	bus.WriteByte(0xFF2D, 2)
+	bus.WriteByte(0xFF2E, 0x01)
+	bus.CurrentTask = 2
+	bus.WriteByte(0xFF10, 1) // Access succeeds
+	if bus.DiskDrive != 1 {
+		t.Fatalf("expected DiskDrive=1 from blessed Task 2, got %d", bus.DiskDrive)
+	}
+
 	// 5. Purging Task 1 via $FF2F revokes blessing
 	bus.CurrentTask = 0
+	bus.WriteByte(0xFF2D, 1)
 	bus.WriteByte(0xFF2F, 1) // Purge Task 1
 	if got := bus.ReadByte(0xFF2E); got != 0x00 {
 		t.Fatalf("ReadByte(0xFF2E) after purge = 0x%02X, want 0x00", got)

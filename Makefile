@@ -22,6 +22,8 @@ KERNEL_6809 := $(BUILD_DIR)/kernel_6809.decb
 KERNEL_68K  := $(BUILD_DIR)/kernel_68k.srec
 RBF_6809    := $(BUILD_DIR)/rbf_6809.decb
 RBF_68K     := $(BUILD_DIR)/rbf_68k.srec
+PROCFS_6809 := $(BUILD_DIR)/procfs_6809.decb
+PROCFS_68K  := $(BUILD_DIR)/procfs_68k.srec
 
 # Command Targets
 CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod $(BUILD_DIR)/sh.mod
@@ -61,7 +63,7 @@ $(VM_68K): $(shell find $(REPO_DIR)/cmd/gepk $(REPO_DIR)/gepk -type f -name '*.g
 	$(GO) build -o $@ ./cmd/gepk
 
 # --- Kernels & Drivers ---
-kernels: $(KERNEL_6809) $(KERNEL_68K) $(RBF_6809) $(RBF_68K)
+kernels: $(KERNEL_6809) $(KERNEL_68K) $(RBF_6809) $(RBF_68K) $(PROCFS_6809) $(PROCFS_68K)
 
 # M6809 Kernel
 $(BUILD_DIR)/kernel_6809.asm: $(COMMON_SRCS) $(KLIB_SRCS) $(wildcard $(REPO_DIR)/kernel/m6809/*.golf) $(MINIGOLF) | $(BUILD_DIR)
@@ -83,6 +85,7 @@ $(BUILD_DIR)/kernel_6809.decb: $(BUILD_DIR)/full_6809.asm | $(BUILD_DIR)
 # M6809 RBF Driver (Task 1)
 $(BUILD_DIR)/rbf_6809.asm: $(REPO_DIR)/drivers/rbf/main.golf $(REPO_DIR)/kernel/common/rbf.golf $(MINIGOLF) | $(BUILD_DIR)
 	$(MINIGOLF) -m M6809 \
+		-global_var_offset 512 \
 		-I $(REPO_DIR)/kernel/m6809 \
 		-I $(REPO_DIR)/kernel/common \
 		-I $(REPO_DIR)/kernel/klib \
@@ -96,6 +99,24 @@ $(BUILD_DIR)/rbf_6809.decb: $(BUILD_DIR)/full_rbf_6809.asm | $(BUILD_DIR)
 	cd $(BUILD_DIR) && $(LWASM) --decb --list=rbf_6809.list --map=rbf_6809.map -o rbf_6809.decb full_rbf_6809.asm
 	cp -f $(BUILD_DIR)/rbf_6809.decb.list $(BUILD_DIR)/rbf_6809.list 2>/dev/null || true
 	cp -f $(BUILD_DIR)/rbf_6809.decb.map $(BUILD_DIR)/rbf_6809.map 2>/dev/null || true
+
+# M6809 PROCFS Driver (Task 2)
+$(BUILD_DIR)/procfs_6809.asm: $(REPO_DIR)/drivers/procfs/main.golf $(MINIGOLF) | $(BUILD_DIR)
+	$(MINIGOLF) -m M6809 \
+		-global_var_offset 512 \
+		-I $(REPO_DIR)/kernel/m6809 \
+		-I $(REPO_DIR)/kernel/common \
+		-I $(REPO_DIR)/kernel/klib \
+		-o $@ \
+		$<
+
+$(BUILD_DIR)/full_procfs_6809.asm: $(REPO_DIR)/drivers/procfs/cstart_procfs_m6809.asm $(BUILD_DIR)/procfs_6809.asm | $(BUILD_DIR)
+	cat $(REPO_DIR)/drivers/procfs/cstart_procfs_m6809.asm $(BUILD_DIR)/procfs_6809.asm > $@
+
+$(BUILD_DIR)/procfs_6809.decb: $(BUILD_DIR)/full_procfs_6809.asm | $(BUILD_DIR)
+	cd $(BUILD_DIR) && $(LWASM) --decb --list=procfs_6809.list --map=procfs_6809.map -o procfs_6809.decb full_procfs_6809.asm
+	cp -f $(BUILD_DIR)/procfs_6809.decb.list $(BUILD_DIR)/procfs_6809.list 2>/dev/null || true
+	cp -f $(BUILD_DIR)/procfs_6809.decb.map $(BUILD_DIR)/procfs_6809.map 2>/dev/null || true
 
 # M68K Kernel
 $(BUILD_DIR)/kernel_68k.s: $(COMMON_SRCS) $(KLIB_SRCS) $(wildcard $(REPO_DIR)/kernel/m68k/*.golf) $(MINIGOLF) | $(BUILD_DIR)
@@ -125,6 +146,21 @@ $(BUILD_DIR)/full_rbf_68k.s: $(REPO_DIR)/drivers/rbf/cstart_rbf_m68k.s $(BUILD_D
 	cat $(REPO_DIR)/drivers/rbf/cstart_rbf_m68k.s $(BUILD_DIR)/rbf_68k.s > $@
 
 $(BUILD_DIR)/rbf_68k.srec: $(BUILD_DIR)/full_rbf_68k.s $(ASM68K) | $(BUILD_DIR)
+	$(ASM68K) -l $@.list -o $@ $<
+
+# M68K PROCFS Driver (Task 2)
+$(BUILD_DIR)/procfs_68k.s: $(REPO_DIR)/drivers/procfs/main.golf $(MINIGOLF) | $(BUILD_DIR)
+	$(MINIGOLF) -m=k \
+		-I $(REPO_DIR)/kernel/m68k \
+		-I $(REPO_DIR)/kernel/common \
+		-I $(REPO_DIR)/kernel/klib \
+		-o $@ \
+		$<
+
+$(BUILD_DIR)/full_procfs_68k.s: $(REPO_DIR)/drivers/procfs/cstart_procfs_m68k.s $(BUILD_DIR)/procfs_68k.s | $(BUILD_DIR)
+	cat $(REPO_DIR)/drivers/procfs/cstart_procfs_m68k.s $(BUILD_DIR)/procfs_68k.s > $@
+
+$(BUILD_DIR)/procfs_68k.srec: $(BUILD_DIR)/full_procfs_68k.s $(ASM68K) | $(BUILD_DIR)
 	$(ASM68K) -l $@.list -o $@ $<
 
 # --- Userland Commands ---

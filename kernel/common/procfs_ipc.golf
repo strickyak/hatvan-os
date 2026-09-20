@@ -1,0 +1,114 @@
+package procfs_ipc
+
+import "hal"
+import "klib"
+import "proc"
+
+const PROCFS_CMD_NOP = 0
+const PROCFS_CMD_OPEN = 1
+const PROCFS_CMD_READ = 2
+
+// Mailbox layout at $0080 in Task 2 RAM
+const MB_CMD = 0
+const MB_TARGET_TASK = 1
+const MB_STATUS = 2
+const MB_CURRENT_PID = 3
+const MB_TARGET_ADDR = 4  // 4 bytes: 4..7
+const MB_FILE_POS = 8     // 4 bytes: 8..11
+const MB_COUNT = 12       // 2 bytes: 12..13
+const MB_PROC_ADDR = 16   // 4 bytes: 16..19 (Task 0 ProcTable address)
+const MB_PROC_SIZE = 20   // 2 bytes: 20..21 (Task 0 ProcTable size)
+const MB_PATH_STR = 24    // 32 bytes: 24..55 (subpath, e.g. "p")
+const MB_OUT_SIZE = 56    // 4 bytes: 56..59 (FileSize or BytesRead)
+
+var mb [64]byte
+
+func writeW32(idx word, val word) {
+	mb[idx] = 0
+	mb[idx+1] = 0
+	mb[idx+2] = byte(val >> 8)
+	mb[idx+3] = byte(val)
+	if sizeof[word]() > 2 {
+		mb[idx] = byte(val >> 24)
+		mb[idx+1] = byte(val >> 16)
+	}
+}
+
+func writeW16(idx word, val word) {
+	mb[idx] = byte(val >> 8)
+	mb[idx+1] = byte(val)
+}
+
+func readW32(idx word) word {
+	b0 := word(mb[idx])
+	b1 := word(mb[idx+1])
+	b2 := word(mb[idx+2])
+	b3 := word(mb[idx+3])
+	res := (b2 << 8) | b3
+	if sizeof[word]() > 2 {
+		res = (b0 << 24) | (b1 << 16) | res
+	}
+	return res
+}
+
+func Call() byte {
+	// 1. DMA copy 64-byte mailbox into Task 2 at $0080
+	hal.DMACopy(0, word(&mb[0]), 2, 0x0080, 64)
+
+	// 2. Invoke Task 2 (ProcfsCall -> TaskFuse 2 + RTI -> Task 2 runs -> SWI2/TRAP F$Sleep -> returns)
+	hal.ProcfsCall()
+
+	// 3. DMA copy 64-byte mailbox back from Task 2
+	hal.DMACopy(2, 0x0080, 0, word(&mb[0]), 64)
+
+	return mb[MB_STATUS]
+}
+
+// Open asks Task 2 to resolve and format subpath (e.g. "p").
+// Returns (fileSize, errCode).
+func Open(subpath *byte, curPID byte) (word, byte) {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+	mb[MB_CMD] = PROCFS_CMD_OPEN
+	mb[MB_CURRENT_PID] = curPID
+	procTableAddr := word(&proc.ProcTable[0])
+	procTableSize := word(sizeof[proc.Process]() * proc.MAX_PROCS)
+	writeW32(MB_PROC_ADDR, procTableAddr)
+	writeW16(MB_PROC_SIZE, procTableSize)
+
+	p := word(subpath)
+	for i := word(0); i < 31; i++ {
+		c := peekb(p + i)
+		mb[MB_PATH_STR+i] = c
+		if c == 0 {
+			break
+		}
+	}
+	mb[MB_PATH_STR+31] = 0
+
+	st := Call()
+	if st != 0 {
+		return 0, st
+	}
+
+	fileSize := readW32(MB_OUT_SIZE)
+	return fileSize, 0
+}
+
+// Read requests Task 2 to read count bytes at filePos into targetTask at targetAddr.
+// Returns (bytesRead, errCode).
+func Read(filePos word, targetTask byte, targetAddr word, count word) (word, byte) {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+	mb[MB_CMD] = PROCFS_CMD_READ
+	mb[MB_TARGET_TASK] = targetTask
+	writeW32(MB_TARGET_ADDR, targetAddr)
+	writeW32(MB_FILE_POS, filePos)
+	writeW16(MB_COUNT, count)
+
+	st := Call()
+	bytesRead := readW32(MB_OUT_SIZE)
+	return bytesRead, st
+}

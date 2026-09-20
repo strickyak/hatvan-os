@@ -3,6 +3,7 @@ package path
 import "hal"
 import "klib"
 import "rbf_ipc"
+import "procfs_ipc"
 import "dev"
 
 const MAX_PATHS = 16
@@ -214,14 +215,12 @@ func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 		if pd.FilePos+toRead > pd.FileSize {
 			toRead = pd.FileSize - pd.FilePos
 		}
-		srcAddr := word(&dev.ProcfsBuf[0]) + pd.FilePos
-		if task == 0 {
-			klib.memcpy(ubuf, (*byte)(srcAddr), toRead)
-		} else {
-			hal.DMACopy(0, srcAddr, task, word(ubuf), toRead)
+		bytesRead, err := procfs_ipc.Read(pd.FilePos, task, word(ubuf), toRead)
+		if err != 0 {
+			return 0, err
 		}
-		pd.FilePos += toRead
-		return toRead, 0
+		pd.FilePos += bytesRead
+		return bytesRead, 0
 	}
 
 	// DEV_DISK file read
