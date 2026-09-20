@@ -261,7 +261,52 @@ func Dispatch(callNum byte) {
 		return
 	}
 
-	if callNum == F_UNLINK || callNum == F_PERR {
+	if callNum == F_UNLINK {
+		UserFrame.CC &^= 1
+		return
+	}
+
+	if callNum == F_PERR {
+		val := UserFrame.B
+		var msg [16]byte
+		msg[0] = 'E'
+		msg[1] = 'R'
+		msg[2] = 'R'
+		msg[3] = 'O'
+		msg[4] = 'R'
+		msg[5] = ' '
+		msg[6] = '#'
+		msg[7] = '0' + (val / 100)
+		msg[8] = '0' + ((val / 10) % 10)
+		msg[9] = '0' + (val % 10)
+		cr := byte('\r')
+		if curPID < proc.MAX_PROCS && proc.ProcTable[curPID].LineMode == 0 {
+			cr = '\n'
+		}
+		msg[10] = cr
+
+		pathId := byte(0xFF)
+		if curPID < proc.MAX_PROCS && proc.ProcTable[curPID].State != proc.PROC_FREE {
+			pathId = proc.ProcTable[curPID].Paths[2]
+			if pathId == 0xFF {
+				pathId = proc.ProcTable[curPID].Paths[1]
+			}
+			if pathId == 0xFF {
+				pathId = proc.ProcTable[curPID].Paths[0]
+			}
+		}
+
+		if pathId != 0xFF {
+			_, err := path.SysWrite(pathId, 0, &msg[0], 11)
+			if err != 0 {
+				UserFrame.CC |= 1
+				UserFrame.B = err
+				return
+			}
+		} else {
+			dev.TermWrite(0, word(&msg[0]), 11)
+		}
+
 		UserFrame.CC &^= 1
 		return
 	}

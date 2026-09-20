@@ -10,6 +10,8 @@ const DEV_NULL = 3
 const DEV_DISK = 4
 const DEV_PROC = 5
 
+var ProcfsBuf [1024]byte
+
 // ParsePathDevice examines path for device prefixes:
 // "/term", "/log", "/null", "/proc", "/d0".."/d3".
 // Returns (devType, driveNum, remainingPathPtr).

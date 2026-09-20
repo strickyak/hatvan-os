@@ -696,7 +696,7 @@ func SysChgDir(pathStr *byte, mode byte) byte {
 
 func bufAppendByte(buf *byte, pos *word, b byte) {
 	p := *pos
-	if p < 254 {
+	if p < 1020 {
 		pokeb(word(buf)+p, b)
 		*pos = p + 1
 	}
@@ -751,10 +751,10 @@ func bufAppendHexWord(buf *byte, pos *word, val word) {
 	}
 }
 
-// ProcfsFormatProcesses generates a table of active processes into pd.SectorBuf
+// ProcfsFormatProcesses generates a table of active processes into dev.ProcfsBuf
 func ProcfsFormatProcesses(pathId byte) byte {
 	pd := &path.PathTable[pathId]
-	buf := &pd.SectorBuf[0]
+	buf := &dev.ProcfsBuf[0]
 	pos := word(0)
 
 	// Column headers: PID, PPID, STATE, SP, CMD
@@ -765,7 +765,7 @@ func ProcfsFormatProcesses(pathId byte) byte {
 		if p.State == PROC_FREE {
 			continue
 		}
-		if pos+45 >= 254 {
+		if pos+45 >= 1020 {
 			break
 		}
 

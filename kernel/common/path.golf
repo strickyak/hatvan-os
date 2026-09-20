@@ -214,7 +214,7 @@ func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 		if pd.FilePos+toRead > pd.FileSize {
 			toRead = pd.FileSize - pd.FilePos
 		}
-		srcAddr := word(&pd.SectorBuf[0]) + pd.FilePos
+		srcAddr := word(&dev.ProcfsBuf[0]) + pd.FilePos
 		if task == 0 {
 			klib.memcpy(ubuf, (*byte)(srcAddr), toRead)
 		} else {
