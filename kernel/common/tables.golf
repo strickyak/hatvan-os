@@ -1,7 +1,33 @@
 package tables
 
 import "hal"
-import "proc"
+
+const MAX_PROCS = 16
+const PROC_MAX_PATHS = 16
+
+type Process struct {
+	PID         byte
+	State       byte
+	ParentPID   byte
+	TaskID      byte
+	ExitStatus  byte
+	SavedSP     word
+	SavedPC     word
+	SavedU      word
+	Paths       [PROC_MAX_PATHS]byte
+	CwdDrive    byte
+	CwdFDLSN    word
+	CwdPath     [32]byte
+	CxdDrive    byte
+	CxdFDLSN    word
+	CxdPath     [32]byte
+	LineMode    byte // 0 = '\n' (Unix), 1 = '\r' (OS-9)
+	CodeStart   word
+	CodeSize    word
+	DataTop     word
+	StackBottom word
+	CmdName     [16]byte
+}
 
 // SharedTables resides at the SharedMemoryCurtain address:
 // $E000 on M6809, $00FE0000 on M68000.
@@ -11,7 +37,7 @@ type SharedTables struct {
 	Pad           byte
 	RBFMailbox    [64]byte
 	ProcfsMailbox [64]byte
-	ProcTable     [proc.MAX_PROCS]proc.Process
+	ProcTable     [MAX_PROCS]Process
 }
 
 var Shared *SharedTables

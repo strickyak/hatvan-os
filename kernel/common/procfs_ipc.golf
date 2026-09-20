@@ -2,7 +2,7 @@ package procfs_ipc
 
 import "hal"
 import "klib"
-import "proc"
+import "tables"
 
 const PROCFS_CMD_NOP = 0
 const PROCFS_CMD_OPEN = 1
@@ -72,8 +72,8 @@ func Open(subpath *byte, curPID byte) (word, byte) {
 	}
 	mb[MB_CMD] = PROCFS_CMD_OPEN
 	mb[MB_CURRENT_PID] = curPID
-	procTableAddr := word(&proc.ProcTable[0])
-	procTableSize := word(sizeof[proc.Process]() * proc.MAX_PROCS)
+	procTableAddr := word(&tables.Shared.ProcTable[0])
+	procTableSize := word(sizeof[tables.Process]() * tables.MAX_PROCS)
 	writeW32(MB_PROC_ADDR, procTableAddr)
 	writeW16(MB_PROC_SIZE, procTableSize)
 

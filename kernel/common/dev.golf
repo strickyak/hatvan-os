@@ -112,7 +112,7 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 	for {
 		c := byte(0)
 		if proc.CurrentPID < proc.MAX_PROCS {
-			proc.ProcTable[proc.CurrentPID].State = proc.PROC_WAITING
+			proc.SetProcState(proc.CurrentPID, proc.PROC_WAITING)
 		}
 		for {
 			c = hal.GetChar()
@@ -120,14 +120,15 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 				break
 			}
 			for i := word(3); i < proc.MAX_PROCS; i++ {
-				if byte(i) != proc.CurrentPID && !proc.IsAncestor(byte(i), proc.CurrentPID) && (proc.ProcTable[i].State == proc.PROC_READY || proc.ProcTable[i].State == proc.PROC_RUNNING) {
-					hal.LaunchProcess(byte(i), proc.ProcTable[i].SavedSP, proc.ProcTable[i].SavedPC)
+				p := proc.GetProc(byte(i))
+				if byte(i) != proc.CurrentPID && !proc.IsAncestor(byte(i), proc.CurrentPID) && (p.State == proc.PROC_READY || p.State == proc.PROC_RUNNING) {
+					hal.LaunchProcess(byte(i), p.SavedSP, p.SavedPC)
 					break
 				}
 			}
 		}
 		if proc.CurrentPID < proc.MAX_PROCS {
-			proc.ProcTable[proc.CurrentPID].State = proc.PROC_RUNNING
+			proc.SetProcState(proc.CurrentPID, proc.PROC_RUNNING)
 		}
 
 		// Handle Return / Newline

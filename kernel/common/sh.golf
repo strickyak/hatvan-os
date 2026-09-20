@@ -154,7 +154,7 @@ func RunCommand(line *byte) byte {
 
 	if klib.streq(&cmdName[0], (*byte)("pwd")) {
 		curPID := proc.CurrentPID
-		procEntry := &proc.ProcTable[curPID]
+		procEntry := proc.GetProc(curPID)
 		if procEntry.CwdPath[0] != 0 {
 			printStr(&procEntry.CwdPath[0])
 			hal.PutChar('\n')
@@ -168,7 +168,7 @@ func RunCommand(line *byte) byte {
 
 	if klib.streq(&cmdName[0], (*byte)("pxd")) || klib.streq(&cmdName[0], (*byte)("pwx")) {
 		curPID := proc.CurrentPID
-		procEntry := &proc.ProcTable[curPID]
+		procEntry := proc.GetProc(curPID)
 		if procEntry.CxdPath[0] != 0 {
 			printStr(&procEntry.CxdPath[0])
 			hal.PutChar('\n')
@@ -224,7 +224,7 @@ func RunCommand(line *byte) byte {
 
 	if cpid > 0 {
 		if redirBuf[0] != 0 {
-			curP := &proc.ProcTable[cpid]
+			curP := proc.GetProc(cpid)
 			newPathId, cErr := path.SysCreate(cpid, &redirBuf[0], path.MODE_WRITE, curP.CwdDrive, curP.CwdFDLSN, curP.CxdFDLSN)
 			if cErr == 0 {
 				oldPathId := curP.Paths[1]
@@ -241,11 +241,12 @@ func RunCommand(line *byte) byte {
 			return 0
 		}
 
-		proc.ProcTable[proc.CurrentPID].State = proc.PROC_WAITING
-		hal.LaunchProcess(cpid, proc.ProcTable[cpid].SavedSP, proc.ProcTable[cpid].SavedPC)
+		proc.SetProcState(proc.CurrentPID, proc.PROC_WAITING)
+		cp := proc.GetProc(cpid)
+		hal.LaunchProcess(cpid, cp.SavedSP, cp.SavedPC)
 		for {
 			wpid, wst, werr := proc.SysWait()
-			proc.ProcTable[proc.CurrentPID].State = proc.PROC_RUNNING
+			proc.SetProcState(proc.CurrentPID, proc.PROC_RUNNING)
 			if werr != 0 {
 				break
 			}

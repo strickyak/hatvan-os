@@ -7,9 +7,10 @@ import "procfs_ipc"
 import "dev"
 import "path"
 import "loader"
+import "tables"
 
-const MAX_PROCS = 16
-const PROC_MAX_PATHS = 16
+const MAX_PROCS = tables.MAX_PROCS
+const PROC_MAX_PATHS = tables.PROC_MAX_PATHS
 
 const PROC_FREE = 0
 const PROC_READY = 1
@@ -26,36 +27,15 @@ const E_NOTREADY = 223  // Child not ready
 const E_PROCUNDEF = 224 // Process undefined / bad PID
 const E_PROCFUL = 225   // Process table full
 
-type Process struct {
-	PID         byte
-	State       byte
-	ParentPID   byte
-	TaskID      byte
-	ExitStatus  byte
-	SavedSP     word
-	SavedPC     word
-	SavedU      word
-	Paths       [PROC_MAX_PATHS]byte
-	CwdDrive    byte
-	CwdFDLSN    word
-	CwdPath     [32]byte
-	CxdDrive    byte
-	CxdFDLSN    word
-	CxdPath     [32]byte
-	LineMode    byte // 0 = '\n' (Unix), 1 = '\r' (OS-9)
-	CodeStart   word
-	CodeSize    word
-	DataTop     word
-	StackBottom word
-	CmdName     [16]byte
-}
-
-var ProcTable [MAX_PROCS]Process
 var CurrentPID byte
+
+func GetProc(pid byte) *tables.Process {
+	return &tables.Shared.ProcTable[pid]
+}
 
 func SetProcState(pid byte, newState byte) {
 	if pid < MAX_PROCS {
-		ProcTable[pid].State = newState
+		tables.Shared.ProcTable[pid].State = newState
 	}
 }
 
@@ -66,7 +46,7 @@ func SetCurrentPID(pid byte) {
 func IsAncestor(ancestor byte, pid byte) bool {
 	curr := pid
 	for curr > 0 && curr < MAX_PROCS {
-		parent := ProcTable[curr].ParentPID
+		parent := tables.Shared.ProcTable[curr].ParentPID
 		if parent == ancestor {
 			return true
 		}
@@ -81,7 +61,7 @@ func IsAncestor(ancestor byte, pid byte) bool {
 // ProcInit initializes the process subsystem
 func ProcInit() {
 	for i := word(0); i < MAX_PROCS; i++ {
-		p := &ProcTable[i]
+		p := &tables.Shared.ProcTable[i]
 		p.PID = byte(i)
 		p.State = PROC_FREE
 		p.ParentPID = 0
@@ -111,22 +91,22 @@ func ProcInit() {
 	}
 
 	// Process 0 is Task 0 (Kernel)
-	ProcTable[0].State = PROC_RUNNING
+	tables.Shared.ProcTable[0].State = PROC_RUNNING
 	if hal.ARCH == '9' {
-		ProcTable[0].SavedSP = 0x3800
+		tables.Shared.ProcTable[0].SavedSP = 0x2000
 	}
-	klib.strcpy(&ProcTable[0].CmdName[0], (*byte)("[hatvan-kernel]"))
+	klib.strcpy(&tables.Shared.ProcTable[0].CmdName[0], (*byte)("[hatvan-kernel]"))
 
 	// Process 1 is Task 1 ([RBF])
-	ProcTable[1].State = PROC_WAITING
-	ProcTable[1].ParentPID = 0
-	ProcTable[1].TaskID = 1
+	tables.Shared.ProcTable[1].State = PROC_WAITING
+	tables.Shared.ProcTable[1].ParentPID = 0
+	tables.Shared.ProcTable[1].TaskID = 1
 	if hal.ARCH == '9' {
-		ProcTable[1].SavedSP = 0x3F00
+		tables.Shared.ProcTable[1].SavedSP = 0x3F00
 	} else {
-		ProcTable[1].SavedSP = 0x0007FE00
+		tables.Shared.ProcTable[1].SavedSP = 0x0007FE00
 	}
-	klib.strcpy(&ProcTable[1].CmdName[0], (*byte)("[RBF]"))
+	klib.strcpy(&tables.Shared.ProcTable[1].CmdName[0], (*byte)("[RBF]"))
 	hal.SetTaskFlags(1, 1)
 	if hal.ARCH == '9' {
 		hal.InitRBF(0x4000)
@@ -135,15 +115,15 @@ func ProcInit() {
 	}
 
 	// Process 2 is Task 2 ([PROCFS])
-	ProcTable[2].State = PROC_WAITING
-	ProcTable[2].ParentPID = 0
-	ProcTable[2].TaskID = 2
+	tables.Shared.ProcTable[2].State = PROC_WAITING
+	tables.Shared.ProcTable[2].ParentPID = 0
+	tables.Shared.ProcTable[2].TaskID = 2
 	if hal.ARCH == '9' {
-		ProcTable[2].SavedSP = 0x3F00
+		tables.Shared.ProcTable[2].SavedSP = 0x3F00
 	} else {
-		ProcTable[2].SavedSP = 0x0007FE00
+		tables.Shared.ProcTable[2].SavedSP = 0x0007FE00
 	}
-	klib.strcpy(&ProcTable[2].CmdName[0], (*byte)("[PROCFS]"))
+	klib.strcpy(&tables.Shared.ProcTable[2].CmdName[0], (*byte)("[PROCFS]"))
 	hal.SetTaskFlags(2, 1)
 	if hal.ARCH == '9' {
 		hal.InitProcfs(0x4000)
@@ -159,10 +139,10 @@ func ProcInit() {
 
 // ProcAlloc finds a free process slot and initializes it,
 // inheriting cwd, cxd, lineMode, and standard paths 0, 1, 2, 3 (stdin, stdout, stderr, stdlog).
-func ProcAlloc(parentPID byte) (byte, *Process) {
+func ProcAlloc(parentPID byte) (byte, *tables.Process) {
 	for i := word(1); i < MAX_PROCS; i++ {
-		if ProcTable[i].State == PROC_FREE {
-			p := &ProcTable[i]
+		if tables.Shared.ProcTable[i].State == PROC_FREE {
+			p := &tables.Shared.ProcTable[i]
 			p.State = PROC_READY
 			p.ParentPID = parentPID
 			p.TaskID = byte(i)
@@ -187,8 +167,8 @@ func ProcAlloc(parentPID byte) (byte, *Process) {
 				p.Paths[k] = 0xFF
 			}
 
-			if parentPID < MAX_PROCS && ProcTable[parentPID].State != PROC_FREE {
-				parent := &ProcTable[parentPID]
+			if parentPID < MAX_PROCS && tables.Shared.ProcTable[parentPID].State != PROC_FREE {
+				parent := &tables.Shared.ProcTable[parentPID]
 				p.CwdDrive = parent.CwdDrive
 				p.CwdFDLSN = parent.CwdFDLSN
 				klib.strcpy(&p.CwdPath[0], &parent.CwdPath[0])
@@ -210,7 +190,7 @@ func ProcAlloc(parentPID byte) (byte, *Process) {
 			return byte(i), p
 		}
 	}
-	return 0xFF, (*Process)(0)
+	return 0xFF, (*tables.Process)(0)
 }
 
 // ProcFree terminates a process slot and closes all associated paths
@@ -218,7 +198,7 @@ func ProcFree(pid byte) {
 	if pid <= 2 || pid >= MAX_PROCS {
 		return
 	}
-	p := &ProcTable[pid]
+	p := &tables.Shared.ProcTable[pid]
 	for k := word(0); k < PROC_MAX_PATHS; k++ {
 		pathId := p.Paths[k]
 		if pathId != 0xFF {
@@ -233,10 +213,10 @@ func ProcFree(pid byte) {
 
 // ProcOpen opens a path for the given process and assigns a per-process path descriptor
 func ProcOpen(pid byte, pathStr *byte, mode byte) (byte, byte) {
-	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
 		return 0xFF, E_PROCUNDEF
 	}
-	p := &ProcTable[pid]
+	p := &tables.Shared.ProcTable[pid]
 
 	// Find available per-process path slot
 	slot := byte(0xFF)
@@ -269,10 +249,10 @@ func ProcOpen(pid byte, pathStr *byte, mode byte) (byte, byte) {
 
 // ProcCreate creates or opens a path for writing for the given process
 func ProcCreate(pid byte, pathStr *byte, mode byte) (byte, byte) {
-	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
 		return 0xFF, E_PROCUNDEF
 	}
-	p := &ProcTable[pid]
+	p := &tables.Shared.ProcTable[pid]
 
 	slot := byte(0xFF)
 	for k := word(0); k < PROC_MAX_PATHS; k++ {
@@ -296,22 +276,22 @@ func ProcCreate(pid byte, pathStr *byte, mode byte) (byte, byte) {
 
 // ProcDelete deletes a file for the given process
 func ProcDelete(pid byte, pathStr *byte) byte {
-	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
 		return E_PROCUNDEF
 	}
-	p := &ProcTable[pid]
+	p := &tables.Shared.ProcTable[pid]
 	return path.SysDelete(pid, pathStr, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN)
 }
 
 // ProcClose closes a per-process path descriptor
 func ProcClose(pid byte, procPath byte) byte {
-	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
 		return E_PROCUNDEF
 	}
 	if procPath >= PROC_MAX_PATHS {
 		return E_BPNUM
 	}
-	p := &ProcTable[pid]
+	p := &tables.Shared.ProcTable[pid]
 	pathId := p.Paths[procPath]
 	if pathId == 0xFF {
 		return E_BPNUM
@@ -324,13 +304,13 @@ func ProcClose(pid byte, procPath byte) byte {
 
 // ProcDup duplicates an open path, assigning the lowest available path slot
 func ProcDup(pid byte, procPath byte) (byte, byte) {
-	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
 		return 0xFF, E_PROCUNDEF
 	}
 	if procPath >= PROC_MAX_PATHS {
 		return 0xFF, E_BPNUM
 	}
-	p := &ProcTable[pid]
+	p := &tables.Shared.ProcTable[pid]
 	pathId := p.Paths[procPath]
 	if pathId == 0xFF {
 		return 0xFF, E_BPNUM
@@ -358,13 +338,13 @@ func ProcDup(pid byte, procPath byte) (byte, byte) {
 
 // ProcRead reads from a per-process path into user buffer
 func ProcRead(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
-	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
 		return 0, E_PROCUNDEF
 	}
 	if procPath >= PROC_MAX_PATHS {
 		return 0, E_BPNUM
 	}
-	pathId := ProcTable[pid].Paths[procPath]
+	pathId := tables.Shared.ProcTable[pid].Paths[procPath]
 	if pathId == 0xFF {
 		return 0, E_BPNUM
 	}
@@ -373,13 +353,13 @@ func ProcRead(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
 
 // ProcWrite writes to a per-process path from user buffer
 func ProcWrite(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
-	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
 		return 0, E_PROCUNDEF
 	}
 	if procPath >= PROC_MAX_PATHS {
 		return 0, E_BPNUM
 	}
-	pathId := ProcTable[pid].Paths[procPath]
+	pathId := tables.Shared.ProcTable[pid].Paths[procPath]
 	if pathId == 0xFF {
 		return 0, E_BPNUM
 	}
@@ -388,13 +368,13 @@ func ProcWrite(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
 
 // ProcReadLn reads a line of text using the process's lineMode setting
 func ProcReadLn(pid byte, procPath byte, ubuf *byte, maxLen word) (word, byte) {
-	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
 		return 0, E_PROCUNDEF
 	}
 	if procPath >= PROC_MAX_PATHS {
 		return 0, E_BPNUM
 	}
-	p := &ProcTable[pid]
+	p := &tables.Shared.ProcTable[pid]
 	pathId := p.Paths[procPath]
 	if pathId == 0xFF {
 		return 0, E_BPNUM
@@ -404,13 +384,13 @@ func ProcReadLn(pid byte, procPath byte, ubuf *byte, maxLen word) (word, byte) {
 
 // ProcWritLn writes a line of text using the process's lineMode setting
 func ProcWritLn(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
-	if pid >= MAX_PROCS || ProcTable[pid].State == PROC_FREE {
+	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
 		return 0, E_PROCUNDEF
 	}
 	if procPath >= PROC_MAX_PATHS {
 		return 0, E_BPNUM
 	}
-	p := &ProcTable[pid]
+	p := &tables.Shared.ProcTable[pid]
 	pathId := p.Paths[procPath]
 	if pathId == 0xFF {
 		return 0, E_BPNUM
@@ -551,7 +531,7 @@ func SysExit(status byte) {
 		return
 	}
 
-	p := &ProcTable[CurrentPID]
+	p := &tables.Shared.ProcTable[CurrentPID]
 
 	// Close all open paths
 	for k := word(0); k < PROC_MAX_PATHS; k++ {
@@ -567,7 +547,7 @@ func SysExit(status byte) {
 	hal.PurgeTaskMem(p.TaskID)
 
 	// Wake parent if waiting
-	if p.ParentPID < MAX_PROCS && ProcTable[p.ParentPID].State == PROC_WAITING {
+	if p.ParentPID < MAX_PROCS && tables.Shared.ProcTable[p.ParentPID].State == PROC_WAITING {
 		SetProcState(p.ParentPID, PROC_READY)
 	}
 }
@@ -578,7 +558,7 @@ func SysWait() (byte, byte, byte) {
 		hasChildren := false
 
 		for i := word(1); i < MAX_PROCS; i++ {
-			p := &ProcTable[i]
+			p := &tables.Shared.ProcTable[i]
 			if p.ParentPID == CurrentPID && p.State != PROC_FREE {
 				hasChildren = true
 				if p.State == PROC_ZOMBIE {
@@ -610,8 +590,8 @@ func SysWait() (byte, byte, byte) {
 		// If children exist but none is ready/zombie, let any ready/running process run
 		SetProcState(CurrentPID, PROC_WAITING)
 		for i := word(3); i < MAX_PROCS; i++ {
-			if byte(i) != CurrentPID && !IsAncestor(byte(i), CurrentPID) && (ProcTable[i].State == PROC_READY || ProcTable[i].State == PROC_RUNNING) {
-				hal.LaunchProcess(byte(i), ProcTable[i].SavedSP, ProcTable[i].SavedPC)
+			if byte(i) != CurrentPID && !IsAncestor(byte(i), CurrentPID) && (tables.Shared.ProcTable[i].State == PROC_READY || tables.Shared.ProcTable[i].State == PROC_RUNNING) {
+				hal.LaunchProcess(byte(i), tables.Shared.ProcTable[i].SavedSP, tables.Shared.ProcTable[i].SavedPC)
 				break
 			}
 		}
@@ -681,7 +661,7 @@ func updateProcPath(dstPath *byte, pathStr *byte, drive byte) {
 
 // SysChgDir changes the current working directory (cwd) or execution directory (cxd)
 func SysChgDir(pathStr *byte, mode byte) byte {
-	p := &ProcTable[CurrentPID]
+	p := &tables.Shared.ProcTable[CurrentPID]
 	devType, _, _ := dev.ParsePathDevice(pathStr, p.CwdDrive)
 	if devType != dev.DEV_DISK {
 		return path.E_BMODE
@@ -759,8 +739,8 @@ func ScheduleNext() byte {
 		if next <= 2 {
 			continue
 		}
-		if ProcTable[next].State == PROC_READY || ProcTable[next].State == PROC_RUNNING {
-			if start > 2 && ProcTable[start].State == PROC_RUNNING {
+		if tables.Shared.ProcTable[next].State == PROC_READY || tables.Shared.ProcTable[next].State == PROC_RUNNING {
+			if start > 2 && tables.Shared.ProcTable[start].State == PROC_RUNNING {
 				SetProcState(start, PROC_READY)
 			}
 			SetProcState(next, PROC_RUNNING)

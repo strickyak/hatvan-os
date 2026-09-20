@@ -3,10 +3,10 @@
 ; and $2000..$3800 for the kernel stack.
 
     pragma cescapes
-    org $4000
+    org $2000
 
 cstart:
-    lds #$3800
+    lds #$2000
     lbsr _main
 hang:
     bra hang

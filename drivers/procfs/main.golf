@@ -2,38 +2,15 @@ package main
 
 import "hal"
 import "klib"
+import "tables"
 
-const MAX_PROCS = 16
+const MAX_PROCS = tables.MAX_PROCS
 
 const PROC_FREE = 0
 const PROC_READY = 1
 const PROC_RUNNING = 2
 const PROC_WAITING = 3
 const PROC_ZOMBIE = 4
-
-type Process struct {
-	PID         byte
-	State       byte
-	ParentPID   byte
-	TaskID      byte
-	ExitStatus  byte
-	SavedSP     word
-	SavedPC     word
-	SavedU      word
-	Paths       [16]byte
-	CwdDrive    byte
-	CwdFDLSN    word
-	CwdPath     [32]byte
-	CxdDrive    byte
-	CxdFDLSN    word
-	CxdPath     [32]byte
-	LineMode    byte
-	CodeStart   word
-	CodeSize    word
-	DataTop     word
-	StackBottom word
-	CmdName     [16]byte
-}
 
 const PROCFS_CMD_NOP = 0
 const PROCFS_CMD_OPEN = 1
@@ -52,7 +29,6 @@ const MB_PROC_SIZE = 0x0094   // 2 bytes: 0x0094..0x0095 (Task 0 ProcTable size)
 const MB_PATH_STR = 0x0098    // 32 bytes: 0x0098..0x00B7 (subpath, e.g. "p")
 const MB_OUT_SIZE = 0x00B8    // 4 bytes: 0x00B8..0x00BB (FileSize or BytesRead)
 
-var localProcTable [MAX_PROCS]Process
 var procfsBuf [2048]byte
 var procfsSize word
 
@@ -155,7 +131,7 @@ func formatProcesses(curPID byte) word {
 	bufAppendStr(buf, &pos, (*byte)("  PID  PPID STATE      SP  CMD\n"))
 
 	for i := word(0); i < MAX_PROCS; i++ {
-		p := &localProcTable[i]
+		p := &tables.Shared.ProcTable[i]
 		if p.State == PROC_FREE {
 			continue
 		}
@@ -220,13 +196,9 @@ func dispatch() {
 			return
 		}
 
-		procAddr := readW32(MB_PROC_ADDR)
-		procSize := readW16(MB_PROC_SIZE)
 		curPID := peekb(MB_CURRENT_PID)
 
-		// Option A: Use Task 2's I/O privileges to DMA copy ProcTable from Task 0
-		hal.DMACopy(0, procAddr, 2, word(&localProcTable[0]), procSize)
-
+		// Read ProcTable directly from shared memory (no DMA copy required!)
 		procfsSize = formatProcesses(curPID)
 		writeW32(MB_OUT_SIZE, procfsSize)
 		pokeb(MB_STATUS, 0)
@@ -263,6 +235,7 @@ func dispatch() {
 }
 
 func main() {
+	tables.Init()
 	for {
 		hal.Sleep()
 		dispatch()

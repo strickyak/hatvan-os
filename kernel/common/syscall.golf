@@ -200,7 +200,8 @@ func Dispatch(callNum byte) {
 
 	if callNum == I_SEEK {
 		if UserFrame.A < proc.PROC_MAX_PATHS {
-			pathId := proc.ProcTable[curPID].Paths[UserFrame.A]
+			p := proc.GetProc(curPID)
+			pathId := p.Paths[UserFrame.A]
 			if pathId != 0xFF {
 				seekPos := UserFrame.U
 				if hal.ARCH == 'k' {
@@ -280,19 +281,25 @@ func Dispatch(callNum byte) {
 		msg[8] = '0' + ((val / 10) % 10)
 		msg[9] = '0' + (val % 10)
 		cr := byte('\r')
-		if curPID < proc.MAX_PROCS && proc.ProcTable[curPID].LineMode == 0 {
-			cr = '\n'
+		if curPID < proc.MAX_PROCS {
+			p := proc.GetProc(curPID)
+			if p.LineMode == 0 {
+				cr = '\n'
+			}
 		}
 		msg[10] = cr
 
 		pathId := byte(0xFF)
-		if curPID < proc.MAX_PROCS && proc.ProcTable[curPID].State != proc.PROC_FREE {
-			pathId = proc.ProcTable[curPID].Paths[2]
-			if pathId == 0xFF {
-				pathId = proc.ProcTable[curPID].Paths[1]
-			}
-			if pathId == 0xFF {
-				pathId = proc.ProcTable[curPID].Paths[0]
+		if curPID < proc.MAX_PROCS {
+			p := proc.GetProc(curPID)
+			if p.State != proc.PROC_FREE {
+				pathId = p.Paths[2]
+				if pathId == 0xFF {
+					pathId = p.Paths[1]
+				}
+				if pathId == 0xFF {
+					pathId = p.Paths[0]
+				}
 			}
 		}
 
@@ -442,7 +449,7 @@ func Dispatch(callNum byte) {
 			UserFrame.CC |= 1
 			return
 		}
-		pathId := proc.ProcTable[curPID].Paths[pathSlot]
+		pathId := proc.GetProc(curPID).Paths[pathSlot]
 		if pathId == 0xFF || pathId >= path.MAX_PATHS {
 			UserFrame.B = proc.E_BPNUM
 			UserFrame.CC |= 1
