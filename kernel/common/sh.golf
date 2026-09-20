@@ -104,6 +104,16 @@ func RunCommand(line *byte) byte {
 	for argLen > 0 && peekb(word(&argBuf[0])+argLen-1) == ' ' {
 		argLen--
 	}
+
+	isBg := false
+	if argLen > 0 && peekb(word(&argBuf[0])+argLen-1) == '&' {
+		isBg = true
+		argLen--
+		for argLen > 0 && peekb(word(&argBuf[0])+argLen-1) == ' ' {
+			argLen--
+		}
+	}
+
 	pokeb(word(&argBuf[0])+argLen, '\r')
 	pokeb(word(&argBuf[0])+argLen+1, 0)
 	argLen++ // count includes '\r'
@@ -123,6 +133,12 @@ func RunCommand(line *byte) byte {
 			p = (*byte)(word(p) + 1)
 		}
 		pokeb(word(&redirBuf[0])+redirLen, 0)
+		for peekb(word(p)) == ' ' {
+			p = (*byte)(word(p) + 1)
+		}
+		if peekb(word(p)) == '&' {
+			isBg = true
+		}
 	}
 
 	// 4. Check builtin commands
@@ -221,17 +237,26 @@ func RunCommand(line *byte) byte {
 			}
 		}
 
+		if isBg {
+			return 0
+		}
+
 		proc.ProcTable[proc.CurrentPID].State = proc.PROC_WAITING
 		hal.LaunchProcess(cpid, proc.ProcTable[cpid].SavedSP, proc.ProcTable[cpid].SavedPC)
-		wpid, wst, werr := proc.SysWait()
-		proc.ProcTable[proc.CurrentPID].State = proc.PROC_RUNNING
-		if werr == 0 && wpid == cpid {
-			if wst != 0 {
-				printStr((*byte)("ERROR "))
-				printDec(wst)
-				hal.PutChar('\n')
+		for {
+			wpid, wst, werr := proc.SysWait()
+			proc.ProcTable[proc.CurrentPID].State = proc.PROC_RUNNING
+			if werr != 0 {
+				break
 			}
-			return wst
+			if wpid == cpid {
+				if wst != 0 {
+					printStr((*byte)("ERROR "))
+					printDec(wst)
+					hal.PutChar('\n')
+				}
+				return wst
+			}
 		}
 	}
 

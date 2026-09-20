@@ -8,14 +8,14 @@ prompt_loop:
     move.l  #2, d2          ; count = 2
     moveq   #1, d1          ; Path 1
     move.l  #$8A, d0        ; I$Write
-    dc.w    $4E40
+    trap    #0
 
     ; 2. Read line from stdin (Path 0) via I$ReadLn ($8B)
     lea     line_buf, a0
     move.l  #127, d2        ; maxLen = 127
     moveq   #0, d1          ; Path 0
     move.l  #$8B, d0        ; I$ReadLn
-    dc.w    $4E40
+    trap    #0
     bcs     do_exit
     tst.l   d2
     beq     do_exit
@@ -77,6 +77,29 @@ copy_params:
     bra     copy_params
 
 params_done:
+    clr.b   is_bg
+    cmp.l   #1, d4
+    bls.s   check_builtins_k
+    move.l  d4, d3
+    subq.l  #1, a1
+    subq.l  #1, d4
+find_bg_loop_k:
+    subq.l  #1, a1
+    subq.l  #1, d4
+    beq.s   not_bg_k
+    move.b  (a1), d0
+    cmp.b   #' ', d0
+    beq.s   find_bg_loop_k
+    cmp.b   #'&', d0
+    bne.s   not_bg_k
+    move.b  #1, is_bg
+    move.b  #10, (a1)
+    clr.b   1(a1)
+    addq.l  #1, d4
+    bra.s   check_builtins_k
+not_bg_k:
+    move.l  d3, d4
+check_builtins_k:
 
     ; 6. Check builtins
     ; "exit"
@@ -126,7 +149,7 @@ check_help:
     move.l  #47, d2
     moveq   #1, d1          ; stdout
     move.l  #$8C, d0        ; I$WritLn
-    dc.w    $4E40
+    trap    #0
     bra     prompt_loop
 
 check_cd:
@@ -146,7 +169,7 @@ check_cd:
     lea     param_buf, a0
     moveq   #1, d1          ; Mode = 1
     move.l  #$86, d0        ; I$ChgDir
-    dc.w    $4E40
+    trap    #0
     bcc     prompt_loop
     bsr     print_error
     bra     prompt_loop
@@ -168,7 +191,7 @@ check_cx:
     lea     param_buf, a0
     moveq   #$40, d1        ; Mode = MODE_EXEC
     move.l  #$86, d0        ; I$ChgDir
-    dc.w    $4E40
+    trap    #0
     bcc     prompt_loop
     bsr     print_error
     bra     prompt_loop
@@ -182,13 +205,23 @@ do_fork:
     lea     param_buf, a1
     move.l  d4, d2
     move.l  #$03, d0        ; F$Fork
-    dc.w    $4E40
+    trap    #0
     bcs     fork_fail
 
+    ; Child PID in D1.B
+    move.b  d1, fg_pid
+    tst.b   is_bg
+    bne     prompt_loop
+
+wait_fg_loop_k:
     ; Call F$Wait ($04)
     move.l  #$04, d0        ; F$Wait
-    dc.w    $4E40
+    trap    #0
     bcs     prompt_loop
+
+    ; Check if reaped child is the foreground child
+    cmp.b   fg_pid, d1
+    bne.s   wait_fg_loop_k
 
     ; Return status in D0.B
     tst.b   d0
@@ -207,13 +240,13 @@ fork_fail:
     move.l  #12, d2
     moveq   #1, d1
     move.l  #$8C, d0
-    dc.w    $4E40
+    trap    #0
     bra     prompt_loop
 
 do_exit:
     moveq   #0, d1          ; status 0
     move.l  #$06, d0        ; F$Exit
-    dc.w    $4E40
+    trap    #0
     rts
 
 ; Print "ERROR " followed by D1.B in decimal and newline
@@ -223,7 +256,7 @@ print_error:
     move.l  #6, d2
     moveq   #1, d1
     move.l  #$8A, d0        ; I$Write
-    dc.w    $4E40
+    trap    #0
 
     move.l  (sp)+, d1
     and.l   #$FF, d1
@@ -233,7 +266,7 @@ print_error:
     move.l  #1, d2
     moveq   #1, d1
     move.l  #$8A, d0
-    dc.w    $4E40
+    trap    #0
     rts
 
 ; Print decimal value in D1
@@ -247,17 +280,23 @@ print_dec:
 pd_loop:
     tst.l   d1
     beq     pd_done
-    divu    #10, d1
-    swap    d1              ; remainder in low word
-    add.b   #'0', d1
-    move.b  d1, -(a0)
-    clr.w   d1
-    swap    d1              ; quotient in low word
+    ; Div by 10
+    moveq   #0, d0
+    move.l  d1, d2
+    divu    #10, d2
+    move.w  d2, d1
+    and.l   #$FFFF, d1      ; quotient in D1
+    swap    d2
+    and.l   #$FFFF, d2      ; remainder in D2
+    add.b   #'0', d2
+    move.b  d2, -(a0)
     bra     pd_loop
 pd_done:
+    ; Print from (A0)
     bsr     print_sz
     rts
 
+; Helper: print null-terminated string at A0 via I$Write
 print_sz:
     move.l  a0, -(sp)
     moveq   #0, d2
@@ -272,7 +311,7 @@ psz_do:
     beq     psz_ret
     moveq   #1, d1
     move.l  #$8A, d0        ; I$Write
-    dc.w    $4E40
+    trap    #0
 psz_ret:
     rts
 
@@ -298,6 +337,10 @@ cmd_buf:
     ds.b    32
 param_buf:
     ds.b    128
+is_bg:
+    ds.b    1
+fg_pid:
+    ds.b    1
 num_buf:
     ds.b    16
 

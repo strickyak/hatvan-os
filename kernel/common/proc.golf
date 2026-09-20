@@ -109,6 +109,9 @@ func ProcInit() {
 	}
 
 	CurrentPID = 0
+	ScheduleNext()
+	hal.InitUserContext(0, 0, 0)
+	hal.FreeUserContext(0)
 }
 
 // ProcAlloc finds a free process slot and initializes it,
@@ -182,6 +185,7 @@ func ProcFree(pid byte) {
 	}
 	p.State = PROC_FREE
 	hal.PurgeTaskMem(p.TaskID)
+	hal.FreeUserContext(pid)
 }
 
 // ProcOpen opens a path for the given process and assigns a per-process path descriptor
@@ -458,6 +462,7 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
 	childProc.SavedPC = entryPC
 	childProc.CodeSize = binSize
 	childProc.State = PROC_READY
+	hal.InitUserContext(childPID, childProc.SavedSP, entryPC)
 
 	return childPID, 0
 }
@@ -765,4 +770,24 @@ func ProcfsOpen(pathId byte, pathStr *byte) byte {
 
 	return path.E_PNNF
 }
+
+// ScheduleNext selects the next runnable process (PROC_READY or PROC_RUNNING) in round-robin order.
+func ScheduleNext() byte {
+	start := CurrentPID
+	for offset := word(1); offset <= MAX_PROCS; offset++ {
+		next := byte((word(start) + offset) % MAX_PROCS)
+		if next <= 1 {
+			continue
+		}
+		if ProcTable[next].State == PROC_READY || ProcTable[next].State == PROC_RUNNING {
+			if start > 1 && ProcTable[start].State == PROC_RUNNING {
+				ProcTable[start].State = PROC_READY
+			}
+			ProcTable[next].State = PROC_RUNNING
+			return next
+		}
+	}
+	return CurrentPID
+}
+
 

@@ -17,7 +17,7 @@ var (
 	traceFlag      = flag.Bool("trace", false, "print instruction execution trace")
 	maxCyclesFlag  = flag.Uint64("max-cycles", 0, "stop after maximum CPU cycles (0 = unlimited)")
 	maxSecondsFlag = flag.Float64("max-seconds", 300, "stop after maximum real-time seconds (0 = unlimited)")
-	tickHzFlag     = flag.Int("tick-hz", 60, "timer tick rate in Hz (0 = disabled)")
+	tickHzFlag     = flag.Int("tick-hz", 5, "timer tick rate in Hz (0 = disabled)")
 	cpuClockHz     = flag.Int("cpu-hz", 2000000, "simulated CPU clock speed in Hz (default 2MHz)")
 	inputFlag      = flag.String("input", "", "initial console input to feed to the VM (e.g. \"mdir\\n\")")
 	disk0Flag      = flag.String("disk0", "", "disk image file for /d0")

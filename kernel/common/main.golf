@@ -193,6 +193,7 @@ func main() {
 	}
 
 	// 10. Resident Mini-Shell (Phase 5)
+	hal.EnableTimer()
 	pShellPID, pShell := proc.ProcAlloc(0)
 	if pShellPID > 0 && pShell != (*proc.Process)(0) {
 		klib.strcpy(&pShell.CmdName[0], (*byte)("builtin-shell"))

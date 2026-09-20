@@ -116,6 +116,12 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 			if c != 0 {
 				break
 			}
+			for i := word(2); i < proc.MAX_PROCS; i++ {
+				if byte(i) != proc.CurrentPID && proc.ProcTable[i].State == proc.PROC_READY {
+					hal.LaunchProcess(byte(i), proc.ProcTable[i].SavedSP, proc.ProcTable[i].SavedPC)
+					break
+				}
+			}
 		}
 
 		// Handle Return / Newline

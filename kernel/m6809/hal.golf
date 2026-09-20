@@ -41,6 +41,14 @@ func LogChar(b byte) {
 	vpokeb(PORT_LOGCHAR, b)
 }
 
+func EnableTimer() {
+	vpokeb(PORT_REGCTRL, 1)
+}
+
+func DisableTimer() {
+	vpokeb(PORT_REGCTRL, 0)
+}
+
 func Exit(code byte) {
 	vpokeb(PORT_EXIT, code)
 	for {
@@ -121,3 +129,6 @@ func SetTaskFlags(flags byte) {
 func RBFCall()
 func Sleep()
 func InitRBF(entryPC word)
+func InitUserContext(pid byte, sp word, pc word)
+func FreeUserContext(pid byte)
+

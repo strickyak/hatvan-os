@@ -27,6 +27,35 @@ This document captures prioritized feature candidates and future architectural m
   - Enhanced the shell (`sh.RunCommand`) with output redirection (`> filename`), redirecting process stdout to newly created files.
   - Verified on both Motorola 6809 (`gep9`) and Motorola 68000 (`gepk`) across unit tests (`make test`) and interactive tests (`make test-interactive`).
 
+### Option 4: Timer-Driven Preemptive Multitasking (Completed)
+- **Achievements:**
+  - Configured timer tick rate to 5 Hz across both `gep9` and `gepk` virtual machines (`-tick-hz=5`).
+  - Implemented the strict **Kernel Mode Single-Entry Rule**: only one process is permitted in kernel mode at a time. Timer interrupts arriving while the CPU is in kernel mode (or supervisor mode / Task 0 / Task 1 RBF driver) acknowledge the tick and return immediately without preempting or scheduling another process.
+  - Implemented round-robin preemptive scheduler (`proc.ScheduleNext`) in `kernel/common/proc.golf` switching between processes in `PROC_READY` / `PROC_RUNNING` states.
+  - Implemented Motorola 6809 preemptive multitasking in `kernel/m6809/trap_m6809.asm`:
+    - Timer IRQ vector ($FFF8) acknowledging `$FF02`.
+    - User stack pointer save/restore in `user_sp_table`.
+    - Dedicated kernel IRQ stack in Task 0.
+    - Preemption, task switching via TaskFuse ($FF20), and clean resumption of user processes.
+  - Implemented Motorola 68000 preemptive multitasking in `kernel/m68k/trap_m68k.s`:
+    - Level 6 autovector interrupt (vector 30 at $000078) acknowledging `$00FF0004`.
+    - 72-byte per-process register context save/restore table (`user_context_table_m68k`) for D0-D7, A0-A6, USP, SR, and PC.
+    - Preserved kernel caller's callee-saved registers (`d2-d7/a2-a6`) on kernel stack across `f_hal__LaunchProcess` and `.m68k_process_exited`.
+    - Preemption, task switching via TaskReg ($00FF0020), and clean resumption of user processes.
+  - Enhanced userland shells (`cmds/sh.asm` for 6809 and `cmds/shk.s` for 68000) with background command execution (`cmd &`):
+    - Background child processes are launched concurrently without blocking the shell prompt.
+    - Background child zombies accumulate until reaped by foreground `F$Wait` loops (classic UNIX semantics), which ignore reaped background children and wait until the designated foreground child terminates.
+  - Enhanced `asm68k` assembler in `minigolf` (`cmd/asm68k/main.go`) with full support for:
+    - `MOVEM.W` and `MOVEM.L` (register-to-memory and memory-to-register, supporting register lists/ranges and reverse bit order for `-(An)`).
+    - `TRAP #vector` / `TRAP vector`.
+    - `MOVE An, USP` and `MOVE USP, An`.
+    - `MOVE <ea>, SR`, `MOVE SR, <ea>`, `MOVE <ea>, CCR`.
+    - `ORI/ANDI/EORI #imm, SR` and `CCR`.
+    - Bit operations: `BTST`, `BSET`, `BCLR`, `BCHG`.
+    - `EXG` and `Scc`.
+    - Immediate ALU aliases (`ADDI`, `SUBI`, `CMPI`, `ANDI`, `ORI`, `EORI`).
+  - Verified preemptive multitasking and background job execution across unit and interactive test suites (`make test` and `make test-interactive`) on both 6809 and 68000.
+
 ---
 
 ## Active & Candidate Milestones
@@ -45,13 +74,6 @@ This document captures prioritized feature candidates and future architectural m
         2     0 WAIT  $FE00  [SCF]
         3     0 WAIT  $FE00  sh
     ```
-
-### Option 4: Timer-Driven Preemptive Multitasking
-- **Motivation:** Hatvan OS currently uses a synchronous fork/wait model where parent processes block until the child calls `F$Exit`.
-- **Goals:**
-  - Hook the 60 Hz timer interrupt (`$FF02` / Level 6 autovector) in `trap_m6809.asm` and `trap_m68k.s`.
-  - Implement round-robin scheduling across all processes in state `PROC_RUNNING` in `ProcTable`.
-  - Add background execution support in the shell (e.g. `cmd &`).
 
 ### Option 5: OS-9 Level 1 Binary Compatibility Expansion
 - **Motivation:** `/d0/Cmds9` has been populated with Level 1 OS-9 binaries from `os9-6809-level1.zip` (`asm`, `basic09`, `edit`, `list`, `ident`, `dump`, `merge`, etc.).

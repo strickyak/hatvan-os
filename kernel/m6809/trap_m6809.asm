@@ -16,6 +16,13 @@ saved_parent_pid_table:
 saved_user_frame_table:
     fill 0,192
 
+in_kernel:
+    fcb 1
+
+irq_stack:
+    fill 0,256
+irq_stack_top:
+
 call_num:
     fcb 0
 
@@ -36,6 +43,7 @@ rbf_init_frame:
 ; Hardware pushed (PC, U, Y, X, DP, B, A, CC) onto user task stack.
 ; CPU switched to Task 0 during vector fetch. Register S is user SP.
 trap_swi2:
+    inc in_kernel       ; Enter kernel mode
     ; 0. Reset Direct Page to page 0 for kernel execution
     clra
     tfr a,dp
@@ -126,6 +134,7 @@ trap_swi2:
     ldy #user_sp_table
     lds b,y
     lsrb
+    clr in_kernel       ; Leaving kernel mode, returning to user mode
     stb $FF20           ; arm TaskFuse with target PID
     rti
 
@@ -305,18 +314,115 @@ f_hal__LaunchProcess:
     lslb
     ldy #saved_kernel_sp_table
     sts b,y
+
+    ldy #user_sp_table
+    ldu b,y
+    beq .fresh_sp
+    tfr u,x             ; use existing user SP if already set
+    bra .sp_ready
+.fresh_sp:
+    stx b,y             ; store initial SP
+.sp_ready:
     lsrb
 
     stb v_proc.CurrentPID
+    clr in_kernel       ; Leaving kernel mode, entering user mode
     tfr x,s             ; S = user SP
     stb $FF20           ; arm TaskFuse with user PID
     rti                 ; RTI switches to user task and launches code!
+
+f_hal__InitUserContext:
+    ldb 2,s
+    lslb
+    ldy #user_sp_table
+    ldx 3,s
+    stx b,y
+    rts
+
+f_hal__FreeUserContext:
+    ldb 2,s
+    lslb
+    ldy #user_sp_table
+    ldx #0
+    stx b,y
+    ldy #saved_kernel_sp_table
+    stx b,y
+    rts
+
+trap_irq:
+    ; 1. Acknowledge timer interrupt
+    lda #1
+    sta $FF02
+
+    ; 2. Check if we were in kernel mode
+    lda in_kernel
+    bne .irq_done
+
+    ; 3. Check CurrentPID: if <= 1, do not preempt
+    ldb v_proc.CurrentPID
+    cmpb #1
+    bls .irq_done
+
+    ; 4. Interrupted in user mode (CurrentPID >= 2)
+    tfr s,x
+    lslb
+    ldy #user_sp_table
+    stx b,y
+    lsrb
+
+    ; 5. Switch to dedicated IRQ stack in Task 0
+    lds #irq_stack_top
+    inc in_kernel
+    clra
+    tfr a,dp
+
+    ; 6. Call scheduler
+    jsr f_proc__ScheduleNext
+    ; Next PID in B
+
+    cmpb v_proc.CurrentPID
+    beq .irq_resume_same
+
+    pshs b              ; push nextPID
+    lslb
+    ldy #saved_kernel_sp_table
+    ldx b,y
+    bne .irq_ksp_ok
+
+    lda v_proc.CurrentPID
+    lsla
+    ldx a,y
+    stx b,y
+
+    lda v_proc.CurrentPID
+    ldy #saved_parent_pid_table
+    lda a,y
+    ldb ,s              ; B = nextPID
+    sta b,y
+
+.irq_ksp_ok:
+    puls b              ; B = nextPID
+    stb v_proc.CurrentPID
+
+.irq_resume_same:
+    clr in_kernel
+
+    ; Restore user SP for CurrentPID
+    ldb v_proc.CurrentPID
+    lslb
+    ldy #user_sp_table
+    lds b,y
+    lsrb
+    stb $FF20           ; Arm TaskFuse with target PID
+    rti
+
+.irq_done:
+    rti
 
 ; Trap stubs for unhandled vectors
 trap_swi3:
 trap_swi:
 trap_nmi:
 trap_firq:
-trap_irq:
 trap_reserved:
     rti

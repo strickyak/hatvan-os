@@ -41,7 +41,7 @@ path_done:
     moveq   #1, d1          ; Mode = MODE_READ ($01)
     lea     path_buf, a0
     move.l  #$84, d0        ; I$Open
-    dc.w    $4E40           ; trap #0
+    trap    #0
     bcs     open_err
 
     move.l  d1, d7          ; D7 = file Path ID
@@ -52,7 +52,7 @@ read_loop:
     lea     data_buf, a0    ; 16-byte buffer
     move.l  #16, d2         ; count = 16
     move.l  #$89, d0        ; I$Read
-    dc.w    $4E40           ; trap #0
+    trap    #0
     bcs     read_done       ; EOF or error
     tst.l   d2
     beq     read_done       ; 0 bytes read -> EOF
@@ -89,7 +89,7 @@ format_bytes:
     ; 5. Print line via I$WritLn ($8C)
     moveq   #1, d1          ; stdout
     move.l  #$8C, d0        ; I$WritLn
-    dc.w    $4E40           ; trap #0
+    trap    #0
 
     ; 6. Update file offset
     add.l   d4, d6
@@ -104,34 +104,34 @@ read_done:
     ; Close file
     move.l  d7, d1
     move.l  #$8F, d0        ; I$Close
-    dc.w    $4E40
+    trap    #0
 
     ; Exit status 0
     moveq   #0, d1
     move.l  #$06, d0        ; F$Exit
-    dc.w    $4E40
+    trap    #0
 
 open_err:
     lea     msg_open_err, a0
     moveq   #22, d2
     moveq   #1, d1
     move.l  #$8C, d0
-    dc.w    $4E40
+    trap    #0
 
     moveq   #1, d1
     move.l  #$06, d0
-    dc.w    $4E40
+    trap    #0
 
 usage_err:
     lea     msg_usage, a0
     moveq   #18, d2
     moveq   #1, d1
     move.l  #$8C, d0
-    dc.w    $4E40
+    trap    #0
 
     moveq   #1, d1
     move.l  #$06, d0
-    dc.w    $4E40
+    trap    #0
 
 ; Helper: hex_long (D0.L -> 8 ASCII chars at (A1)+)
 hex_long:

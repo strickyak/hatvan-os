@@ -34,13 +34,13 @@ found_end:
     ; D2 = byte count
     moveq   #1, d1
     move.l  #$8C, d0
-    dc.w    $4E40           ; trap #0
+    trap    #0
 
     ; Call F$Exit ($06) with status 0
     ; D0 = $06
     ; D1 = 0
     moveq   #0, d1
     move.l  #$06, d0
-    dc.w    $4E40           ; trap #0
+    trap    #0
 
     end _start

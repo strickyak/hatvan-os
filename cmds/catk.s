@@ -41,7 +41,7 @@ path_done:
     moveq   #1, d1          ; Mode = MODE_READ ($01)
     lea     path_buf, a0
     move.l  #$84, d0        ; I$Open
-    dc.w    $4E40           ; trap #0
+    trap    #0
     bcs     open_err
 
     move.l  d1, d7          ; D7 = file Path ID
@@ -51,7 +51,7 @@ read_loop:
     lea     line_buf, a0    ; Line buffer
     move.l  #128, d2        ; maxLen = 128
     move.l  #$8B, d0        ; I$ReadLn
-    dc.w    $4E40           ; trap #0
+    trap    #0
     bcs     read_done       ; EOF or error
     tst.l   d2
     beq     read_done       ; 0 bytes read -> EOF
@@ -62,7 +62,7 @@ read_loop:
     lea     line_buf, a0
     move.l  d4, d2          ; count
     move.l  #$8C, d0        ; I$WritLn
-    dc.w    $4E40           ; trap #0
+    trap    #0
 
     bra     read_loop
 
@@ -70,12 +70,12 @@ read_done:
     ; Close file via I$Close ($8F)
     move.l  d7, d1
     move.l  #$8F, d0        ; I$Close
-    dc.w    $4E40           ; trap #0
+    trap    #0
 
     ; Exit success
     clr.l   d1
     move.l  #$06, d0        ; F$Exit
-    dc.w    $4E40
+    trap    #0
     rts
 
 usage_err:
@@ -91,10 +91,10 @@ open_err:
 print_err_and_exit:
     moveq   #2, d1          ; Path 2 (stderr)
     move.l  #$8C, d0        ; I$WritLn
-    dc.w    $4E40
+    trap    #0
     moveq   #1, d1          ; exit code 1
     move.l  #$06, d0        ; F$Exit
-    dc.w    $4E40
+    trap    #0
     rts
 
 msg_usage:

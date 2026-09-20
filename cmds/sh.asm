@@ -11,6 +11,8 @@ Edition   equ 1
 line_buf  rmb 128
 cmd_buf   rmb 32
 param_buf rmb 128
+is_bg     rmb 1
+fg_pid    rmb 1
 stack     rmb 256
 size equ .
 
@@ -114,8 +116,32 @@ copy_param_loop:
  bra copy_param_loop
 
 params_done:
- ; Y register = param length in D
- tfr d,y
+	clr	is_bg,u
+	cmpd	#1
+	lbls	check_builtins
+	pshs	d
+	leay	-1,y		; Y points to terminator
+	subd	#1		; D is index of terminator
+find_bg_loop:
+	leay	-1,y
+	subd	#1
+	beq	not_bg
+	lda	,y
+	cmpa	#' '
+	beq	find_bg_loop
+	cmpa	#'&'
+	bne	not_bg
+	inc	is_bg,u
+	lda	#13
+	sta	,y
+	clr	1,y
+	leas	2,s		; discard saved D
+	addd	#1		; count includes CR
+	bra	check_builtins
+not_bg:
+	puls	d		; restore original D
+check_builtins:
+	tfr	d,y		; Y register = param length in D
 
  ; 6. Check builtins
  ; "exit"
@@ -197,7 +223,7 @@ check_cd:
  swi2
  fcb $86         ; I$ChgDir
  lbcc prompt_loop
- bsr print_error
+ lbsr print_error
  lbra prompt_loop
 
 check_cx:
@@ -218,36 +244,50 @@ check_cx:
  swi2
  fcb $86         ; I$ChgDir
  lbcc prompt_loop
- bsr print_error
+ lbsr print_error
  lbra prompt_loop
 
 do_fork:
- ; External command execution via F$Fork ($03)
- ; X = cmd_buf
- ; Y = param length
- ; U = param_buf
- pshs u          ; Preserve shell data pointer
- leax cmd_buf,u
- leau param_buf,u
- clra            ; type/lang = any
- clrb            ; mem size = default
- swi2
- fcb $03         ; F$Fork
- bcs fork_fail
+	; External command execution via F$Fork ($03)
+	; X = cmd_buf
+	; Y = param length
+	; U = param_buf
+	pshs	u		; Preserve shell data pointer
+	leax	cmd_buf,u
+	leau	param_buf,u
+	clra			; type/lang = any
+	clrb			; mem size = default
+	swi2
+	fcb	$03		; F$Fork
+	lbcs	fork_fail
 
- ; Child PID in A. Now wait via F$Wait ($04)
- swi2
- fcb $04         ; F$Wait
- puls u          ; Restore shell data pointer
- lbcs prompt_loop
+	; Child PID in A
+	sta	fg_pid,u
+	lda	is_bg,u
+	lbne	fork_bg_done
 
- ; Status in B
- tstb
- lbeq prompt_loop
+	; Foreground wait loop: wait until child with PID == fg_pid terminates
+wait_fg_loop:
+	swi2
+	fcb	$04		; F$Wait
+	lbcs	wait_fail	; Error (no more children)
+	cmpa	fg_pid,u
+	bne	wait_fg_loop	; Reaped accumulated background zombie! Ignore and keep waiting!
 
- ; Nonzero exit status in B: print "ERROR %d\n"
- bsr print_error
- lbra prompt_loop
+	; Foreground child finished! Status in B
+	puls	u
+	tstb
+	lbeq	prompt_loop
+	lbsr	print_error
+	lbra	prompt_loop
+
+wait_fail:
+	puls	u
+	lbra	prompt_loop
+
+fork_bg_done:
+	puls	u
+	lbra	prompt_loop
 
 fork_fail:
  puls u          ; Restore shell data pointer
