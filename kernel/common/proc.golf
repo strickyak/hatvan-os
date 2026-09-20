@@ -52,8 +52,29 @@ type Process struct {
 var ProcTable [MAX_PROCS]Process
 var CurrentPID byte
 
+func SetProcState(pid byte, newState byte) {
+	if pid < MAX_PROCS {
+		ProcTable[pid].State = newState
+	}
+}
+
 func SetCurrentPID(pid byte) {
 	CurrentPID = pid
+}
+
+func IsAncestor(ancestor byte, pid byte) bool {
+	curr := pid
+	for curr > 0 && curr < MAX_PROCS {
+		parent := ProcTable[curr].ParentPID
+		if parent == ancestor {
+			return true
+		}
+		if parent == curr {
+			break
+		}
+		curr = parent
+	}
+	return false
 }
 
 // ProcInit initializes the process subsystem
@@ -520,12 +541,12 @@ func SysExit(status byte) {
 	}
 
 	p.ExitStatus = status
-	p.State = PROC_ZOMBIE
+	SetProcState(CurrentPID, PROC_ZOMBIE)
 	hal.PurgeTaskMem(p.TaskID)
 
 	// Wake parent if waiting
 	if p.ParentPID < MAX_PROCS && ProcTable[p.ParentPID].State == PROC_WAITING {
-		ProcTable[p.ParentPID].State = PROC_READY
+		SetProcState(p.ParentPID, PROC_READY)
 	}
 }
 
@@ -542,17 +563,17 @@ func SysWait() (byte, byte, byte) {
 					cpid := byte(i)
 					st := p.ExitStatus
 					ProcFree(cpid)
-					ProcTable[CurrentPID].State = PROC_RUNNING
+					SetProcState(CurrentPID, PROC_RUNNING)
 					return cpid, st, 0
 				}
 				if p.State == PROC_READY || p.State == PROC_RUNNING {
-					ProcTable[CurrentPID].State = PROC_WAITING
+					SetProcState(CurrentPID, PROC_WAITING)
 					hal.LaunchProcess(byte(i), p.SavedSP, p.SavedPC)
 					if p.State == PROC_ZOMBIE {
 						cpid := byte(i)
 						st := p.ExitStatus
 						ProcFree(cpid)
-						ProcTable[CurrentPID].State = PROC_RUNNING
+						SetProcState(CurrentPID, PROC_RUNNING)
 						return cpid, st, 0
 					}
 				}
@@ -560,14 +581,14 @@ func SysWait() (byte, byte, byte) {
 		}
 
 		if !hasChildren {
-			ProcTable[CurrentPID].State = PROC_RUNNING
+			SetProcState(CurrentPID, PROC_RUNNING)
 			return 0, 0, E_NOCHILD
 		}
 
 		// If children exist but none is ready/zombie, let any ready/running process run
-		ProcTable[CurrentPID].State = PROC_WAITING
+		SetProcState(CurrentPID, PROC_WAITING)
 		for i := word(2); i < MAX_PROCS; i++ {
-			if byte(i) != CurrentPID && (ProcTable[i].State == PROC_READY || ProcTable[i].State == PROC_RUNNING) {
+			if byte(i) != CurrentPID && !IsAncestor(byte(i), CurrentPID) && (ProcTable[i].State == PROC_READY || ProcTable[i].State == PROC_RUNNING) {
 				hal.LaunchProcess(byte(i), ProcTable[i].SavedSP, ProcTable[i].SavedPC)
 				break
 			}
@@ -835,9 +856,9 @@ func ScheduleNext() byte {
 		}
 		if ProcTable[next].State == PROC_READY || ProcTable[next].State == PROC_RUNNING {
 			if start > 1 && ProcTable[start].State == PROC_RUNNING {
-				ProcTable[start].State = PROC_READY
+				SetProcState(start, PROC_READY)
 			}
-			ProcTable[next].State = PROC_RUNNING
+			SetProcState(next, PROC_RUNNING)
 			return next
 		}
 	}

@@ -106,6 +106,23 @@ trap_swi2:
     addd #1
     std >v_syscall.UserFrame+10
 
+    ; Write updated PC back to user stack frame so user task memory always has the return PC
+    clr $FF21           ; srcTask = 0
+    ldd #v_syscall.UserFrame+10
+    std $FF22           ; srcAddr = &UserFrame.PC
+    ldb v_proc.CurrentPID
+    stb $FF24           ; dstTask = CurrentPID
+    lslb
+    ldy #user_sp_table
+    ldd b,y
+    addd #10            ; dstAddr = user_sp + 10 (PC field in RTI frame)
+    std $FF25
+    ldb #2
+    stb $FF27           ; count = 2 bytes
+.wait_dma_pc:
+    ldb $FF27
+    beq .wait_dma_pc
+
     ; 5. Dispatch system call in MiniGolf
     ldb call_num
     pshs b              ; preserve call_num for this frame across nested calls
