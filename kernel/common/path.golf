@@ -411,13 +411,5 @@ func SysWritLn(pathId byte, task byte, ubuf *byte, count word, lineMode byte) (w
 		return n + 1, 0
 	}
 
-	if pd.DevType == dev.DEV_TERM {
-		c := lineBuf[lineLen-1]
-		if c == '\r' {
-			nl := byte('\n')
-			SysWrite(pathId, 0, &nl, 1)
-		}
-	}
-
 	return n, 0
 }

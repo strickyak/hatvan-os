@@ -516,3 +516,40 @@ func TestLEAS(t *testing.T) {
 		t.Fatalf("expected PC=10D7 S=0ECC, got PC=%04X S=%04X", cpu.PC, cpu.S)
 	}
 }
+
+func TestCurlyEscapeAndNewline(t *testing.T) {
+	bus := NewBus()
+	outBuf := new(bytes.Buffer)
+	bus.ConsoleOut = outBuf
+
+	// Without CurlyEscape:
+	// Newline translation (13 -> \n, 10 -> \n)
+	bus.WriteByte(0xFF00, 13)
+	bus.WriteByte(0xFF00, 10)
+	bus.WriteByte(0xFF00, 'A')
+	bus.WriteByte(0xFF00, 7)
+	if got := outBuf.String(); got != "\n\nA\x07" {
+		t.Fatalf("expected \\n\\nA\\x07, got %q", got)
+	}
+
+	// With CurlyEscape:
+	outBuf.Reset()
+	bus.CurlyEscape = true
+	bus.WriteByte(0xFF00, 13)
+	bus.WriteByte(0xFF00, 10)
+	bus.WriteByte(0xFF00, ' ')
+	bus.WriteByte(0xFF00, 'Z')
+	bus.WriteByte(0xFF00, '~')
+	bus.WriteByte(0xFF00, 0)
+	bus.WriteByte(0xFF00, 7)
+	bus.WriteByte(0xFF00, 8)
+	bus.WriteByte(0xFF00, 27)
+	bus.WriteByte(0xFF00, 127)
+	bus.WriteByte(0xFF00, 255)
+
+	expected := "\n\n Z~{0}{7}{8}{27}{127}{255}"
+	if got := outBuf.String(); got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+

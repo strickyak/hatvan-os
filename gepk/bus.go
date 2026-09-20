@@ -63,10 +63,11 @@ type Bus struct {
 	RegCtrl uint16 // $FF0006: Bit 0 = Ctrl.TimrIRQ, Bit 1 = Ctrl.TermIRQ
 
 	// Console streams
-	ConsoleIn  []byte
-	ConsoleOut io.Writer
-	LogOut     io.Writer
-	StdinChan  <-chan byte
+	ConsoleIn   []byte
+	ConsoleOut  io.Writer
+	LogOut      io.Writer
+	StdinChan   <-chan byte
+	CurlyEscape bool
 
 	// VM Termination
 	ExitCode uint16
@@ -376,7 +377,13 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 	switch base {
 	case 0x00FF0000: // Term.Out
 		if b.ConsoleOut != nil {
-			b.ConsoleOut.Write([]byte{val})
+			if val == 10 || val == 13 {
+				b.ConsoleOut.Write([]byte{'\n'})
+			} else if b.CurlyEscape && !(val >= 32 && val <= 126) {
+				fmt.Fprintf(b.ConsoleOut, "{%d}", val)
+			} else {
+				b.ConsoleOut.Write([]byte{val})
+			}
 		}
 
 	case 0x00FF0002: // Term.In (read only)

@@ -29,6 +29,7 @@ var (
 	task1Flag       = flag.String("task1", "", "optional binary (S-Record) to load into Task 1")
 	baseAddrFlag    = flag.Uint("base", 0, "base memory address for raw binary image (default 0)")
 	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
+	curlyEscapeFlag = flag.Bool("curly-escape", false, "escape unusual characters as '{%d}'")
 )
 
 func main() {
@@ -48,6 +49,7 @@ func main() {
 
 	// 1. Initialize Bus and CPU
 	bus := gepk.NewBus()
+	bus.CurlyEscape = *curlyEscapeFlag
 	cpu := gepk.NewCPU(bus)
 
 	attachDisk(bus, 0, *disk0Flag)

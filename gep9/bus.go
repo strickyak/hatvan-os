@@ -28,10 +28,11 @@ type Bus struct {
 	RegCtrl byte // $FF03: Bit 0 = Ctrl.TimrIRQ, Bit 1 = Ctrl.TermIRQ
 
 	// Console streams
-	ConsoleIn  []byte
-	ConsoleOut io.Writer
-	LogOut     io.Writer
-	StdinChan  <-chan byte
+	ConsoleIn   []byte
+	ConsoleOut  io.Writer
+	LogOut      io.Writer
+	StdinChan   <-chan byte
+	CurlyEscape bool
 
 	// Hatvan Disk I/O ($FF10..$FF17)
 	DiskDrive   byte     // $FF10
@@ -226,7 +227,13 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 	switch addr {
 	case 0xFF00: // Term.Out (putchar)
 		if b.ConsoleOut != nil {
-			b.ConsoleOut.Write([]byte{val})
+			if val == 10 || val == 13 {
+				b.ConsoleOut.Write([]byte{'\n'})
+			} else if b.CurlyEscape && !(val >= 32 && val <= 126) {
+				fmt.Fprintf(b.ConsoleOut, "{%d}", val)
+			} else {
+				b.ConsoleOut.Write([]byte{val})
+			}
 		}
 
 	case 0xFF01: // Term.In (read only)

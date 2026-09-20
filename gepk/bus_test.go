@@ -1,6 +1,7 @@
 package gepk
 
 import (
+	"bytes"
 	"testing"
 )
 
@@ -188,3 +189,41 @@ func TestBusDMAEngine(t *testing.T) {
 		t.Fatalf("Task 2 [0x2003] = 0x%02X, want 0x44", b)
 	}
 }
+
+func TestBusCurlyEscapeAndNewline(t *testing.T) {
+	bus := NewBus()
+	bus.CurrentFC = FCSupervisorData
+	outBuf := new(bytes.Buffer)
+	bus.ConsoleOut = outBuf
+
+	// Without CurlyEscape:
+	// Newline translation (13 -> \n, 10 -> \n)
+	bus.WriteByte(0x00FF0000, 13)
+	bus.WriteByte(0x00FF0000, 10)
+	bus.WriteByte(0x00FF0000, 'A')
+	bus.WriteByte(0x00FF0000, 7)
+	if got := outBuf.String(); got != "\n\nA\x07" {
+		t.Fatalf("expected \\n\\nA\\x07, got %q", got)
+	}
+
+	// With CurlyEscape:
+	outBuf.Reset()
+	bus.CurlyEscape = true
+	bus.WriteByte(0x00FF0000, 13)
+	bus.WriteByte(0x00FF0000, 10)
+	bus.WriteByte(0x00FF0000, ' ')
+	bus.WriteByte(0x00FF0000, 'Z')
+	bus.WriteByte(0x00FF0000, '~')
+	bus.WriteByte(0x00FF0000, 0)
+	bus.WriteByte(0x00FF0000, 7)
+	bus.WriteByte(0x00FF0000, 8)
+	bus.WriteByte(0x00FF0000, 27)
+	bus.WriteByte(0x00FF0000, 127)
+	bus.WriteByte(0x00FF0000, 255)
+
+	expected := "\n\n Z~{0}{7}{8}{27}{127}{255}"
+	if got := outBuf.String(); got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
+	}
+}
+
