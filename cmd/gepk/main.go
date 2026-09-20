@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -30,8 +31,9 @@ var (
 	task2Flag       = flag.String("task2", "", "optional binary (S-Record) to load into Task 2")
 	baseAddrFlag    = flag.Uint("base", 0, "base memory address for raw binary image (default 0)")
 	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
-	curlyEscapeFlag = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
-	traceTrapFlag   = flag.Bool("trace-trap", false, "print TRAP #0 system call trace to stderr")
+	curlyEscapeFlag   = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
+	traceTrapFlag     = flag.Bool("trace-trap", false, "print TRAP #0 system call trace to stderr")
+	sharedCurtainFlag = flag.String("shared-curtain", "0x00FE0000", "shared memory curtain address for tasks 0, 1, and 2")
 )
 
 func main() {
@@ -55,6 +57,13 @@ func main() {
 
 	// 1. Initialize Bus and CPU
 	bus := gepk.NewBus()
+	if *sharedCurtainFlag != "" {
+		s := strings.TrimPrefix(*sharedCurtainFlag, "0x")
+		s = strings.TrimPrefix(s, "$")
+		if v, err := strconv.ParseUint(s, 16, 32); err == nil {
+			bus.SharedMemoryCurtain = uint32(v)
+		}
+	}
 	bus.CurlyEscape = *curlyEscapeFlag
 	cpu := gepk.NewCPU(bus)
 

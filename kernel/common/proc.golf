@@ -115,13 +115,17 @@ func ProcInit() {
 	if hal.ARCH == '9' {
 		ProcTable[0].SavedSP = 0x3800
 	}
-	klib.strcpy(&ProcTable[0].CmdName[0], (*byte)("kernel"))
+	klib.strcpy(&ProcTable[0].CmdName[0], (*byte)("[hatvan-kernel]"))
 
 	// Process 1 is Task 1 ([RBF])
 	ProcTable[1].State = PROC_WAITING
 	ProcTable[1].ParentPID = 0
 	ProcTable[1].TaskID = 1
-	ProcTable[1].SavedSP = 0xFE00
+	if hal.ARCH == '9' {
+		ProcTable[1].SavedSP = 0x3F00
+	} else {
+		ProcTable[1].SavedSP = 0x0007FE00
+	}
 	klib.strcpy(&ProcTable[1].CmdName[0], (*byte)("[RBF]"))
 	hal.SetTaskFlags(1, 1)
 	if hal.ARCH == '9' {
@@ -134,7 +138,11 @@ func ProcInit() {
 	ProcTable[2].State = PROC_WAITING
 	ProcTable[2].ParentPID = 0
 	ProcTable[2].TaskID = 2
-	ProcTable[2].SavedSP = 0xFE00
+	if hal.ARCH == '9' {
+		ProcTable[2].SavedSP = 0x3F00
+	} else {
+		ProcTable[2].SavedSP = 0x0007FE00
+	}
 	klib.strcpy(&ProcTable[2].CmdName[0], (*byte)("[PROCFS]"))
 	hal.SetTaskFlags(2, 1)
 	if hal.ARCH == '9' {

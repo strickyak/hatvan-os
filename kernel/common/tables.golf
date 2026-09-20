@@ -1,0 +1,38 @@
+package tables
+
+import "hal"
+import "proc"
+
+// SharedTables resides at the SharedMemoryCurtain address:
+// $E000 on M6809, $00FE0000 on M68000.
+// Tasks 0, 1, and 2 all share this memory region.
+type SharedTables struct {
+	CurrentPID    byte
+	Pad           byte
+	RBFMailbox    [64]byte
+	ProcfsMailbox [64]byte
+	ProcTable     [proc.MAX_PROCS]proc.Process
+}
+
+var Shared *SharedTables
+var Size word
+
+func Init() {
+	Size = sizeof[SharedTables]()
+	Shared = (*SharedTables)(hal.SHARED_MEM_CURTAIN)
+
+	vmCurtain := hal.GetSharedCurtain()
+	if vmCurtain != 0 && vmCurtain != hal.SHARED_MEM_CURTAIN {
+		panic("Shared memory curtain mismatch between kernel and VM")
+	}
+
+	if hal.ARCH == '9' {
+		if Size > (0xFF00 - hal.SHARED_MEM_CURTAIN) {
+			panic("SharedTables exceeds shared memory curtain on M6809")
+		}
+	} else {
+		if Size > (0x00FF0000 - hal.SHARED_MEM_CURTAIN) {
+			panic("SharedTables exceeds shared memory curtain on M68k")
+		}
+	}
+}

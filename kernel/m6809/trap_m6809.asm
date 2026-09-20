@@ -297,13 +297,13 @@ f_hal__InitRBF:
     ldd 2,s
     std rbf_init_frame+10
 
-    ; DMA initial 12-byte RTI frame to Task 1 at $FDF4
+    ; DMA initial 12-byte RTI frame to Task 1 at $3EF4
     clr $FF21
     ldd #rbf_init_frame
     std $FF22
     lda #1
     sta $FF24
-    ldd #$FDF4
+    ldd #$3EF4
     std $FF25
     ldb #12
     stb $FF27
@@ -311,8 +311,8 @@ f_hal__InitRBF:
     ldb $FF27
     beq .rbf_init_dma
 
-    ; user_sp_table[1] = $FDF4
-    ldd #$FDF4
+    ; user_sp_table[1] = $3EF4
+    ldd #$3EF4
     ldy #user_sp_table
     std 2,y
 
@@ -361,13 +361,13 @@ f_hal__InitProcfs:
     ldd 2,s
     std procfs_init_frame+10
 
-    ; DMA initial 12-byte RTI frame to Task 2 at $FDF4
+    ; DMA initial 12-byte RTI frame to Task 2 at $3EF4
     clr $FF21
     ldd #procfs_init_frame
     std $FF22
     lda #2
     sta $FF24
-    ldd #$FDF4
+    ldd #$3EF4
     std $FF25
     ldb #12
     stb $FF27
@@ -375,8 +375,8 @@ f_hal__InitProcfs:
     ldb $FF27
     beq .procfs_init_dma
 
-    ; user_sp_table[2] = $FDF4
-    ldd #$FDF4
+    ; user_sp_table[2] = $3EF4
+    ldd #$3EF4
     ldy #user_sp_table
     std 4,y
 

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -57,6 +59,9 @@ type Bus struct {
 	TaskFlagsTarget byte // $FF2D: target task to configure (default: 1)
 	TaskFlags       [256]byte
 
+	// Tunable shared memory curtain ($E000 by default) for Tasks 0, 1, 2
+	SharedMemoryCurtain uint16
+
 	// Callback when IRQ line state changes
 	OnIRQChanged func(asserted bool)
 
@@ -67,11 +72,18 @@ type Bus struct {
 
 // NewBus constructs an initialized Bus with all memory zeroed.
 func NewBus() *Bus {
+	curtain := uint16(0xE000)
+	if s := os.Getenv("HATVAN_SHARED_CURTAIN"); s != "" {
+		if v, err := strconv.ParseUint(strings.TrimPrefix(s, "0x"), 16, 16); err == nil {
+			curtain = uint16(v)
+		}
+	}
 	return &Bus{
-		CurrentTask:     0,
-		TaskFlagsTarget: 1,
-		ConsoleOut:      os.Stdout,
-		LogOut:          os.Stderr,
+		CurrentTask:         0,
+		TaskFlagsTarget:     1,
+		SharedMemoryCurtain: curtain,
+		ConsoleOut:          os.Stdout,
+		LogOut:              os.Stderr,
 	}
 }
 
@@ -86,6 +98,11 @@ func (b *Bus) ReadByte(addr uint16) byte {
 			return b.readIO(addr)
 		}
 		panic(fmt.Errorf("%w: read at 0x%04X in task %d", ErrUserAccessTrap, addr, b.CurrentTask))
+	}
+
+	// Shared Memory Curtain for Tasks 0, 1, and 2
+	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && b.CurrentTask <= 2 {
+		return b.Memory[0][addr]
 	}
 
 	return b.Memory[b.CurrentTask][addr]
@@ -103,6 +120,12 @@ func (b *Bus) WriteByte(addr uint16, val byte) {
 			return
 		}
 		panic(fmt.Errorf("%w: write at 0x%04X in task %d", ErrUserAccessTrap, addr, b.CurrentTask))
+	}
+
+	// Shared Memory Curtain for Tasks 0, 1, and 2
+	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && b.CurrentTask <= 2 {
+		b.Memory[0][addr] = val
+		return
 	}
 
 	b.Memory[b.CurrentTask][addr] = val
@@ -208,6 +231,11 @@ func (b *Bus) readIO(addr uint16) byte {
 		b.DmaStatus = 0 // Reset on read
 		return st
 
+	case 0xFF28:
+		return byte(b.SharedMemoryCurtain >> 8)
+	case 0xFF29:
+		return byte(b.SharedMemoryCurtain)
+
 	case 0xFF2D:
 		return b.TaskFlagsTarget
 	case 0xFF2E: // TaskFlagsRegister
@@ -300,6 +328,11 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 		b.DmaDstAddr = (b.DmaDstAddr & 0xFF00) | uint16(val)
 	case 0xFF27: // DMA Copy command: length 1..255, 0 = 256
 		b.executeDMACopy(val)
+
+	case 0xFF28:
+		b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0x00FF) | (uint16(val) << 8)
+	case 0xFF29:
+		b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0xFF00) | uint16(val)
 
 	case 0xFF2D: // TaskFlagsTarget: target task to configure
 		b.TaskFlagsTarget = val
@@ -453,6 +486,21 @@ func (b *Bus) executeDiskCommand(cmd byte) {
 	}
 }
 
+func (b *Bus) readTaskByte(task byte, addr uint16) byte {
+	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && addr < 0xFF00 && task <= 2 {
+		return b.Memory[0][addr]
+	}
+	return b.Memory[task][addr]
+}
+
+func (b *Bus) writeTaskByte(task byte, addr uint16, val byte) {
+	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && addr < 0xFF00 && task <= 2 {
+		b.Memory[0][addr] = val
+		return
+	}
+	b.Memory[task][addr] = val
+}
+
 func (b *Bus) executeDMACopy(lengthByte byte) {
 	count := int(lengthByte)
 	if count == 0 {
@@ -465,8 +513,8 @@ func (b *Bus) executeDMACopy(lengthByte byte) {
 	dstAddr := b.DmaDstAddr
 
 	for i := 0; i < count; i++ {
-		val := b.Memory[srcTask][srcAddr+uint16(i)]
-		b.Memory[dstTask][dstAddr+uint16(i)] = val
+		val := b.readTaskByte(srcTask, srcAddr+uint16(i))
+		b.writeTaskByte(dstTask, dstAddr+uint16(i), val)
 	}
 
 	b.DmaStatus = 1 // OKAY

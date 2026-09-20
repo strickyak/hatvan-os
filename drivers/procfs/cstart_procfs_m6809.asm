@@ -6,7 +6,7 @@
     org $4000
 
 cstart:
-    lds #$FE00
+    lds #$3F00
     clra
     tfr a,dp
     lbsr _main

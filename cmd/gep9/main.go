@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,8 +29,9 @@ var (
 	task2Flag       = flag.String("task2", "", "optional binary (DECB) to load into Task 2")
 	hypercallsFlag  = flag.Bool("hypercalls", false, "enable GOMAR-compatible hypercall traps ($12,$21,<hop>)")
 	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
-	curlyEscapeFlag = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
-	traceTrapFlag   = flag.Bool("trace-trap", false, "print system call trap trace to stderr")
+	curlyEscapeFlag   = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
+	traceTrapFlag     = flag.Bool("trace-trap", false, "print system call trap trace to stderr")
+	sharedCurtainFlag = flag.String("shared-curtain", "0xE000", "shared memory curtain address for tasks 0, 1, and 2")
 )
 
 func main() {
@@ -59,6 +61,13 @@ func main() {
 
 	// 1. Initialize Bus and CPU
 	bus := gep9.NewBus()
+	if *sharedCurtainFlag != "" {
+		s := strings.TrimPrefix(*sharedCurtainFlag, "0x")
+		s = strings.TrimPrefix(s, "$")
+		if v, err := strconv.ParseUint(s, 16, 16); err == nil {
+			bus.SharedMemoryCurtain = uint16(v)
+		}
+	}
 	bus.CurlyEscape = *curlyEscapeFlag
 	cpu := gep9.NewCPU(bus)
 	cpu.EnableHypercalls = *hypercallsFlag

@@ -7,8 +7,10 @@ import "path"
 import "proc"
 import "syscall"
 import "sh"
+import "tables"
 
 func main() {
+	tables.Init()
 	dev.KLog((*byte)("Hatvan OS"))
 
 	proc.ProcInit()

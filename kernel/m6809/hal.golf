@@ -1,6 +1,7 @@
 package hal
 
 const ARCH = '9'
+const SHARED_MEM_CURTAIN = 0xE000
 
 // Hardware ports for M6809 Hatvan VM ($FF00 page in Task 0)
 const PORT_TERMOUT = 0xFF00
@@ -25,10 +26,17 @@ const PORT_DMASRCADDR = 0xFF22 // 2 bytes (Hi, Lo)
 const PORT_DMADSTTASK = 0xFF24
 const PORT_DMADSTADDR = 0xFF25 // 2 bytes (Hi, Lo)
 const PORT_DMACNT = 0xFF27
+const PORT_SHAREDCURTAIN = 0xFF28 // 2 bytes (Hi, Lo)
 
 const PORT_TASKFLAGSTASK = 0xFF2D
 const PORT_TASKFLAGS = 0xFF2E
 const PORT_PURGETASKMEM = 0xFF2F
+
+func GetSharedCurtain() word {
+	hi := word(vpeekb(PORT_SHAREDCURTAIN))
+	lo := word(vpeekb(PORT_SHAREDCURTAIN + 1))
+	return (hi << 8) | lo
+}
 
 func PutChar(b byte) {
 	vpokeb(PORT_TERMOUT, b)

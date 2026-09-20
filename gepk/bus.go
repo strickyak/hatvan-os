@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -93,18 +95,32 @@ type Bus struct {
 	TaskFlagsTarget byte
 	TaskFlags       [256]byte
 
+	// Tunable shared memory curtain ($00FE0000 by default) for Tasks 0, 1, 2
+	SharedMemoryCurtain uint32
+
 	// Callback when highest active interrupt level changes (0 = none, 1..7)
 	OnInterruptLevelChanged func(level uint8)
 }
 
 // NewBus constructs an initialized Bus with Task 0 allocated.
 func NewBus() *Bus {
+	curtain := uint32(0x00FE0000)
+	if s := os.Getenv("HATVAN_SHARED_CURTAIN_68K"); s != "" {
+		if v, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "$"), 16, 32); err == nil {
+			curtain = uint32(v)
+		}
+	} else if s := os.Getenv("HATVAN_SHARED_CURTAIN"); s != "" {
+		if v, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "$"), 16, 32); err == nil {
+			curtain = uint32(v)
+		}
+	}
 	b := &Bus{
-		CurrentFC:       FCSupervisorProg,
-		TaskReg:         1,
-		TaskFlagsTarget: 1,
-		ConsoleOut:      os.Stdout,
-		LogOut:          os.Stderr,
+		CurrentFC:           FCSupervisorProg,
+		TaskReg:             1,
+		TaskFlagsTarget:     1,
+		SharedMemoryCurtain: curtain,
+		ConsoleOut:          os.Stdout,
+		LogOut:              os.Stderr,
 	}
 	for i := range b.Tasks {
 		b.Tasks[i] = &TaskMemory{}
@@ -191,6 +207,9 @@ func (b *Bus) readByteLocked(addr uint32) byte {
 			}
 			panic(fmt.Errorf("%w: user read at 0x%06X in task %d", ErrUserAccessTrap, addr, b.TaskReg))
 		}
+		if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && b.TaskReg <= 2 {
+			return b.Tasks[0].readByte(addr)
+		}
 		return b.Tasks[b.TaskReg].readByte(addr)
 	}
 
@@ -209,6 +228,9 @@ func (b *Bus) ReadUserByte(task uint8, addr uint32) byte {
 	if addr >= 0x00FF0000 {
 		return 0
 	}
+	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && task <= 2 {
+		return b.Tasks[0].readByte(addr)
+	}
 	return b.Tasks[task].readByte(addr)
 }
 
@@ -223,6 +245,10 @@ func (b *Bus) writeByteLocked(addr uint32, val byte) {
 				return
 			}
 			panic(fmt.Errorf("%w: user write at 0x%06X in task %d", ErrUserAccessTrap, addr, b.TaskReg))
+		}
+		if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && b.TaskReg <= 2 {
+			b.Tasks[0].writeByte(addr, val)
+			return
 		}
 		b.Tasks[b.TaskReg].writeByte(addr, val)
 		return
@@ -371,6 +397,17 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 			return byte(st)
 		}
 		return byte(b.DmaStatus >> 8)
+
+	case 0x00FF0034: // SharedMemoryCurtain (MSW)
+		if isOdd {
+			return byte(b.SharedMemoryCurtain >> 16)
+		}
+		return byte(b.SharedMemoryCurtain >> 24)
+	case 0x00FF0036: // SharedMemoryCurtain (LSW)
+		if isOdd {
+			return byte(b.SharedMemoryCurtain)
+		}
+		return byte(b.SharedMemoryCurtain >> 8)
 
 	case 0x00FF005A: // TaskFlagsTarget (0x00FF005A or 0x00FF005B)
 		return b.TaskFlagsTarget
@@ -525,6 +562,19 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 	case 0x00FF0032: // DMA.CmdSt
 		if val != 0 {
 			b.executeDMACopy()
+		}
+
+	case 0x00FF0034: // SharedMemoryCurtain (MSW)
+		if isOdd {
+			b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0xFF00FFFF) | (uint32(val) << 16)
+		} else {
+			b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0x00FFFFFF) | (uint32(val) << 24)
+		}
+	case 0x00FF0036: // SharedMemoryCurtain (LSW)
+		if isOdd {
+			b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0xFFFFFF00) | uint32(val)
+		} else {
+			b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0xFFFF00FF) | (uint32(val) << 8)
 		}
 
 	case 0x00FF005A: // TaskFlagsTarget (0x00FF005A or 0x00FF005B)
@@ -690,9 +740,23 @@ func (b *Bus) executeDMACopy() {
 	srcAddr := b.DmaSrcAddr
 	dstAddr := b.DmaDstAddr
 
+	readTaskByte := func(task uint8, addr uint32) byte {
+		if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && addr < 0x00FF0000 && task <= 2 {
+			return b.Tasks[0].readByte(addr)
+		}
+		return b.Tasks[task].readByte(addr)
+	}
+	writeTaskByte := func(task uint8, addr uint32, val byte) {
+		if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && addr < 0x00FF0000 && task <= 2 {
+			b.Tasks[0].writeByte(addr, val)
+			return
+		}
+		b.Tasks[task].writeByte(addr, val)
+	}
+
 	for i := 0; i < count; i++ {
-		val := b.Tasks[srcTask].readByte(srcAddr + uint32(i))
-		b.Tasks[dstTask].writeByte(dstAddr+uint32(i), val)
+		val := readTaskByte(srcTask, srcAddr+uint32(i))
+		writeTaskByte(dstTask, dstAddr+uint32(i), val)
 	}
 
 	b.DmaStatus = 1 // OKAY
