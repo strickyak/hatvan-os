@@ -4,6 +4,7 @@ import "hal"
 
 const MAX_PROCS = 16
 const PROC_MAX_PATHS = 16
+const MAX_PATHS = 16
 
 type Process struct {
 	PID         byte
@@ -29,6 +30,19 @@ type Process struct {
 	CmdName     [16]byte
 }
 
+type PathDesc struct {
+	RefCount  byte
+	DevType   byte
+	Drive     byte
+	Mode      byte
+	FilePos   word
+	FileSize  word
+	FDLSN     word
+	BufLSN    word
+	BufDirty  byte
+	SectorBuf [256]byte
+}
+
 // SharedTables resides at the SharedMemoryCurtain address:
 // $E000 on M6809, $00FE0000 on M68000.
 // Tasks 0, 1, and 2 all share this memory region.
@@ -38,6 +52,7 @@ type SharedTables struct {
 	RBFMailbox    [64]byte
 	ProcfsMailbox [64]byte
 	ProcTable     [MAX_PROCS]Process
+	PathTable     [MAX_PATHS]PathDesc
 }
 
 var Shared *SharedTables

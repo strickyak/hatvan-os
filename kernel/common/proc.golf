@@ -182,7 +182,7 @@ func ProcAlloc(parentPID byte) (byte, *tables.Process) {
 					parentPathId := parent.Paths[sp]
 					if parentPathId != 0xFF && parentPathId < path.MAX_PATHS {
 						p.Paths[sp] = parentPathId
-						path.PathTable[parentPathId].RefCount++
+						path.GetPath(parentPathId).RefCount++
 					}
 				}
 			}
@@ -235,7 +235,7 @@ func ProcOpen(pid byte, pathStr *byte, mode byte) (byte, byte) {
 		return 0xFF, err
 	}
 
-	if path.PathTable[pathId].DevType == dev.DEV_PROC {
+	if path.GetPath(pathId).DevType == dev.DEV_PROC {
 		perr := ProcfsOpen(pathId, pathStr)
 		if perr != 0 {
 			path.SysClose(pathId)
@@ -725,7 +725,7 @@ func ProcfsOpen(pathId byte, pathStr *byte) byte {
 		return err
 	}
 
-	pd := &path.PathTable[pathId]
+	pd := path.GetPath(pathId)
 	pd.FileSize = fileSize
 	pd.FilePos = 0
 	return 0

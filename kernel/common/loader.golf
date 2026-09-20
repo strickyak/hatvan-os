@@ -99,7 +99,7 @@ func LoadDECB(pathId byte, targetTask byte) (word, word, byte) {
 		} else {
 			// Unrecognized or extended debug chunks (source lines, symbols): skip payload
 			if chunkLen > 0 {
-				curPos := path.PathTable[pathId].FilePos
+				curPos := path.GetPath(pathId).FilePos
 				path.SysSeek(pathId, curPos+chunkLen)
 			}
 		}

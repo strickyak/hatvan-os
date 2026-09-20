@@ -455,7 +455,7 @@ func Dispatch(callNum byte) {
 			UserFrame.CC |= 1
 			return
 		}
-		pd := &path.PathTable[pathId]
+		pd := path.GetPath(pathId)
 
 		code := UserFrame.B
 		if code == 0x26 { // SS.ScSiz (screen size)

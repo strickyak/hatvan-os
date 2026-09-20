@@ -5,6 +5,7 @@ import "klib"
 import "rbf_ipc"
 import "procfs_ipc"
 import "dev"
+import "tables"
 
 const MAX_PATHS = 16
 
@@ -21,36 +22,26 @@ const E_BPNUM = 217  // Bad path number
 const E_PTHFUL = 218 // Path table full
 const E_READ = 244   // Read error
 
-type PathDesc struct {
-	RefCount  byte
-	DevType   byte
-	Drive     byte
-	Mode      byte
-	FilePos   word
-	FileSize  word
-	FDLSN     word
-	BufLSN    word
-	BufDirty  byte
-	SectorBuf [256]byte
+func GetPath(pathId byte) *tables.PathDesc {
+	return &tables.Shared.PathTable[pathId]
 }
 
-var PathTable [MAX_PATHS]PathDesc
-
-// PathInit initializes the global open path table
+// PathInit initializes the global open path table in shared memory
 func PathInit() {
 	for i := word(0); i < MAX_PATHS; i++ {
-		PathTable[i].RefCount = 0
-		PathTable[i].DevType = dev.DEV_NONE
-		PathTable[i].BufLSN = 0xFFFF
-		PathTable[i].BufDirty = 0
+		p := &tables.Shared.PathTable[i]
+		p.RefCount = 0
+		p.DevType = dev.DEV_NONE
+		p.BufLSN = 0xFFFF
+		p.BufDirty = 0
 	}
 }
 
 // PathAlloc finds an available slot in PathTable
-func PathAlloc() (byte, *PathDesc) {
+func PathAlloc() (byte, *tables.PathDesc) {
 	for i := word(0); i < MAX_PATHS; i++ {
-		if PathTable[i].RefCount == 0 {
-			pd := &PathTable[i]
+		if tables.Shared.PathTable[i].RefCount == 0 {
+			pd := &tables.Shared.PathTable[i]
 			pd.RefCount = 1
 			pd.DevType = dev.DEV_NONE
 			pd.FilePos = 0
@@ -61,7 +52,7 @@ func PathAlloc() (byte, *PathDesc) {
 			return byte(i), pd
 		}
 	}
-	return 0xFF, (*PathDesc)(0)
+	return 0xFF, (*tables.PathDesc)(0)
 }
 
 // PathFree decrements the reference count and frees the slot when zero
@@ -69,7 +60,7 @@ func PathFree(pathId byte) {
 	if pathId >= MAX_PATHS {
 		return
 	}
-	pd := &PathTable[pathId]
+	pd := &tables.Shared.PathTable[pathId]
 	if pd.RefCount > 0 {
 		pd.RefCount--
 		if pd.RefCount == 0 {
@@ -173,7 +164,7 @@ func SysDelete(task byte, pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN 
 
 // SysClose closes an open path descriptor
 func SysClose(pathId byte) byte {
-	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
 		return E_BPNUM
 	}
 	PathFree(pathId)
@@ -182,19 +173,19 @@ func SysClose(pathId byte) byte {
 
 // SysDup duplicates an open path descriptor by incrementing its reference count
 func SysDup(pathId byte) byte {
-	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
 		return E_BPNUM
 	}
-	PathTable[pathId].RefCount++
+	tables.Shared.PathTable[pathId].RefCount++
 	return 0
 }
 
 // SysRead reads up to count bytes from pathId into ubuf in task space
 func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
-	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
 		return 0, E_BPNUM
 	}
-	pd := &PathTable[pathId]
+	pd := &tables.Shared.PathTable[pathId]
 	if (pd.Mode&(MODE_READ|MODE_EXEC)) == 0 && pd.DevType != dev.DEV_TERM {
 		return 0, E_BMODE
 	}
@@ -243,10 +234,10 @@ func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 
 // SysWrite writes count bytes from ubuf in task space to pathId
 func SysWrite(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
-	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
 		return 0, E_BPNUM
 	}
-	pd := &PathTable[pathId]
+	pd := &tables.Shared.PathTable[pathId]
 	if (pd.Mode&MODE_WRITE) == 0 && pd.DevType != dev.DEV_TERM && pd.DevType != dev.DEV_LOG {
 		return 0, E_BMODE
 	}
@@ -280,10 +271,10 @@ func SysWrite(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
 
 // SysSeek sets the byte position of an open file
 func SysSeek(pathId byte, offset word) byte {
-	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
 		return E_BPNUM
 	}
-	pd := &PathTable[pathId]
+	pd := &tables.Shared.PathTable[pathId]
 	if pd.DevType != dev.DEV_DISK && pd.DevType != dev.DEV_PROC {
 		return E_BMODE
 	}
@@ -298,10 +289,10 @@ func SysSeek(pathId byte, offset word) byte {
 
 // SysReadLn reads a line of text, terminating on \r or \n
 func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (word, byte) {
-	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
 		return 0, E_BPNUM
 	}
-	pd := &PathTable[pathId]
+	pd := &tables.Shared.PathTable[pathId]
 
 	if pd.DevType == dev.DEV_TERM {
 		n := dev.TermReadLn(task, word(ubuf), maxLen, lineMode)
@@ -363,10 +354,10 @@ func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (
 
 // SysWritLn writes a line from ubuf up to count bytes or until \r or \n
 func SysWritLn(pathId byte, task byte, ubuf *byte, count word, lineMode byte) (word, byte) {
-	if pathId >= MAX_PATHS || PathTable[pathId].RefCount == 0 {
+	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
 		return 0, E_BPNUM
 	}
-	pd := &PathTable[pathId]
+	pd := &tables.Shared.PathTable[pathId]
 	if (pd.Mode&MODE_WRITE) == 0 && pd.DevType != dev.DEV_TERM && pd.DevType != dev.DEV_LOG {
 		return 0, E_BMODE
 	}
