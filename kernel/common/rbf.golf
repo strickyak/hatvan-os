@@ -761,11 +761,7 @@ func RBFWriteFile(drive byte, fdLSN word, filePos word, srcTask byte, srcAddr wo
 				}
 			}
 
-			if srcTask == 1 {
-				klib.memcpy((*byte)(word(&rbfSectorBuf[0])+secOff), (*byte)(srcAddr+bytesDone), chunk)
-			} else {
-				hal.DMACopy(srcTask, srcAddr+bytesDone, 1, word(&rbfSectorBuf[0])+secOff, chunk)
-			}
+			hal.DMACopy(srcTask, srcAddr+bytesDone, 1, word(&rbfSectorBuf[0])+secOff, chunk)
 
 			st = hal.DiskTransfer(drive, physLSN, 1, word(&rbfSectorBuf[0]), 1)
 			if st != 1 {

@@ -23,8 +23,9 @@ const F_PRSNAM = 0x10 // F$PrsNam
 const F_TIME = 0x15   // F$Time
 
 const I_DUP = 0x82    // I$Dup
+const I_CREATE = 0x83 // I$Create
 const I_OPEN = 0x84   // I$Open
-const I_CREATE = 0x85 // I$Create
+const I_MAKDIR = 0x85 // I$MakDir
 const I_CHGDIR = 0x86 // I$ChgDir
 const I_DELETE = 0x87 // I$Delete
 const I_SEEK = 0x88   // I$Seek
@@ -57,13 +58,23 @@ func SyscallInit() {
 }
 
 // CopyUserString copies a string from user task space into kernel buffer.
-// Stops at NUL, CR, LF, space, comma, or high-bit terminated character. Returns string length.
+// Skips leading spaces and commas. Stops at NUL, CR, LF, space, comma, or high-bit terminated character.
+// Returns total consumed bytes from userAddr.
 func CopyUserString(task byte, userAddr word, dst *byte, maxLen word) word {
+	uAddr := userAddr
+	for (uAddr - userAddr) < maxLen {
+		c := byte(0)
+		hal.DMACopy(task, uAddr, 0, word(&c), 1)
+		if c != ' ' && c != ',' {
+			break
+		}
+		uAddr++
+	}
 	count := word(0)
 	dstAddr := word(dst)
 	for count < maxLen-1 {
 		c := byte(0)
-		hal.DMACopy(task, userAddr+count, 0, word(&c), 1)
+		hal.DMACopy(task, uAddr+count, 0, word(&c), 1)
 		if c == 0 || c == '\r' || c == '\n' || c == ' ' || c == ',' {
 			break
 		}
@@ -76,7 +87,7 @@ func CopyUserString(task byte, userAddr word, dst *byte, maxLen word) word {
 		count++
 	}
 	pokeb(dstAddr+count, 0)
-	return count
+	return (uAddr - userAddr) + count
 }
 
 // CopyUserParams copies parameter bytes from user task space into kernel buffer
@@ -471,6 +482,37 @@ func Dispatch(callNum byte) {
 			} else {
 				UserFrame.CC &^= 1
 			}
+			return
+		}
+
+		if code == 0x0E { // SS.DevNm (return device name)
+			var devBuf [8]byte
+			dlen := word(0)
+			if pd.DevType == dev.DEV_DISK {
+				devBuf[0] = 'd'
+				devBuf[1] = ('0' + pd.Drive) | 0x80
+				dlen = 2
+			} else if pd.DevType == dev.DEV_TERM {
+				devBuf[0] = 't'
+				devBuf[1] = 'e'
+				devBuf[2] = 'r'
+				devBuf[3] = 'm' | 0x80
+				dlen = 4
+			} else if pd.DevType == dev.DEV_PROC {
+				devBuf[0] = 'p'
+				devBuf[1] = 'r'
+				devBuf[2] = 'o'
+				devBuf[3] = 'c' | 0x80
+				dlen = 4
+			} else {
+				devBuf[0] = 'n'
+				devBuf[1] = 'u'
+				devBuf[2] = 'l'
+				devBuf[3] = 'l' | 0x80
+				dlen = 4
+			}
+			hal.DMACopy(0, word(&devBuf[0]), curPID, UserFrame.X, dlen)
+			UserFrame.CC &^= 1
 			return
 		}
 
