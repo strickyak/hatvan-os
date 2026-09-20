@@ -1,0 +1,56 @@
+package main
+
+import "sys"
+
+func main() {
+	var dirpath [128]byte
+	plen := sys.CopyArg(&dirpath[0], 128)
+	var pathPtr *byte
+	if plen == 0 {
+		pathPtr = (*byte)(".")
+	} else {
+		pathPtr = &dirpath[0]
+	}
+
+	fd := sys.Open(pathPtr, sys.MODE_READ|sys.MODE_DIR)
+	if fd == 0xFF {
+		sys.PrintErr((*byte)("gdir: cannot open"))
+		sys.Exit(1)
+		return
+	}
+
+	var dirent [32]byte
+	var name [32]byte
+
+	for {
+		n := sys.Read(fd, &dirent[0], 32)
+		if n < 32 {
+			break
+		}
+
+		c0 := dirent[0]
+		if c0 == 0 || c0 == 0xE5 {
+			continue
+		}
+		if (c0 & 0x7F) == '.' {
+			continue
+		}
+
+		nameLen := word(0)
+		for nameLen < 29 {
+			ch := dirent[nameLen]
+			name[nameLen] = ch & 0x7F
+			nameLen++
+			if (ch & 0x80) != 0 {
+				break
+			}
+		}
+
+		name[nameLen] = '\n'
+		nameLen++
+		sys.WritLn(sys.STDOUT, &name[0], nameLen)
+	}
+
+	sys.Close(fd)
+	sys.Exit(0)
+}

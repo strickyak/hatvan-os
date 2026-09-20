@@ -267,6 +267,10 @@ trap_0:
     move.b  (sp), v_proc.CurrentPID
     addq.l  #2, sp
 
+    ; Restore caller USP from kernel stack
+    move.l  (sp)+, a0
+    move.l  a0, usp
+
     ; Restore TaskReg to caller PID
     move.b  v_proc.CurrentPID, $00FF0020
 
@@ -302,6 +306,10 @@ trap_0:
     move.b  (sp), v_proc.CurrentPID
     addq.l  #2, sp
 
+    ; Restore caller USP from kernel stack
+    move.l  (sp)+, a0
+    move.l  a0, usp
+
     ; Restore TaskReg to caller PID
     move.b  v_proc.CurrentPID, $00FF0020
 
@@ -334,6 +342,10 @@ f_hal__RBFCall:
     move.l  a4, -(sp)
     move.l  a5, -(sp)
     move.l  a6, -(sp)
+
+    ; Save caller USP onto kernel stack
+    move.l  usp, a0
+    move.l  a0, -(sp)
 
     ; Push caller PID onto kernel stack (word-aligned)
     subq.l  #2, sp
@@ -380,6 +392,10 @@ f_hal__ProcfsCall:
     move.l  a4, -(sp)
     move.l  a5, -(sp)
     move.l  a6, -(sp)
+
+    ; Save caller USP onto kernel stack
+    move.l  usp, a0
+    move.l  a0, -(sp)
 
     ; Push caller PID onto kernel stack (word-aligned)
     subq.l  #2, sp

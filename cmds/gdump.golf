@@ -1,0 +1,89 @@
+package main
+
+import "sys"
+
+func hexDigit(val byte) byte {
+	v := val & 0x0F
+	if v < 10 {
+		return '0' + v
+	}
+	return 'A' + (v - 10)
+}
+
+func main() {
+	var filename [128]byte
+	flen := sys.CopyArg(&filename[0], 128)
+	if flen == 0 {
+		sys.PrintErr((*byte)("Usage: gdump <file>"))
+		sys.Exit(1)
+		return
+	}
+
+	fd := sys.Open(&filename[0], sys.MODE_READ)
+	if fd == 0xFF {
+		sys.PrintErr((*byte)("gdump: cannot open"))
+		sys.Exit(1)
+		return
+	}
+
+	var data [16]byte
+	var line [80]byte
+	var offsetHi word = 0
+	var offsetLo word = 0
+
+	for {
+		n := sys.Read(fd, &data[0], 16)
+		if n == 0 {
+			break
+		}
+
+		idx := word(0)
+		line[idx] = hexDigit(byte(offsetHi >> 12))
+		idx++
+		line[idx] = hexDigit(byte(offsetHi >> 8))
+		idx++
+		line[idx] = hexDigit(byte(offsetHi >> 4))
+		idx++
+		line[idx] = hexDigit(byte(offsetHi))
+		idx++
+		line[idx] = hexDigit(byte(offsetLo >> 12))
+		idx++
+		line[idx] = hexDigit(byte(offsetLo >> 8))
+		idx++
+		line[idx] = hexDigit(byte(offsetLo >> 4))
+		idx++
+		line[idx] = hexDigit(byte(offsetLo))
+		idx++
+		line[idx] = ':'
+		idx++
+		line[idx] = ' '
+		idx++
+
+		for k := word(0); k < n; k++ {
+			b := data[k]
+			line[idx] = hexDigit(b >> 4)
+			idx++
+			line[idx] = hexDigit(b)
+			idx++
+			line[idx] = ' '
+			idx++
+		}
+
+		line[idx] = '\n'
+		idx++
+		sys.WritLn(sys.STDOUT, &line[0], idx)
+
+		oldLo := offsetLo
+		offsetLo += n
+		if offsetLo < oldLo {
+			offsetHi++
+		}
+
+		if n < 16 {
+			break
+		}
+	}
+
+	sys.Close(fd)
+	sys.Exit(0)
+}

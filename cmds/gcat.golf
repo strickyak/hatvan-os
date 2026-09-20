@@ -1,0 +1,32 @@
+package main
+
+import "sys"
+
+func main() {
+	var filename [128]byte
+	flen := sys.CopyArg(&filename[0], 128)
+	if flen == 0 {
+		sys.PrintErr((*byte)("Usage: gcat <file>"))
+		sys.Exit(1)
+		return
+	}
+
+	fd := sys.Open(&filename[0], sys.MODE_READ)
+	if fd == 0xFF {
+		sys.PrintErr((*byte)("gcat: cannot open"))
+		sys.Exit(1)
+		return
+	}
+
+	var buf [256]byte
+	for {
+		n := sys.ReadLn(fd, &buf[0], 255)
+		if n == 0 {
+			break
+		}
+		sys.WritLn(sys.STDOUT, &buf[0], n)
+	}
+
+	sys.Close(fd)
+	sys.Exit(0)
+}

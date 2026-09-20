@@ -1,0 +1,40 @@
+package main
+
+import "sys"
+
+func main() {
+	args := sys.Args()
+	if args == (*byte)(0) {
+		sys.Println((*byte)(""))
+		sys.Exit(0)
+		return
+	}
+
+	p := word(args)
+	// Skip leading spaces and commas
+	for peekb(p) == ' ' || peekb(p) == ',' {
+		p++
+	}
+
+	// If empty line, output newline and exit
+	c := peekb(p)
+	if c == 0 || c == '\r' || c == '\n' {
+		sys.Println((*byte)(""))
+		sys.Exit(0)
+		return
+	}
+
+	// Measure length until line terminator (\r, \n, or NUL)
+	start := p
+	for {
+		c = peekb(p)
+		if c == 0 || c == '\r' || c == '\n' {
+			break
+		}
+		p++
+	}
+	len := p - start
+
+	sys.Println((*byte)(start))
+	sys.Exit(0)
+}

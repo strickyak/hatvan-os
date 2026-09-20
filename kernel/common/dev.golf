@@ -11,8 +11,8 @@ const DEV_NULL = 3
 const DEV_DISK = 4
 const DEV_PROC = 5
 
-const TTY_RING_SIZE = 256
-var ttyRing [256]byte
+const TTY_RING_SIZE = 1024
+var ttyRing [1024]byte
 var ttyHead word
 var ttyTail word
 var TermWaitPID byte
@@ -24,7 +24,8 @@ func TermRxInterrupt() {
 	for hal.HasInput() {
 		nextHead := (ttyHead + 1) % TTY_RING_SIZE
 		if nextHead == ttyTail {
-			break
+			// Buffer full: drop oldest character so hardware Rx interrupt is de-asserted
+			ttyTail = (ttyTail + 1) % TTY_RING_SIZE
 		}
 		c := hal.GetChar()
 		if c == 0 {

@@ -9,9 +9,11 @@ PYTHON      ?= python3
 MINIGOLF_DIR ?= $(shell cd ../minigolf && pwd)
 MINIGOLF    ?= $(BUILD_DIR)/minigolf
 ASM68K      ?= $(BUILD_DIR)/asm68k
+ASM6809     ?= $(BUILD_DIR)/asm6809
 LWASM       ?= lwasm
 OS9         ?= os9
 SREC2DECB   := $(REPO_DIR)/scripts/srec2decb.py
+BUILD_CMD_SH := $(REPO_DIR)/build-cmd.sh
 
 # VM Targets
 VM_6809     := $(BUILD_DIR)/gep9
@@ -28,6 +30,9 @@ PROCFS_68K  := $(BUILD_DIR)/procfs_68k.srec
 # Command Targets
 CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod $(BUILD_DIR)/sh.mod
 CMDS_68K    := $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb $(BUILD_DIR)/catk.decb $(BUILD_DIR)/shk.decb
+GOLF_CMDS   := gecho gcat gdir gdump
+CMDS_GOLF_9 := $(patsubst %,$(REPO_DIR)/cmds/%.9.decb,$(GOLF_CMDS))
+CMDS_GOLF_K := $(patsubst %,$(REPO_DIR)/cmds/%.k.decb,$(GOLF_CMDS))
 
 # Disk Images
 DISK_IMAGE  := $(BUILD_DIR)/disk0.dsk
@@ -52,6 +57,9 @@ $(MINIGOLF): | $(BUILD_DIR)
 
 $(ASM68K): | $(BUILD_DIR)
 	cd $(MINIGOLF_DIR) && $(GO) build -o $(ASM68K) ./cmd/asm68k
+
+$(ASM6809): | $(BUILD_DIR)
+	cd $(MINIGOLF_DIR) && $(GO) build -o $(ASM6809) ./cmd/asm6809
 
 # --- Emulators ---
 vms: $(VM_6809) $(VM_68K)
@@ -164,7 +172,11 @@ $(BUILD_DIR)/procfs_68k.srec: $(BUILD_DIR)/full_procfs_68k.s $(ASM68K) | $(BUILD
 	$(ASM68K) -l $@.list -o $@ $<
 
 # --- Userland Commands ---
-cmds: $(CMDS_6809) $(CMDS_68K)
+cmds: $(CMDS_6809) $(CMDS_68K) $(CMDS_GOLF_9) $(CMDS_GOLF_K)
+
+# MiniGolf Userland Commands
+$(REPO_DIR)/cmds/%.9.decb $(REPO_DIR)/cmds/%.k.decb: $(REPO_DIR)/cmds/%.golf $(REPO_DIR)/cmds/lib/sys.golf $(REPO_DIR)/cmds/lib/cstart_6809.asm $(REPO_DIR)/cmds/lib/cstart_68k.s $(BUILD_CMD_SH) $(MINIGOLF) $(ASM68K) $(ASM6809) | $(BUILD_DIR)
+	$(BUILD_CMD_SH) $<
 
 $(BUILD_DIR)/echo.mod: $(REPO_DIR)/cmds/echo.asm | $(BUILD_DIR)
 	cd $(BUILD_DIR) && $(LWASM) --format=os9 --list=echo.list --map=echo.map -o echo.mod $<
@@ -224,23 +236,31 @@ $(BUILD_DIR)/shk.decb: $(BUILD_DIR)/shk.srec $(SREC2DECB) | $(BUILD_DIR)
 # --- OS-9 Disk Images ---
 disk: $(DISK_IMAGE) $(TEST_DISK)
 
-$(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(REPO_DIR)/cmds/os9-6809-level1.zip | $(BUILD_DIR)
+$(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(REPO_DIR)/cmds/os9-6809-level1.zip | $(BUILD_DIR)
 	rm -f $@ $(TEST_DISK)
 	$(OS9) format -e -n'HATVAN' -l'40000' $@
 	$(OS9) makdir $@,Cmds9
-	$(OS9) copy -r -l $(BUILD_DIR)/echo.mod $@,Cmds9/ECHO
-	$(OS9) copy -r -l $(BUILD_DIR)/cat.mod $@,Cmds9/CAT
-	$(OS9) copy -r -l $(BUILD_DIR)/sh.mod $@,Cmds9/SH
-	$(OS9) copy -r -l $(BUILD_DIR)/testcmd.mod $@,Cmds9/TESTCMD
-	$(OS9) copy -r -l $(BUILD_DIR)/testdecb.decb $@,Cmds9/TESTDECB
 	unzip -q -o $(REPO_DIR)/cmds/os9-6809-level1.zip -d $(BUILD_DIR)
 	for f in $(BUILD_DIR)/os9-6809-level1/*; do $(OS9) copy -r "$$f" $@,Cmds9; done
+	$(OS9) copy -r $(BUILD_DIR)/echo.mod $@,Cmds9/ECHO
+	$(OS9) copy -r $(BUILD_DIR)/cat.mod $@,Cmds9/CAT
+	$(OS9) copy -r $(BUILD_DIR)/sh.mod $@,Cmds9/SH
+	$(OS9) copy -r $(BUILD_DIR)/testcmd.mod $@,Cmds9/TESTCMD
+	$(OS9) copy -r $(BUILD_DIR)/testdecb.decb $@,Cmds9/TESTDECB
+	$(OS9) copy -r $(REPO_DIR)/cmds/gecho.9.decb $@,Cmds9/GECHO
+	$(OS9) copy -r $(REPO_DIR)/cmds/gcat.9.decb $@,Cmds9/GCAT
+	$(OS9) copy -r $(REPO_DIR)/cmds/gdir.9.decb $@,Cmds9/GDIR
+	$(OS9) copy -r $(REPO_DIR)/cmds/gdump.9.decb $@,Cmds9/GDUMP
 	$(OS9) makdir $@,CmdsK
-	$(OS9) copy -r -l $(BUILD_DIR)/echok.decb $@,CmdsK/ECHO
-	$(OS9) copy -r -l $(BUILD_DIR)/dirk.decb $@,CmdsK/DIR
-	$(OS9) copy -r -l $(BUILD_DIR)/dumpk.decb $@,CmdsK/DUMP
-	$(OS9) copy -r -l $(BUILD_DIR)/catk.decb $@,CmdsK/CAT
-	$(OS9) copy -r -l $(BUILD_DIR)/shk.decb $@,CmdsK/SH
+	$(OS9) copy -r $(BUILD_DIR)/echok.decb $@,CmdsK/ECHO
+	$(OS9) copy -r $(BUILD_DIR)/dirk.decb $@,CmdsK/DIR
+	$(OS9) copy -r $(BUILD_DIR)/dumpk.decb $@,CmdsK/DUMP
+	$(OS9) copy -r $(BUILD_DIR)/catk.decb $@,CmdsK/CAT
+	$(OS9) copy -r $(BUILD_DIR)/shk.decb $@,CmdsK/SH
+	$(OS9) copy -r $(REPO_DIR)/cmds/gecho.k.decb $@,CmdsK/GECHO
+	$(OS9) copy -r $(REPO_DIR)/cmds/gcat.k.decb $@,CmdsK/GCAT
+	$(OS9) copy -r $(REPO_DIR)/cmds/gdir.k.decb $@,CmdsK/GDIR
+	$(OS9) copy -r $(REPO_DIR)/cmds/gdump.k.decb $@,CmdsK/GDUMP
 	cp -f $@ $(TEST_DISK)
 
 $(TEST_DISK): $(DISK_IMAGE)
@@ -251,10 +271,11 @@ test: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_68K) -disk0=$(DISK_IMAGE) -input="exit\n" $(KERNEL_68K)
 
 test-interactive: $(BUILD_DIR) vms kernels cmds disk
-	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nECHO redirection works on 6809 > /d0/redir9.txt\nCAT /d0/redir9.txt\nSH\nhelp\nECHO nested shell 6809\nCAT /nonexistent\nECHO background 6809 &\nCAT /proc/p\nexit\nCAT /nonexistent\nexit\n" $(KERNEL_6809)
-	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHO hello from 68k userspace\nECHO redirection works on 68k > /d0/redirk.txt\nCAT /d0/redirk.txt\nSH\nhelp\nECHO nested shell 68k\nCAT /nonexistent\nECHO background 68k &\nCAT /proc/p\nexit\nCAT /nonexistent\nexit\n" $(KERNEL_68K)
+	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nECHO redirection works on 6809 > /d0/redir9.txt\nCAT /d0/redir9.txt\nGECHO hello from gecho 6809\nGCAT /d0/redir9.txt\nGDIR\nGDUMP /Cmds9/ECHO\nSH\nhelp\nECHO nested shell 6809\nCAT /nonexistent\nECHO background 6809 &\nCAT /proc/p\nexit\nCAT /nonexistent\nexit\n" $(KERNEL_6809)
+	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHO hello from 68k userspace\nECHO redirection works on 68k > /d0/redirk.txt\nCAT /d0/redirk.txt\nGECHO hello from gecho 68k\nGCAT /d0/redirk.txt\nGDIR\nGDUMP /CmdsK/ECHO\nSH\nhelp\nECHO nested shell 68k\nCAT /nonexistent\nECHO background 68k &\nCAT /proc/p\nexit\nCAT /nonexistent\nexit\n" $(KERNEL_68K)
 
 # --- Clean ---
 clean:
 	@mkdir -p $(BUILD_DIR)
 	find $(BUILD_DIR) -mindepth 1 -delete 2>/dev/null || rm -rf $(BUILD_DIR)/*
+	rm -f $(REPO_DIR)/cmds/*.9.decb $(REPO_DIR)/cmds/*.k.decb
