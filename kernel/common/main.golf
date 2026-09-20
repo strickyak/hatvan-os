@@ -195,7 +195,7 @@ func main() {
 	// 10. Resident Mini-Shell (Phase 5)
 	pShellPID, pShell := proc.ProcAlloc(0)
 	if pShellPID > 0 && pShell != (*proc.Process)(0) {
-		klib.strcpy(&pShell.CmdName[0], (*byte)("sh"))
+		klib.strcpy(&pShell.CmdName[0], (*byte)("builtin-shell"))
 		proc.ProcOpen(pShellPID, termPath, path.MODE_READ)
 		proc.ProcOpen(pShellPID, termPath, path.MODE_WRITE)
 		proc.ProcOpen(pShellPID, termPath, path.MODE_WRITE)

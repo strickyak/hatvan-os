@@ -6,6 +6,16 @@ This document captures prioritized feature candidates and future architectural m
 
 ## Completed Milestones
 
+### Option 1: Move Shell (`sh`) to User Space & Error Status Reporting (Completed)
+- **Achievements:**
+  - Renamed the kernel resident shell process from `sh` to `builtin-shell` in `/proc/p` across both 6809 and 68000 architectures.
+  - Implemented exit status reporting in both `builtin-shell` and the userland shells: commands exiting with non-zero status output `ERROR <code\n>`.
+  - Fixed 68000 kernel `F$Wait` status return register mapping in `kernel/m68k/trap_m68k.s` so `D0.B` correctly returns child exit status `UserFrame.B`.
+  - Added per-PID parent PID tracking tables (`saved_parent_pid_table_m68k`, `saved_kernel_sp_table_m68k`) in `kernel/m68k/trap_m68k.s` to support arbitrary levels of nested process execution (e.g. `builtin-shell` -> `SH` -> child commands).
+  - Created standalone userland shell command for Motorola 6809 (`cmds/sh.asm` as an OS-9 module) and Motorola 68000 (`cmds/shk.s` as a DECB32 binary).
+  - Wired build targets in `Makefile` to install `/d0/Cmds9/SH` and `/d0/CmdsK/SH` on the boot disk image `disk0.dsk`.
+  - Verified userland shell commands, builtins (`help`, `exit`, `cd`, `cx`), nested process hierarchy in `/proc/p`, and error reporting across both `gep9` and `gepk`.
+
 ### Option 3: Full RBF File Writing & File Creation (Completed)
 - **Achievements:**
   - Implemented allocation bitmap search, dynamic cluster allocation (`RBFAllocClusters`), and cluster deallocation (`RBFFreeClusters`) in `kernel/common/rbf.golf`.
@@ -20,13 +30,6 @@ This document captures prioritized feature candidates and future architectural m
 ---
 
 ## Active & Candidate Milestones
-
-### Option 1: Move Shell (`sh`) from Kernel to User Space
-- **Motivation:** `kernel/common/sh.golf` is compiled directly into the Task 0 kernel binary (~1.5 KB).
-- **Goals:**
-  - Compile `sh` into standalone executables: `/d0/Cmds9/SH` (OS-9 module) and `/d0/CmdsK/SH` (DECB32 binary).
-  - During kernel boot in `main.golf`, after initializing `[RBF]` in Task 1, Task 0 executes `proc.SysFork("/d0/Cmds9/SH", ...)` as **PID 2**.
-  - Task 0 becomes a pure microkernel (solely handling system call dispatching, task switching, and IPC), reclaiming 1.5–2 KB in Task 0.
 
 ### Option 2: Level 3 SCF Driver Task (Task 2: `[SCF]`)
 - **Motivation:** Just as RBF was moved to Task 1, the Level 3 OS-9 vision moves character devices (Sequential Character File manager — terminal I/O, serial, line discipline) into its own dedicated driver task.

@@ -24,8 +24,8 @@ RBF_6809    := $(BUILD_DIR)/rbf_6809.decb
 RBF_68K     := $(BUILD_DIR)/rbf_68k.srec
 
 # Command Targets
-CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod
-CMDS_68K    := $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb $(BUILD_DIR)/catk.decb
+CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod $(BUILD_DIR)/sh.mod
+CMDS_68K    := $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb $(BUILD_DIR)/catk.decb $(BUILD_DIR)/shk.decb
 
 # Disk Images
 DISK_IMAGE  := $(BUILD_DIR)/disk0.dsk
@@ -174,6 +174,17 @@ $(BUILD_DIR)/catk.srec: $(REPO_DIR)/cmds/catk.s $(ASM68K) | $(BUILD_DIR)
 $(BUILD_DIR)/catk.decb: $(BUILD_DIR)/catk.srec $(SREC2DECB) | $(BUILD_DIR)
 	$(PYTHON) $(SREC2DECB) $< $@
 
+$(BUILD_DIR)/sh.mod: $(REPO_DIR)/cmds/sh.asm | $(BUILD_DIR)
+	cd $(BUILD_DIR) && $(LWASM) --format=os9 --list=sh.list --map=sh.map -o sh.mod $<
+	cp -f $(BUILD_DIR)/sh.mod.list $(BUILD_DIR)/sh.list 2>/dev/null || true
+	cp -f $(BUILD_DIR)/sh.mod.map $(BUILD_DIR)/sh.map 2>/dev/null || true
+
+$(BUILD_DIR)/shk.srec: $(REPO_DIR)/cmds/shk.s $(ASM68K) | $(BUILD_DIR)
+	$(ASM68K) -l $@.list -o $@ $<
+
+$(BUILD_DIR)/shk.decb: $(BUILD_DIR)/shk.srec $(SREC2DECB) | $(BUILD_DIR)
+	$(PYTHON) $(SREC2DECB) $< $@
+
 # --- OS-9 Disk Images ---
 disk: $(DISK_IMAGE) $(TEST_DISK)
 
@@ -183,6 +194,7 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(REPO_DIR)/cmds/os9-6809-level1.zip | $
 	$(OS9) makdir $@,Cmds9
 	$(OS9) copy -r -l $(BUILD_DIR)/echo.mod $@,Cmds9/ECHO
 	$(OS9) copy -r -l $(BUILD_DIR)/cat.mod $@,Cmds9/CAT
+	$(OS9) copy -r -l $(BUILD_DIR)/sh.mod $@,Cmds9/SH
 	$(OS9) copy -r -l $(BUILD_DIR)/testcmd.mod $@,Cmds9/TESTCMD
 	$(OS9) copy -r -l $(BUILD_DIR)/testdecb.decb $@,Cmds9/TESTDECB
 	unzip -q -o $(REPO_DIR)/cmds/os9-6809-level1.zip -d $(BUILD_DIR)
@@ -192,6 +204,7 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(REPO_DIR)/cmds/os9-6809-level1.zip | $
 	$(OS9) copy -r -l $(BUILD_DIR)/dirk.decb $@,CmdsK/DIR
 	$(OS9) copy -r -l $(BUILD_DIR)/dumpk.decb $@,CmdsK/DUMP
 	$(OS9) copy -r -l $(BUILD_DIR)/catk.decb $@,CmdsK/CAT
+	$(OS9) copy -r -l $(BUILD_DIR)/shk.decb $@,CmdsK/SH
 	cp -f $@ $(TEST_DISK)
 
 $(TEST_DISK): $(DISK_IMAGE)
@@ -202,8 +215,8 @@ test: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_68K) -disk0=$(DISK_IMAGE) -input="exit\n" $(KERNEL_68K)
 
 test-interactive: $(BUILD_DIR) vms kernels cmds disk
-	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nECHO redirection works on 6809 > /d0/redir9.txt\nCAT /d0/redir9.txt\nCAT /proc/p\nexit\n" $(KERNEL_6809)
-	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHO hello from 68k userspace\nECHO redirection works on 68k > /d0/redirk.txt\nCAT /d0/redirk.txt\nCAT /proc/p\nexit\n" $(KERNEL_68K)
+	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nECHO redirection works on 6809 > /d0/redir9.txt\nCAT /d0/redir9.txt\nSH\nhelp\nECHO nested shell 6809\nCAT /nonexistent\nCAT /proc/p\nexit\nCAT /nonexistent\nexit\n" $(KERNEL_6809)
+	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHO hello from 68k userspace\nECHO redirection works on 68k > /d0/redirk.txt\nCAT /d0/redirk.txt\nSH\nhelp\nECHO nested shell 68k\nCAT /nonexistent\nCAT /proc/p\nexit\nCAT /nonexistent\nexit\n" $(KERNEL_68K)
 
 # --- Clean ---
 clean:

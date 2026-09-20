@@ -72,11 +72,11 @@ _exit:
 trap_unhandled:
     rte
 
-saved_kernel_sp_m68k:
-    dc.l    0
+saved_kernel_sp_table_m68k:
+    dc.l    0, 0, 0, 0, 0, 0, 0, 0
 
-saved_parent_pid_m68k:
-    dc.b    0
+saved_parent_pid_table_m68k:
+    dc.b    0, 0, 0, 0, 0, 0, 0, 0
     even
 
 saved_kernel_sp_rbf_m68k:
@@ -140,7 +140,7 @@ trap_0:
     ; 56(sp) is D0, 52(sp) is D1, 48(sp) is D2
     ; 60(sp) is SR (word), 62(sp) is PC (long)
     move.b  v_syscall.UserFrame+1, 55(sp) ; D1 = A (path ID)
-    move.b  v_syscall.UserFrame+1, 59(sp) ; D0 = A (return value)
+    move.b  v_syscall.UserFrame+2, 59(sp) ; D0 = B (status)
     move.l  v_syscall.UserFrame+8, 48(sp) ; D2 = Y (count)
 
     ; Update Carry bit in saved SR:
@@ -179,9 +179,19 @@ trap_0:
     jsr     f_proc__SysExit
     lea     4(sp), sp
 
-    ; Restore kernel stack and parent PID, return to LaunchProcess caller
-    move.l  saved_kernel_sp_m68k, sp
-    move.b  saved_parent_pid_m68k, v_proc.CurrentPID
+    ; Child PID is currently in v_proc.CurrentPID
+    moveq   #0, d0
+    move.b  v_proc.CurrentPID, d0
+
+    ; Restore parent PID from saved_parent_pid_table_m68k[childPID]
+    lea     saved_parent_pid_table_m68k, a0
+    move.b  0(a0, d0.w), v_proc.CurrentPID
+    move.b  v_proc.CurrentPID, $00FF0020
+
+    ; Restore kernel stack and return to LaunchProcess caller
+    lea     saved_kernel_sp_table_m68k, a0
+    lsl.l   #2, d0
+    move.l  0(a0, d0.w), sp
     rts
 
 .m68k_rbf_return:
@@ -283,9 +293,18 @@ f_hal__LaunchProcess:
     move.l  4(sp), d0           ; d0 = PID
     move.l  8(sp), a0           ; a0 = paramAddr
     move.l  12(sp), d1          ; d1 = initial PC
-    move.b  v_proc.CurrentPID, saved_parent_pid_m68k
+
+    ; Save parent PID in saved_parent_pid_table_m68k[childPID]
+    lea     saved_parent_pid_table_m68k, a1
+    move.b  v_proc.CurrentPID, 0(a1, d0.w)
+
+    ; Save kernel SP in saved_kernel_sp_table_m68k[childPID]
+    lea     saved_kernel_sp_table_m68k, a1
+    move.l  d0, d2
+    lsl.l   #2, d2
+    move.l  sp, 0(a1, d2.w)
+
     move.b  d0, v_proc.CurrentPID
-    move.l  sp, saved_kernel_sp_m68k
 
     ; Reserve stack space below parameter string for USP:
     move.l  a0, a1

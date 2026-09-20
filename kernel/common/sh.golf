@@ -30,6 +30,25 @@ func printHexWord(val word) {
 	}
 }
 
+func printDec(val byte) {
+	if val == 0 {
+		hal.PutChar('0')
+		return
+	}
+	var buf [4]byte
+	n := word(0)
+	v := val
+	for v > 0 {
+		buf[n] = '0' + (v % 10)
+		n++
+		v = v / 10
+	}
+	for n > 0 {
+		n--
+		hal.PutChar(buf[n])
+	}
+}
+
 // RunCommand parses and executes a single command line string
 func RunCommand(line *byte) byte {
 	p := line
@@ -207,6 +226,11 @@ func RunCommand(line *byte) byte {
 		wpid, wst, werr := proc.SysWait()
 		proc.ProcTable[proc.CurrentPID].State = proc.PROC_RUNNING
 		if werr == 0 && wpid == cpid {
+			if wst != 0 {
+				printStr((*byte)("ERROR "))
+				printDec(wst)
+				hal.PutChar('\n')
+			}
 			return wst
 		}
 	}
