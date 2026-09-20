@@ -69,7 +69,7 @@ func (c *CPU) executePage0(op byte) int {
 		return 3
 	case 0x3B: // RTI
 		c.ExecuteRTI()
-		if os.Getenv("HATVAN_TRACE_SWI2") != "" && c.Bus.CurrentTask >= 2 {
+		if os.Getenv("HATVAN_TRACE_TRAP") != "" && c.Bus.CurrentTask >= 2 {
 			if int(c.Bus.CurrentTask) < len(c.PendingTraps) {
 				if pt := c.PendingTraps[c.Bus.CurrentTask]; pt != nil {
 					c.PendingTraps[c.Bus.CurrentTask] = nil
@@ -493,7 +493,7 @@ func (c *CPU) executePage1() int {
 	op := c.fetchByte()
 	switch op {
 	case 0x3F: // SWI2
-		if os.Getenv("HATVAN_TRACE_SWI2") != "" && c.Bus.CurrentTask >= 2 {
+		if os.Getenv("HATVAN_TRACE_TRAP") != "" && c.Bus.CurrentTask >= 2 {
 			callNum := c.Bus.ReadByte(c.PC)
 			var bufStr string
 			if callNum == 0x8C || callNum == 0x8A {

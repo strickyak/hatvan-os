@@ -2,6 +2,9 @@ package gepk
 
 import (
 	"fmt"
+	"strings"
+
+	"github.com/strickyak/hatvan-os/gepk/data"
 )
 
 // Status Register bit masks
@@ -45,6 +48,15 @@ const (
 	SizeLong OpSize = 4
 )
 
+// PendingTrap tracks a user system call in progress until RTE returns to user mode.
+type PendingTrap struct {
+	CallNum byte
+	Call    *data.Call
+	Task    uint8
+	PC      uint32
+	BufAddr uint32
+}
+
 // CPU represents the state of a Motorola 68000 processor.
 type CPU struct {
 	Bus *Bus
@@ -64,6 +76,9 @@ type CPU struct {
 
 	// Interrupt line state
 	PendingIPL uint8 // Latched interrupt priority level (0..7)
+
+	// Pending trap calls awaiting RTE per task (0..255)
+	PendingTraps [256]*PendingTrap
 }
 
 // NewCPU constructs an initialized CPU attached to a Bus.
@@ -93,6 +108,7 @@ func (c *CPU) Reset() {
 	// Fetch initial PC from Vector 1 ($000004)
 	c.PC = c.Bus.ReadLong(0x000004)
 	c.Cycles = 40
+	c.PendingTraps = [256]*PendingTrap{}
 }
 
 // SetSR updates the Status Register, handling supervisor/user stack swaps.
@@ -268,4 +284,58 @@ func (c *CPU) Step() int {
 func (c *CPU) ExecuteOpcode(op uint16) {
 	// Dispatched by ops.go
 	c.dispatch(op)
+}
+
+// ReadUserString reads a NUL-, CR-, LF-, or high-bit-terminated string from user task memory.
+func (c *CPU) ReadUserString(task uint8, addr uint32) string {
+	var b []byte
+	for i := uint32(0); i < 128; i++ {
+		cur := addr + i
+		if cur >= 0x00FF0000 {
+			break
+		}
+		ch := c.Bus.ReadUserByte(task, cur)
+		if ch == 0 || ch == '\r' || ch == '\n' {
+			break
+		}
+		if (ch & 0x80) != 0 {
+			clean := ch & 0x7F
+			if clean >= 32 && clean <= 126 {
+				b = append(b, clean)
+			}
+			break
+		}
+		if ch < 32 || ch > 126 {
+			break
+		}
+		b = append(b, ch)
+	}
+	return string(b)
+}
+
+// ReadUserPreview reads a preview of bytes from user task memory, escaping non-printables.
+func (c *CPU) ReadUserPreview(task uint8, addr uint32, maxLen int) string {
+	if maxLen > 32 {
+		maxLen = 32
+	}
+	var res strings.Builder
+	for i := 0; i < maxLen; i++ {
+		cur := addr + uint32(i)
+		if cur >= 0x00FF0000 {
+			break
+		}
+		ch := c.Bus.ReadUserByte(task, cur)
+		if ch == '\n' {
+			res.WriteString(`\n`)
+		} else if ch == '\r' {
+			res.WriteString(`\r`)
+		} else if ch == '\t' {
+			res.WriteString(`\t`)
+		} else if ch >= 32 && ch <= 126 {
+			res.WriteByte(ch)
+		} else {
+			res.WriteString(fmt.Sprintf(`\x%02x`, ch))
+		}
+	}
+	return res.String()
 }

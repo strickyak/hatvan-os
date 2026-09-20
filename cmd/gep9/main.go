@@ -28,6 +28,7 @@ var (
 	hypercallsFlag  = flag.Bool("hypercalls", false, "enable GOMAR-compatible hypercall traps ($12,$21,<hop>)")
 	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
 	curlyEscapeFlag = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
+	traceTrapFlag   = flag.Bool("trace-trap", false, "print system call trap trace to stderr")
 )
 
 func main() {
@@ -36,6 +37,10 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *traceTrapFlag {
+		os.Setenv("HATVAN_TRACE_TRAP", "1")
+	}
 
 	args := flag.Args()
 	if len(args) < 1 {

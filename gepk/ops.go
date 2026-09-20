@@ -1,5 +1,16 @@
 package gepk
 
+import (
+	"fmt"
+	"os"
+
+	"github.com/strickyak/hatvan-os/gepk/data"
+)
+
+func traceTrapEnabled() bool {
+	return os.Getenv("HATVAN_TRACE_TRAP") != ""
+}
+
 func decodeMoveSize(ss uint16) (OpSize, bool) {
 	switch ss {
 	case 1: // 01
@@ -371,11 +382,54 @@ func (c *CPU) opRte() {
 	newPC := c.PopLong()
 	c.SetSR(newSR)
 	c.PC = newPC
+	if traceTrapEnabled() && (newSR&FlagS) == 0 && c.Bus.TaskReg >= 2 {
+		if pt := c.PendingTraps[c.Bus.TaskReg]; pt != nil {
+			c.PendingTraps[c.Bus.TaskReg] = nil
+			resStr := data.FormatResult(pt.Call, pt.CallNum, c.SR, c.D[0], c.D[1], c.D[2], c.A[0], c.A[1], pt.BufAddr, func(addr uint32, maxLen int) string {
+				return c.ReadUserPreview(c.Bus.TaskReg, addr, maxLen)
+			})
+			fmt.Fprintf(os.Stderr, "    <== [PID %d] %s\n", c.Bus.TaskReg, resStr)
+		}
+	}
 }
 
 // opTrap handles TRAP #vector
 func (c *CPU) opTrap(op uint16) {
 	vec := uint8(op & 0x0F)
+	if vec == 0 && traceTrapEnabled() && (c.SR&FlagS) == 0 && c.Bus.TaskReg >= 2 {
+		callNum := byte(c.D[0] & 0xFF)
+		var bufStr string
+		if callNum == 0x8C || callNum == 0x8A {
+			n := int(c.D[2])
+			if n > 32 {
+				n = 32
+			}
+			for i := 0; i < n; i++ {
+				b := c.Bus.ReadUserByte(c.Bus.TaskReg, c.A[0]+uint32(i))
+				bufStr += fmt.Sprintf(" %02X", b)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "[PID %d PC=%06X TRAP #0: $%02X (D1=%08X A0=%08X D2=%08X A1=%08X):%s]\n",
+			c.Bus.TaskReg, c.PC-2, callNum, c.D[1], c.A[0], c.D[2], c.A[1], bufStr)
+		call := data.FindCall(callNum)
+		pretty := data.FormatCall(call, callNum, c.D[1], c.D[2], c.A[0], c.A[1], func(addr uint32) string {
+			return c.ReadUserString(c.Bus.TaskReg, addr)
+		}, func(addr uint32, maxLen int) string {
+			return c.ReadUserPreview(c.Bus.TaskReg, addr, maxLen)
+		})
+		fmt.Fprintf(os.Stderr, "    ==> %s\n", pretty)
+		if callNum != 0x06 {
+			c.PendingTraps[c.Bus.TaskReg] = &PendingTrap{
+				CallNum: callNum,
+				Call:    call,
+				Task:    c.Bus.TaskReg,
+				PC:      c.PC - 2,
+				BufAddr: c.A[0],
+			}
+		} else {
+			c.PendingTraps[c.Bus.TaskReg] = nil
+		}
+	}
 	c.TriggerException(VecTrapBase + vec)
 }
 
@@ -598,4 +652,3 @@ func (c *CPU) opStop() {
 	c.SetSR(newSR)
 	c.Stopped = true
 }
-

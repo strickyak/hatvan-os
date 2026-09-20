@@ -30,6 +30,7 @@ var (
 	baseAddrFlag    = flag.Uint("base", 0, "base memory address for raw binary image (default 0)")
 	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
 	curlyEscapeFlag = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
+	traceTrapFlag   = flag.Bool("trace-trap", false, "print TRAP #0 system call trace to stderr")
 )
 
 func main() {
@@ -38,6 +39,10 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	if *traceTrapFlag {
+		os.Setenv("HATVAN_TRACE_TRAP", "1")
+	}
 
 	args := flag.Args()
 	if len(args) < 1 {

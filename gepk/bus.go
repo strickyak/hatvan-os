@@ -199,6 +199,17 @@ func (b *Bus) readByteLocked(addr uint32) byte {
 	return b.Tasks[0].readByte(addr)
 }
 
+// ReadUserByte safely reads a byte from a user task's memory space.
+func (b *Bus) ReadUserByte(task uint8, addr uint32) byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	addr &= 0x00FFFFFF
+	if addr >= 0x00FF0000 {
+		return 0
+	}
+	return b.Tasks[task].readByte(addr)
+}
+
 func (b *Bus) writeByteLocked(addr uint32, val byte) {
 	addr &= 0x00FFFFFF // 24-bit physical address space
 
@@ -650,7 +661,7 @@ func (b *Bus) executeDiskCommand(cmd byte) {
 
 	case 2: // Write sector from task memory to disk
 		for i := 0; i < sectorSize; i++ {
-			disk[offset+i] = b.Tasks[task].readByte(addr+uint32(i))
+			disk[offset+i] = b.Tasks[task].readByte(addr + uint32(i))
 		}
 		b.DiskStatus = 1 // OKAY
 
@@ -708,4 +719,3 @@ func (b *Bus) LoadRawImage(baseAddr uint32, data []byte) error {
 func (b *Bus) LoadS37(r io.Reader) (entryAddr uint32, hasEntry bool, err error) {
 	return b.LoadSRecords(r)
 }
-
