@@ -27,7 +27,7 @@ var (
 	task1Flag      = flag.String("task1", "", "optional binary (DECB) to load into Task 1")
 	hypercallsFlag  = flag.Bool("hypercalls", false, "enable GOMAR-compatible hypercall traps ($12,$21,<hop>)")
 	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
-	curlyEscapeFlag = flag.Bool("curly-escape", false, "escape unusual characters as '{%d}'")
+	curlyEscapeFlag = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
 )
 
 func main() {
