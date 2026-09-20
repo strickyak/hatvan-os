@@ -588,13 +588,7 @@ func SysWait() (byte, byte, byte) {
 		}
 
 		// If children exist but none is ready/zombie, let any ready/running process run
-		SetProcState(CurrentPID, PROC_WAITING)
-		for i := word(3); i < MAX_PROCS; i++ {
-			if byte(i) != CurrentPID && !IsAncestor(byte(i), CurrentPID) && (tables.Shared.ProcTable[i].State == PROC_READY || tables.Shared.ProcTable[i].State == PROC_RUNNING) {
-				hal.LaunchProcess(byte(i), tables.Shared.ProcTable[i].SavedSP, tables.Shared.ProcTable[i].SavedPC)
-				break
-			}
-		}
+		WaitInput()
 	}
 }
 
@@ -736,11 +730,11 @@ func ScheduleNext() byte {
 	start := CurrentPID
 	for offset := word(1); offset <= MAX_PROCS; offset++ {
 		next := byte((word(start) + offset) % MAX_PROCS)
-		if next <= 2 {
+		if next <= 3 {
 			continue
 		}
 		if tables.Shared.ProcTable[next].State == PROC_READY || tables.Shared.ProcTable[next].State == PROC_RUNNING {
-			if start > 2 && tables.Shared.ProcTable[start].State == PROC_RUNNING {
+			if start > 3 && tables.Shared.ProcTable[start].State == PROC_RUNNING {
 				SetProcState(start, PROC_READY)
 			}
 			SetProcState(next, PROC_RUNNING)
@@ -748,6 +742,28 @@ func ScheduleNext() byte {
 		}
 	}
 	return CurrentPID
+}
+
+// Yield gives CPU time to any other ready process.
+func Yield() {
+	for i := word(3); i < MAX_PROCS; i++ {
+		p := GetProc(byte(i))
+		if byte(i) != CurrentPID && !IsAncestor(byte(i), CurrentPID) && (p.State == PROC_READY || p.State == PROC_RUNNING) {
+			hal.LaunchProcess(byte(i), p.SavedSP, p.SavedPC)
+			return
+		}
+	}
+}
+
+// WaitInput sets the current process to PROC_WAITING and yields the CPU.
+func WaitInput() {
+	if CurrentPID < MAX_PROCS {
+		SetProcState(CurrentPID, PROC_WAITING)
+	}
+	Yield()
+	if CurrentPID < MAX_PROCS {
+		SetProcState(CurrentPID, PROC_RUNNING)
+	}
 }
 
 

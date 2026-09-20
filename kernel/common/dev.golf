@@ -2,6 +2,7 @@ package dev
 
 import "hal"
 import "klib"
+import "proc"
 
 const DEV_NONE = 0
 const DEV_TERM = 1
@@ -9,6 +10,50 @@ const DEV_LOG = 2
 const DEV_NULL = 3
 const DEV_DISK = 4
 const DEV_PROC = 5
+
+const TTY_RING_SIZE = 256
+var ttyRing [256]byte
+var ttyHead word
+var ttyTail word
+var TermWaitPID byte
+
+// TermRxInterrupt is called by the hardware interrupt handler (trap_irq / trap_level4)
+// or polled by TermReadChar. It drains characters from the terminal port into ttyRing
+// and wakes up any process waiting on console input.
+func TermRxInterrupt() {
+	for hal.HasInput() {
+		nextHead := (ttyHead + 1) % TTY_RING_SIZE
+		if nextHead == ttyTail {
+			break
+		}
+		c := hal.GetChar()
+		if c == 0 {
+			break
+		}
+		ttyRing[ttyHead] = c
+		ttyHead = nextHead
+		if TermWaitPID != 0 {
+			proc.SetProcState(TermWaitPID, proc.PROC_READY)
+			TermWaitPID = 0
+		}
+	}
+}
+
+// TermReadChar reads a single character from the console, yielding to other processes
+// while waiting for input.
+func TermReadChar() byte {
+	for {
+		TermRxInterrupt()
+		if ttyHead != ttyTail {
+			c := ttyRing[ttyTail]
+			ttyTail = (ttyTail + 1) % TTY_RING_SIZE
+			return c
+		}
+		TermWaitPID = proc.CurrentPID
+		proc.WaitInput()
+	}
+}
+
 
 // ParsePathDevice examines path for device prefixes:
 // "/term", "/log", "/null", "/proc", "/d0".."/d3".
@@ -64,14 +109,7 @@ func ParsePathDevice(path *byte, defaultDrive byte) (byte, byte, *byte) {
 // TermRead reads raw binary bytes from the console
 func TermRead(task byte, dstAddr word, count word) word {
 	for i := word(0); i < count; i++ {
-		// Non-blocking poll with yield until character arrives
-		c := byte(0)
-		for {
-			c = hal.GetChar()
-			if c != 0 {
-				break
-			}
-		}
+		c := TermReadChar()
 
 		if task == 0 {
 			pokeb(dstAddr+i, c)
@@ -110,26 +148,7 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 	}
 	count := word(0)
 	for {
-		c := byte(0)
-		if proc.CurrentPID < proc.MAX_PROCS {
-			proc.SetProcState(proc.CurrentPID, proc.PROC_WAITING)
-		}
-		for {
-			c = hal.GetChar()
-			if c != 0 {
-				break
-			}
-			for i := word(3); i < proc.MAX_PROCS; i++ {
-				p := proc.GetProc(byte(i))
-				if byte(i) != proc.CurrentPID && !proc.IsAncestor(byte(i), proc.CurrentPID) && (p.State == proc.PROC_READY || p.State == proc.PROC_RUNNING) {
-					hal.LaunchProcess(byte(i), p.SavedSP, p.SavedPC)
-					break
-				}
-			}
-		}
-		if proc.CurrentPID < proc.MAX_PROCS {
-			proc.SetProcState(proc.CurrentPID, proc.PROC_RUNNING)
-		}
+		c := TermReadChar()
 
 		// Handle Return / Newline
 		if c == '\r' || c == '\n' {

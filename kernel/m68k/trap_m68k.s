@@ -30,7 +30,7 @@ vectors:
     dc.l    trap_unhandled  ; Vector 25: Level 1 Autovector
     dc.l    trap_unhandled  ; Vector 26: Level 2 Autovector
     dc.l    trap_unhandled  ; Vector 27: Level 3 Autovector
-    dc.l    trap_unhandled  ; Vector 28: Level 4 Autovector (Terminal Rx)
+    dc.l    trap_level4     ; Vector 28: Level 4 Autovector (Terminal Rx)
     dc.l    trap_unhandled  ; Vector 29: Level 5 Autovector
     dc.l    trap_level6     ; Vector 30: Level 6 Autovector (Timer)
     dc.l    trap_unhandled  ; Vector 31: Level 7 Autovector
@@ -529,6 +529,12 @@ f_hal__LaunchProcess:
     movem.l 0(a1), d0-d7/a0-a6
 
     clr.b   in_kernel_m68k      ; Entering user mode
+    rte
+
+trap_level4:
+    movem.l d0-d7/a0-a6, -(sp)
+    jsr     f_dev__TermRxInterrupt
+    movem.l (sp)+, d0-d7/a0-a6
     rte
 
 trap_level6:

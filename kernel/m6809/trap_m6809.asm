@@ -469,33 +469,46 @@ f_hal__FreeUserContext:
     rts
 
 trap_irq:
-    ; 1. Acknowledge timer interrupt
-    lda #1
-    sta $FF02
-
-    ; 2. Check if we were in kernel mode
+    ; Check if we were in kernel mode
     lda in_kernel
-    bne .irq_done
+    bne .irq_kernel_mode
 
-    ; 3. Check CurrentPID: if <= 1, do not preempt
-    ldb v_proc.CurrentPID
-    cmpb #1
-    bls .irq_done
-
-    ; 4. Interrupted in user mode (CurrentPID >= 2)
+    ; Interrupted in user mode (CurrentPID >= 2)
     tfr s,x
+    ldb v_proc.CurrentPID
     lslb
     ldy #user_sp_table
     stx b,y
     lsrb
 
-    ; 5. Switch to dedicated IRQ stack in Task 0
+    ; Switch to dedicated IRQ stack in Task 0
     lds #irq_stack_top
     inc in_kernel
     clra
     tfr a,dp
 
-    ; 6. Call scheduler
+    ; Check Terminal Rx interrupt (bit 1 of $FF02)
+    lda $FF02
+    bita #2
+    beq .u_no_rx
+    jsr f_dev__TermRxInterrupt
+
+.u_no_rx:
+    ; Check Timer interrupt (bit 0 of $FF02)
+    lda $FF02
+    bita #1
+    beq .u_no_timer
+
+    ; Acknowledge timer interrupt
+    lda #1
+    sta $FF02
+
+    ; Check CurrentPID: if <= 1, do not preempt
+    ldb v_proc.CurrentPID
+    cmpb #1
+    bls .u_no_timer
+
+    ; Call scheduler
     jsr f_proc__ScheduleNext
     ; Next PID in B
 
@@ -519,6 +532,7 @@ trap_irq:
     stb v_proc.CurrentPID
 
 .irq_resume_same:
+.u_no_timer:
     clr in_kernel
 
     ; Restore user SP for CurrentPID
@@ -530,7 +544,24 @@ trap_irq:
     stb $FF20           ; Arm TaskFuse with target PID
     rti
 
-.irq_done:
+.irq_kernel_mode:
+    ; Check Terminal Rx interrupt (bit 1 of $FF02)
+    lda $FF02
+    bita #2
+    beq .k_no_rx
+    clra
+    tfr a,dp
+    jsr f_dev__TermRxInterrupt
+
+.k_no_rx:
+    ; Check Timer interrupt (bit 0 of $FF02)
+    lda $FF02
+    bita #1
+    beq .k_no_timer
+    lda #1
+    sta $FF02
+
+.k_no_timer:
     rti
 
 ; Trap stubs for unhandled vectors

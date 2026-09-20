@@ -51,7 +51,7 @@ func LogChar(b byte) {
 }
 
 func EnableTimer() {
-	vpokeb(PORT_REGCTRL, 1)
+	vpokeb(PORT_REGCTRL, 3)
 }
 
 func DisableTimer() {
