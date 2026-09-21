@@ -9,16 +9,29 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+)
+
+type EngineType string
+
+const (
+	EngineHatvan       EngineType = "hatvan"
+	EngineFlat65280v2 EngineType = "flat65280v2"
 )
 
 var (
 	ErrUserAccessTrap = errors.New("user process attempted access to protected page $FF00..$FFFF")
 	ErrKernelIOPanic  = errors.New("kernel accessed unmapped port in page $FF00..$FFFF")
+	ErrFlatStrayRead  = errors.New("flat65280v2: stray read in $FF00..$FFEE")
+	ErrFlatStrayWrite = errors.New("flat65280v2: stray write in $FF00..$FFFF")
+	ErrFlatClockCrash = errors.New("flat65280v2: crash and core dump requested via CLOCK_AND_STOP ($FE)")
 )
 
 // Bus manages memory across all 256 tasks, page protection, and I/O devices.
 type Bus struct {
 	mu sync.Mutex
+
+	Engine EngineType
 
 	// Memory[task][65536]
 	Memory [256][65536]byte
@@ -62,12 +75,25 @@ type Bus struct {
 	// Tunable shared memory curtain ($E000 by default) for Tasks 0, 1, 2
 	SharedMemoryCurtain uint16
 
+	// flat65280v2 EMUDSK registers ($FF80..$FF86)
+	EmuDskLSN    uint32 // $FF80..$FF82: 24-bit LSN
+	EmuDskStatus byte   // $FF83: Command / Status
+	EmuDskBuffer uint16 // $FF84..$FF85: 16-bit RAM buffer pointer
+	EmuDskDrive  byte   // $FF86: Drive unit selection (0 or 1)
+
+	// flat65280v2 CLOCK_AND_STOP register ($FF87)
+	ClockAndStop byte // $FF87: Bit 0 = Tick, Bit 1 = IRQ En, Bits 4..5 = Rate, $FC=exit(0), $FD=exit(1), $FE=crash
+
+	// flat65280v2 ACIA M6850 registers ($FF88..$FF89)
+	AciaCtrl byte // $FF88: Control register (Write)
+
 	// Callback when IRQ line state changes
 	OnIRQChanged func(asserted bool)
 
-	// Exit / Halt ($FF05)
+	// Exit / Halt ($FF05, $FF87)
 	ExitCode int
 	OnHalt   func(exitCode int)
+	OnCrash  func()
 }
 
 // NewBus constructs an initialized Bus with all memory zeroed.
@@ -79,6 +105,7 @@ func NewBus() *Bus {
 		}
 	}
 	return &Bus{
+		Engine:              EngineHatvan,
 		CurrentTask:         0,
 		TaskFlagsTarget:     1,
 		SharedMemoryCurtain: curtain,
@@ -91,6 +118,13 @@ func NewBus() *Bus {
 func (b *Bus) ReadByte(addr uint16) byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.Engine == EngineFlat65280v2 {
+		if addr >= 0xFF00 {
+			return b.readIOFlat(addr)
+		}
+		return b.Memory[0][addr]
+	}
 
 	// In user tasks (Task > 0), access to $FF00..$FFFF is strictly forbidden unless blessed with I/O flag
 	if addr >= 0xFF00 {
@@ -112,6 +146,15 @@ func (b *Bus) ReadByte(addr uint16) byte {
 func (b *Bus) WriteByte(addr uint16, val byte) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.Engine == EngineFlat65280v2 {
+		if addr >= 0xFF00 {
+			b.writeIOFlat(addr, val)
+			return
+		}
+		b.Memory[0][addr] = val
+		return
+	}
 
 	// In user tasks (Task > 0), access to $FF00..$FFFF is strictly forbidden unless blessed with I/O flag
 	if addr >= 0xFF00 {
@@ -350,9 +393,308 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 }
 
 func (b *Bus) evalIRQ() {
-	asserted := (b.RegStat & b.RegCtrl & 0x03) != 0
+	var asserted bool
+	if b.Engine == EngineFlat65280v2 {
+		rdrf := len(b.ConsoleIn) > 0
+		rie := (b.AciaCtrl & 0x80) != 0
+		aciaIRQ := rdrf && rie
+		clockIRQ := (b.ClockAndStop&0x01 != 0) && (b.ClockAndStop&0x02 != 0)
+		asserted = aciaIRQ || clockIRQ
+	} else {
+		asserted = (b.RegStat & b.RegCtrl & 0x03) != 0
+	}
 	if b.OnIRQChanged != nil {
 		b.OnIRQChanged(asserted)
+	}
+}
+
+// TimerTick signals a 60Hz timer tick.
+func (b *Bus) TimerTick() {
+	if b.Engine == EngineFlat65280v2 {
+		return // Handled via ClockTick in flat65280v2
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.RegStat |= 0x01 // Timer.Ready
+	b.evalIRQ()
+}
+
+func (b *Bus) readIOFlat(addr uint16) byte {
+	if addr >= 0xFFF0 {
+		return b.Memory[0][addr]
+	}
+
+	switch {
+	case addr >= 0xFF80 && addr <= 0xFF86:
+		return b.readEmuDsk(addr)
+	case addr == 0xFF87:
+		return b.readClockAndStop()
+	case addr == 0xFF88:
+		return b.readAciaStatus()
+	case addr == 0xFF89:
+		return b.readAciaData()
+	default:
+		panic(fmt.Errorf("%w: read at 0x%04X", ErrFlatStrayRead, addr))
+	}
+}
+
+func (b *Bus) writeIOFlat(addr uint16, val byte) {
+	switch {
+	case addr >= 0xFF80 && addr <= 0xFF86:
+		b.writeEmuDsk(addr, val)
+	case addr == 0xFF87:
+		b.writeClockAndStop(val)
+	case addr == 0xFF88:
+		b.writeAciaCtrl(val)
+	case addr == 0xFF89:
+		b.writeAciaData(val)
+	default:
+		panic(fmt.Errorf("%w: write at 0x%04X", ErrFlatStrayWrite, addr))
+	}
+}
+
+func (b *Bus) readEmuDsk(addr uint16) byte {
+	switch addr {
+	case 0xFF80:
+		return byte(b.EmuDskLSN >> 16)
+	case 0xFF81:
+		return byte(b.EmuDskLSN >> 8)
+	case 0xFF82:
+		return byte(b.EmuDskLSN)
+	case 0xFF83:
+		return b.EmuDskStatus
+	case 0xFF84:
+		return byte(b.EmuDskBuffer >> 8)
+	case 0xFF85:
+		return byte(b.EmuDskBuffer)
+	case 0xFF86:
+		return b.EmuDskDrive
+	default:
+		return 0
+	}
+}
+
+func (b *Bus) writeEmuDsk(addr uint16, val byte) {
+	switch addr {
+	case 0xFF80:
+		b.EmuDskLSN = (b.EmuDskLSN & 0x00FFFF) | (uint32(val) << 16)
+	case 0xFF81:
+		b.EmuDskLSN = (b.EmuDskLSN & 0xFF00FF) | (uint32(val) << 8)
+	case 0xFF82:
+		b.EmuDskLSN = (b.EmuDskLSN & 0xFFFF00) | uint32(val)
+	case 0xFF83:
+		b.executeEmuDskCommand(val)
+	case 0xFF84:
+		b.EmuDskBuffer = (b.EmuDskBuffer & 0x00FF) | (uint16(val) << 8)
+	case 0xFF85:
+		b.EmuDskBuffer = (b.EmuDskBuffer & 0xFF00) | uint16(val)
+	case 0xFF86:
+		b.EmuDskDrive = val
+	}
+}
+
+func (b *Bus) executeEmuDskCommand(cmd byte) {
+	drv := int(b.EmuDskDrive)
+	if drv < 0 || drv >= len(b.Disks) || b.Disks[drv] == nil {
+		b.EmuDskStatus = 2 // Drive not enabled / not ready
+		return
+	}
+	disk := b.Disks[drv]
+	offset := int(b.EmuDskLSN) * 256
+	if offset+256 > len(disk) {
+		b.EmuDskStatus = 6 // Seek / range error
+		return
+	}
+
+	bufAddr := b.EmuDskBuffer
+
+	switch cmd {
+	case 0: // Read Sector
+		for i := 0; i < 256; i++ {
+			targetAddr := bufAddr + uint16(i)
+			if targetAddr >= 0xFF00 {
+				b.EmuDskStatus = 6 // Buffer cannot cross into I/O page
+				return
+			}
+			b.Memory[0][targetAddr] = disk[offset+i]
+		}
+		b.EmuDskStatus = 0
+
+	case 1: // Write Sector
+		for i := 0; i < 256; i++ {
+			srcAddr := bufAddr + uint16(i)
+			if srcAddr >= 0xFF00 {
+				b.EmuDskStatus = 6
+				return
+			}
+			disk[offset+i] = b.Memory[0][srcAddr]
+		}
+		b.EmuDskStatus = 0
+
+	case 2: // Close
+		b.EmuDskStatus = 0
+
+	default:
+		b.EmuDskStatus = 254 // Invalid command
+	}
+}
+
+func (b *Bus) readAciaStatus() byte {
+	st := byte(0x02) // Bit 1 = TDRE (always 1)
+	if len(b.ConsoleIn) == 0 && b.StdinChan != nil {
+		b.pollStdinLocked()
+	}
+	if len(b.ConsoleIn) > 0 {
+		st |= 0x01 // Bit 0 = RDRF
+	}
+	if (st&0x01) != 0 && (b.AciaCtrl&0x80) != 0 {
+		st |= 0x80 // Bit 7 = IRQ flag
+	}
+	return st
+}
+
+func (b *Bus) readAciaData() byte {
+	if len(b.ConsoleIn) == 0 && b.StdinChan != nil {
+		b.pollStdinLocked()
+	}
+	var ch byte
+	if len(b.ConsoleIn) > 0 {
+		ch = b.ConsoleIn[0]
+		b.ConsoleIn = b.ConsoleIn[1:]
+	}
+	b.evalIRQ()
+	return ch
+}
+
+func (b *Bus) writeAciaCtrl(val byte) {
+	if (val & 0x03) == 0x03 {
+		// Master Reset: clears internal registers, disables interrupts
+		b.AciaCtrl = 0
+	} else {
+		b.AciaCtrl = val
+	}
+	b.evalIRQ()
+}
+
+func (b *Bus) writeAciaData(val byte) {
+	if b.ConsoleOut != nil {
+		if val == 10 || val == 13 {
+			b.ConsoleOut.Write([]byte{'\n'})
+		} else if b.CurlyEscape && !(val >= 32 && val <= 126) {
+			fmt.Fprintf(b.ConsoleOut, "{%d}", val)
+		} else {
+			b.ConsoleOut.Write([]byte{val})
+		}
+	}
+}
+
+func (b *Bus) readClockAndStop() byte {
+	return b.ClockAndStop
+}
+
+func (b *Bus) printStopExplanation(msg string) {
+	if b.ConsoleOut != nil {
+		fmt.Fprint(b.ConsoleOut, msg)
+		if f, ok := b.ConsoleOut.(interface{ Sync() error }); ok {
+			_ = f.Sync()
+		}
+		if f, ok := b.ConsoleOut.(interface{ Flush() error }); ok {
+			_ = f.Flush()
+		}
+	}
+	if b.LogOut != nil && b.LogOut != b.ConsoleOut {
+		fmt.Fprint(b.LogOut, msg)
+		if f, ok := b.LogOut.(interface{ Sync() error }); ok {
+			_ = f.Sync()
+		}
+		if f, ok := b.LogOut.(interface{ Flush() error }); ok {
+			_ = f.Flush()
+		}
+	}
+	_ = os.Stdout.Sync()
+	_ = os.Stderr.Sync()
+}
+
+func (b *Bus) writeClockAndStop(val byte) {
+	switch val {
+	case 0xFC:
+		b.printStopExplanation("\n *** Exiting with status 0 due to CLOCK_AND_STOP command $FC.\n")
+		b.ExitCode = 0
+		if b.OnHalt != nil {
+			b.OnHalt(0)
+		} else {
+			os.Exit(0)
+		}
+		return
+	case 0xFD:
+		b.printStopExplanation("\n *** Exiting with status 1 due to CLOCK_AND_STOP command $FD.\n")
+		b.ExitCode = 1
+		if b.OnHalt != nil {
+			b.OnHalt(1)
+		} else {
+			os.Exit(1)
+		}
+		return
+	case 0xFE:
+		b.printStopExplanation("\n *** Crashing due to CLOCK_AND_STOP command $FE.\n")
+		if b.OnCrash != nil {
+			b.OnCrash()
+			return
+		}
+		_ = syscall.Kill(os.Getpid(), syscall.SIGABRT)
+		panic(ErrFlatClockCrash)
+	}
+
+	newLow := b.ClockAndStop & 0x01
+	if (val & 0x01) != 0 {
+		newLow = 0
+	}
+	b.ClockAndStop = (val & 0xFE) | newLow
+	b.evalIRQ()
+}
+
+// ClockTick signals a clock tick for the flat65280v2 engine.
+func (b *Bus) ClockTick() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.ClockAndStop |= 0x01
+	b.evalIRQ()
+}
+
+// ClockRateHz returns the configured clock rate in Hz for flat65280v2.
+func (b *Bus) ClockRateHz() float64 {
+	switch b.ClockAndStop & 0x30 {
+	case 0x00:
+		return 60.0
+	case 0x10:
+		return 50.0
+	case 0x20:
+		return 6.0
+	case 0x30:
+		return 0.1
+	default:
+		return 60.0
+	}
+}
+
+// ClockCyclesPerTick returns the number of CPU cycles per clock tick given cpuHz.
+func (b *Bus) ClockCyclesPerTick(cpuHz int) uint64 {
+	if cpuHz <= 0 {
+		return 0
+	}
+	switch b.ClockAndStop & 0x30 {
+	case 0x00:
+		return uint64(cpuHz / 60)
+	case 0x10:
+		return uint64(cpuHz / 50)
+	case 0x20:
+		return uint64(cpuHz / 6)
+	case 0x30:
+		return uint64(cpuHz) * 10
+	default:
+		return uint64(cpuHz / 60)
 	}
 }
 
@@ -443,14 +785,6 @@ func (b *Bus) LoadRawImage(data []byte) error {
 	return nil
 }
 
-// TimerTick signals a 60Hz timer tick.
-func (b *Bus) TimerTick() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	b.RegStat |= 0x01 // Timer.Ready
-	b.evalIRQ()
-}
 
 func (b *Bus) executeDiskCommand(cmd byte) {
 	drv := int(b.DiskDrive)

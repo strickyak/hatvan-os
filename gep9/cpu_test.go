@@ -3,6 +3,8 @@ package gep9
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
+	"strings"
 	"testing"
 )
 
@@ -563,4 +565,632 @@ func TestCurlyEscapeAndNewline(t *testing.T) {
 		t.Fatalf("expected %q, got %q", expected, got)
 	}
 }
+
+func TestFlat65280v2MemoryMap(t *testing.T) {
+	bus := NewBus()
+	bus.Engine = EngineFlat65280v2
+
+	// 1. RAM accesses in $0000..$FEFF
+	bus.WriteByte(0x0000, 0x12)
+	bus.WriteByte(0x1234, 0x56)
+	bus.WriteByte(0xFEFF, 0x78)
+	if bus.ReadByte(0x0000) != 0x12 || bus.ReadByte(0x1234) != 0x56 || bus.ReadByte(0xFEFF) != 0x78 {
+		t.Fatalf("RAM read/write mismatch in flat RAM space")
+	}
+
+	// 2. Vectors in $FFF0..$FFFF are readable
+	bus.Memory[0][0xFFFE] = 0x10
+	bus.Memory[0][0xFFFF] = 0x20
+	if bus.ReadByte(0xFFFE) != 0x10 || bus.ReadByte(0xFFFF) != 0x20 {
+		t.Fatalf("vector read mismatch")
+	}
+	if bus.ReadWord(0xFFFE) != 0x1020 {
+		t.Fatalf("vector word read mismatch")
+	}
+
+	// 3. Stray reads outside valid I/O registers ($FF80..$FF89) must panic with ErrFlatStrayRead
+	strayReadAddrs := []uint16{0xFF00, 0xFF01, 0xFF10, 0xFF20, 0xFF7F, 0xFF8A, 0xFFEE, 0xFFEF}
+	for _, addr := range strayReadAddrs {
+		func() {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("expected stray read at 0x%04X to panic", addr)
+				}
+				err, ok := r.(error)
+				if !ok || !errors.Is(err, ErrFlatStrayRead) {
+					t.Fatalf("expected ErrFlatStrayRead at 0x%04X, got: %v", addr, r)
+				}
+			}()
+			bus.ReadByte(addr)
+		}()
+	}
+
+	// 4. Stray writes outside write registers ($FF80..$FF89) must panic with ErrFlatStrayWrite
+	strayWriteAddrs := []uint16{0xFF00, 0xFF01, 0xFF05, 0xFF10, 0xFF20, 0xFF7F, 0xFF8A, 0xFFEE, 0xFFEF, 0xFFF0, 0xFFFE, 0xFFFF}
+	for _, addr := range strayWriteAddrs {
+		func() {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("expected stray write at 0x%04X to panic", addr)
+				}
+				err, ok := r.(error)
+				if !ok || !errors.Is(err, ErrFlatStrayWrite) {
+					t.Fatalf("expected ErrFlatStrayWrite at 0x%04X, got: %v", addr, r)
+				}
+			}()
+			bus.WriteByte(addr, 0x42)
+		}()
+	}
+}
+
+func TestFlat65280v2EMUDSK(t *testing.T) {
+	bus := NewBus()
+	bus.Engine = EngineFlat65280v2
+
+	disk0 := make([]byte, 1024) // 4 sectors
+	disk1 := make([]byte, 512)  // 2 sectors
+	bus.Disks[0] = disk0
+	bus.Disks[1] = disk1
+
+	// 1. Register read/write
+	bus.WriteByte(0xFF80, 0x01)
+	bus.WriteByte(0xFF81, 0x02)
+	bus.WriteByte(0xFF82, 0x03)
+	if bus.ReadByte(0xFF80) != 0x01 || bus.ReadByte(0xFF81) != 0x02 || bus.ReadByte(0xFF82) != 0x03 {
+		t.Fatalf("EMUDSK LSN register mismatch")
+	}
+	if bus.EmuDskLSN != 0x010203 {
+		t.Fatalf("expected LSN 0x010203, got 0x%06X", bus.EmuDskLSN)
+	}
+
+	bus.WriteByte(0xFF84, 0x20)
+	bus.WriteByte(0xFF85, 0x00)
+	if bus.ReadByte(0xFF84) != 0x20 || bus.ReadByte(0xFF85) != 0x00 || bus.EmuDskBuffer != 0x2000 {
+		t.Fatalf("EMUDSK BUFFER register mismatch")
+	}
+
+	bus.WriteByte(0xFF86, 0x01)
+	if bus.ReadByte(0xFF86) != 0x01 || bus.EmuDskDrive != 1 {
+		t.Fatalf("EMUDSK DRIVE register mismatch")
+	}
+
+	// 2. Write Sector to Disk 0
+	bus.WriteByte(0xFF86, 0x00) // Drive 0
+	bus.WriteByte(0xFF80, 0x00)
+	bus.WriteByte(0xFF81, 0x00)
+	bus.WriteByte(0xFF82, 0x01) // LSN 1 (offset 256)
+	bus.WriteByte(0xFF84, 0x20)
+	bus.WriteByte(0xFF85, 0x00) // Buffer $2000
+
+	for i := 0; i < 256; i++ {
+		bus.Memory[0][0x2000+uint16(i)] = byte(i ^ 0xAA)
+	}
+	bus.WriteByte(0xFF83, 1) // Command 1 = Write Sector
+	if st := bus.ReadByte(0xFF83); st != 0 {
+		t.Fatalf("expected write status 0, got %d", st)
+	}
+	for i := 0; i < 256; i++ {
+		if disk0[256+i] != byte(i^0xAA) {
+			t.Fatalf("disk0 sector 1 byte %d mismatch", i)
+		}
+	}
+
+	// 3. Read Sector from Disk 0 back to memory at $3000
+	for i := 0; i < 256; i++ {
+		bus.Memory[0][0x3000+uint16(i)] = 0
+	}
+	bus.WriteByte(0xFF84, 0x30)
+	bus.WriteByte(0xFF85, 0x00) // Buffer $3000
+	bus.WriteByte(0xFF83, 0)    // Command 0 = Read Sector
+	if st := bus.ReadByte(0xFF83); st != 0 {
+		t.Fatalf("expected read status 0, got %d", st)
+	}
+	for i := 0; i < 256; i++ {
+		if bus.Memory[0][0x3000+uint16(i)] != byte(i^0xAA) {
+			t.Fatalf("RAM $3000+%d mismatch after read", i)
+		}
+	}
+
+	// 4. Read Sector from Disk 1
+	for i := 0; i < 256; i++ {
+		disk1[i] = byte(i + 10)
+	}
+	bus.WriteByte(0xFF86, 0x01) // Drive 1
+	bus.WriteByte(0xFF80, 0x00)
+	bus.WriteByte(0xFF81, 0x00)
+	bus.WriteByte(0xFF82, 0x00) // LSN 0
+	bus.WriteByte(0xFF84, 0x40)
+	bus.WriteByte(0xFF85, 0x00) // Buffer $4000
+	bus.WriteByte(0xFF83, 0)    // Read
+	if st := bus.ReadByte(0xFF83); st != 0 {
+		t.Fatalf("expected Drive 1 read status 0, got %d", st)
+	}
+	for i := 0; i < 256; i++ {
+		if bus.Memory[0][0x4000+uint16(i)] != byte(i+10) {
+			t.Fatalf("RAM $4000+%d mismatch from disk1", i)
+		}
+	}
+
+	// 5. Error conditions
+	// Drive not ready (drive 2)
+	bus.WriteByte(0xFF86, 0x02)
+	bus.WriteByte(0xFF83, 0)
+	if st := bus.ReadByte(0xFF83); st != 2 {
+		t.Fatalf("expected status 2 for unattached drive, got %d", st)
+	}
+
+	// Sector out of bounds (LSN 10 on Drive 0)
+	bus.WriteByte(0xFF86, 0x00)
+	bus.WriteByte(0xFF82, 10)
+	bus.WriteByte(0xFF83, 0)
+	if st := bus.ReadByte(0xFF83); st != 6 {
+		t.Fatalf("expected status 6 for out-of-bounds LSN, got %d", st)
+	}
+
+	// Buffer crossing into I/O page ($FE80 + 256 = $FF80 >= $FF00)
+	bus.WriteByte(0xFF82, 0)
+	bus.WriteByte(0xFF84, 0xFE)
+	bus.WriteByte(0xFF85, 0x80)
+	bus.WriteByte(0xFF83, 0)
+	if st := bus.ReadByte(0xFF83); st != 6 {
+		t.Fatalf("expected status 6 for buffer in I/O page, got %d", st)
+	}
+
+	// Invalid command
+	bus.WriteByte(0xFF83, 99)
+	if st := bus.ReadByte(0xFF83); st != 254 {
+		t.Fatalf("expected status 254 for invalid command, got %d", st)
+	}
+
+	// Close command
+	bus.WriteByte(0xFF83, 2)
+	if st := bus.ReadByte(0xFF83); st != 0 {
+		t.Fatalf("expected status 0 for close, got %d", st)
+	}
+}
+
+func TestFlat65280v2ACIA(t *testing.T) {
+	bus := NewBus()
+	bus.Engine = EngineFlat65280v2
+
+	outBuf := new(bytes.Buffer)
+	bus.ConsoleOut = outBuf
+
+	var irqState bool
+	bus.OnIRQChanged = func(asserted bool) {
+		irqState = asserted
+	}
+
+	// 1. Initial status: TDRE (0x02) is set, RDRF (0x01) and IRQ (0x80) are clear
+	if st := bus.ReadByte(0xFF88); st != 0x02 {
+		t.Fatalf("expected initial ACIA status 0x02, got 0x%02X", st)
+	}
+	if irqState {
+		t.Fatalf("expected IRQ false initially")
+	}
+
+	// 2. Reading data when empty returns 0
+	if ch := bus.ReadByte(0xFF89); ch != 0 {
+		t.Fatalf("expected 0 on empty ACIA read, got %02X", ch)
+	}
+
+	// 3. Writing data outputs to ConsoleOut
+	bus.WriteByte(0xFF89, 'H')
+	bus.WriteByte(0xFF89, 'i')
+	bus.WriteByte(0xFF89, 13) // newline
+	if outBuf.String() != "Hi\n" {
+		t.Fatalf("expected 'Hi\\n', got %q", outBuf.String())
+	}
+
+	// 4. Receiving data without interrupt (RIE = 0)
+	bus.EnqueueString("OK")
+	if st := bus.ReadByte(0xFF88); st != 0x03 { // TDRE | RDRF
+		t.Fatalf("expected status 0x03 after enqueue, got 0x%02X", st)
+	}
+	if irqState {
+		t.Fatalf("expected IRQ false when RIE is 0")
+	}
+
+	if ch := bus.ReadByte(0xFF89); ch != 'O' {
+		t.Fatalf("expected 'O', got %c", ch)
+	}
+	if st := bus.ReadByte(0xFF88); st != 0x03 {
+		t.Fatalf("expected status 0x03 while 'K' pending, got 0x%02X", st)
+	}
+	if ch := bus.ReadByte(0xFF89); ch != 'K' {
+		t.Fatalf("expected 'K', got %c", ch)
+	}
+	if st := bus.ReadByte(0xFF88); st != 0x02 {
+		t.Fatalf("expected status 0x02 when empty, got 0x%02X", st)
+	}
+
+	// 5. Receiving data with interrupt (RIE = 1, bit 7 of Control register)
+	bus.WriteByte(0xFF88, 0x80) // Enable RIE
+	if irqState {
+		t.Fatalf("expected IRQ false with empty input")
+	}
+
+	bus.EnqueueKey('X')
+	if !irqState {
+		t.Fatalf("expected IRQ true after enqueuing with RIE enabled")
+	}
+	if st := bus.ReadByte(0xFF88); st != 0x83 { // IRQ | TDRE | RDRF
+		t.Fatalf("expected status 0x83, got 0x%02X", st)
+	}
+
+	// Read data -> should deassert IRQ
+	if ch := bus.ReadByte(0xFF89); ch != 'X' {
+		t.Fatalf("expected 'X', got %c", ch)
+	}
+	if irqState {
+		t.Fatalf("expected IRQ false after reading last character")
+	}
+	if st := bus.ReadByte(0xFF88); st != 0x02 {
+		t.Fatalf("expected status 0x02 after reading, got 0x%02X", st)
+	}
+
+	// 6. Master Reset ($03) clears RIE and deasserts IRQ
+	bus.WriteByte(0xFF88, 0x80) // Enable RIE
+	bus.EnqueueKey('Y')
+	if !irqState {
+		t.Fatalf("expected IRQ true")
+	}
+	bus.WriteByte(0xFF88, 0x03) // Master Reset
+	if irqState {
+		t.Fatalf("expected IRQ false after master reset")
+	}
+	if bus.AciaCtrl != 0 {
+		t.Fatalf("expected AciaCtrl=0 after master reset, got 0x%02X", bus.AciaCtrl)
+	}
+}
+
+func TestFlat65280v2CPUExecution(t *testing.T) {
+	bus := NewBus()
+	bus.Engine = EngineFlat65280v2
+
+	outBuf := new(bytes.Buffer)
+	bus.ConsoleOut = outBuf
+
+	// Create a disk with character 'Z' at sector 0 byte 0
+	disk := make([]byte, 512)
+	disk[0] = 'Z'
+	bus.Disks[0] = disk
+
+	// Assembly program at $1000:
+	//   CLR  >$FF86     ; Drive 0
+	//   CLR  >$FF80     ; LSN hi = 0
+	//   CLR  >$FF81     ; LSN mid = 0
+	//   CLR  >$FF82     ; LSN lo = 0
+	//   LDX  #$2000
+	//   STX  >$FF84     ; Buffer = $2000
+	//   CLR  >$FF83     ; Command 0 = Read Sector
+	//   LDA  >$2000     ; Read byte from buffer
+	//   STA  >$FF89     ; Transmit to ACIA data register
+	//   FCB  $12,$21,$03 ; Hypercall 3 = Exit(A)
+	prog := []byte{
+		0x7F, 0xFF, 0x86, // CLR $FF86
+		0x7F, 0xFF, 0x80, // CLR $FF80
+		0x7F, 0xFF, 0x81, // CLR $FF81
+		0x7F, 0xFF, 0x82, // CLR $FF82
+		0x8E, 0x20, 0x00, // LDX #$2000
+		0xBF, 0xFF, 0x84, // STX $FF84
+		0x7F, 0xFF, 0x83, // CLR $FF83
+		0xB6, 0x20, 0x00, // LDA $2000
+		0xB7, 0xFF, 0x89, // STA $FF89
+		0x1F, 0x89,       // TFR A,B
+		0x4F,             // CLRA
+		0x12, 0x21, 107,  // Hypercall 107 = Exit(D)
+	}
+
+	copy(bus.Memory[0][0x1000:], prog)
+	// Set Reset vector to $1000
+	bus.Memory[0][0xFFFE] = 0x10
+	bus.Memory[0][0xFFFF] = 0x00
+
+	cpu := NewCPU(bus)
+	cpu.EnableHypercalls = true
+	cpu.Reset()
+
+	for !cpu.Halted {
+		cpu.Step()
+	}
+
+	if outBuf.String() != "Z" {
+		t.Fatalf("expected 'Z' on console out, got %q", outBuf.String())
+	}
+	if cpu.ExitCode != 'Z' {
+		t.Fatalf("expected exit code 'Z' (%d), got %d", 'Z', cpu.ExitCode)
+	}
+}
+
+func TestFlat65280v2ClockAndStopRegister(t *testing.T) {
+	bus := NewBus()
+	bus.Engine = EngineFlat65280v2
+
+	// 1. Initial value is 0
+	if got := bus.ReadByte(0xFF87); got != 0x00 {
+		t.Fatalf("expected initial CLOCK_AND_STOP to be 0, got 0x%02X", got)
+	}
+
+	// 2. User writes normal bits (bits 7..1) with low bit = 0
+	bus.WriteByte(0xFF87, 0x20) // Rate 6 Hz, low bit 0
+	if got := bus.ReadByte(0xFF87); got != 0x20 {
+		t.Fatalf("expected 0x20, got 0x%02X", got)
+	}
+	if hz := bus.ClockRateHz(); hz != 6.0 {
+		t.Fatalf("expected 6.0 Hz, got %f", hz)
+	}
+	if cpt := bus.ClockCyclesPerTick(2000000); cpt != 333333 {
+		t.Fatalf("expected 333333 cycles per tick, got %d", cpt)
+	}
+
+	// 3. Test rates 60Hz ($00), 50Hz ($10), 0.1Hz ($30)
+	bus.WriteByte(0xFF87, 0x00)
+	if bus.ClockRateHz() != 60.0 || bus.ClockCyclesPerTick(2000000) != 33333 {
+		t.Fatalf("expected 60 Hz / 33333 cpt")
+	}
+	bus.WriteByte(0xFF87, 0x10)
+	if bus.ClockRateHz() != 50.0 || bus.ClockCyclesPerTick(2000000) != 40000 {
+		t.Fatalf("expected 50 Hz / 40000 cpt")
+	}
+	bus.WriteByte(0xFF87, 0x30)
+	if bus.ClockRateHz() != 0.1 || bus.ClockCyclesPerTick(2000000) != 20000000 {
+		t.Fatalf("expected 0.1 Hz / 20000000 cpt")
+	}
+
+	// 4. Clock tick sets low bit (firing condition)
+	bus.ClockTick()
+	if got := bus.ReadByte(0xFF87); got != 0x31 {
+		t.Fatalf("expected 0x31 after ClockTick, got 0x%02X", got)
+	}
+
+	// 5. Write with low bit = 0 preserves firing condition
+	bus.WriteByte(0xFF87, 0x12) // Rate 50 Hz, IRQ enable, low bit = 0
+	if got := bus.ReadByte(0xFF87); got != 0x13 {
+		t.Fatalf("expected 0x13 (bit 0 preserved when writing low bit 0), got 0x%02X", got)
+	}
+
+	// 6. Write with low bit = 1 turns off firing condition
+	bus.WriteByte(0xFF87, 0x13) // low bit = 1
+	if got := bus.ReadByte(0xFF87); got != 0x12 {
+		t.Fatalf("expected 0x12 (bit 0 cleared when writing low bit 1), got 0x%02X", got)
+	}
+
+	// Writing 0x01 resets firing condition and clears upper bits
+	bus.ClockTick()
+	if got := bus.ReadByte(0xFF87); got != 0x13 {
+		t.Fatalf("expected 0x13 after ClockTick, got 0x%02X", got)
+	}
+	bus.WriteByte(0xFF87, 0x01)
+	if got := bus.ReadByte(0xFF87); got != 0x00 {
+		t.Fatalf("expected 0x00 after writing 0x01, got 0x%02X", got)
+	}
+
+	// 7. Special values with explanation printing
+	outBuf := new(bytes.Buffer)
+	logBuf := new(bytes.Buffer)
+	bus.ConsoleOut = outBuf
+	bus.LogOut = logBuf
+
+	// $FC -> exit(0)
+	halted := false
+	haltCode := -1
+	bus.OnHalt = func(code int) {
+		halted = true
+		haltCode = code
+	}
+	bus.WriteByte(0xFF87, 0xFC)
+	if !halted || haltCode != 0 {
+		t.Fatalf("expected halt with 0 on 0xFC, got halted=%v code=%d", halted, haltCode)
+	}
+	expectedFC := "\n *** Exiting with status 0 due to CLOCK_AND_STOP command $FC.\n"
+	if !strings.Contains(outBuf.String(), expectedFC) || !strings.Contains(logBuf.String(), expectedFC) {
+		t.Fatalf("expected explanation in outBuf and logBuf, got out=%q log=%q", outBuf.String(), logBuf.String())
+	}
+
+	// $FD -> exit(1)
+	outBuf.Reset()
+	logBuf.Reset()
+	halted = false
+	haltCode = -1
+	bus.WriteByte(0xFF87, 0xFD)
+	if !halted || haltCode != 1 {
+		t.Fatalf("expected halt with 1 on 0xFD, got halted=%v code=%d", halted, haltCode)
+	}
+	expectedFD := "\n *** Exiting with status 1 due to CLOCK_AND_STOP command $FD.\n"
+	if !strings.Contains(outBuf.String(), expectedFD) || !strings.Contains(logBuf.String(), expectedFD) {
+		t.Fatalf("expected explanation in outBuf and logBuf, got out=%q log=%q", outBuf.String(), logBuf.String())
+	}
+
+	// $FE -> crash hook called
+	outBuf.Reset()
+	logBuf.Reset()
+	crashed := false
+	bus.OnCrash = func() {
+		crashed = true
+	}
+	bus.WriteByte(0xFF87, 0xFE)
+	if !crashed {
+		t.Fatalf("expected OnCrash to be called on 0xFE")
+	}
+	expectedFE := "\n *** Crashing due to CLOCK_AND_STOP command $FE.\n"
+	if !strings.Contains(outBuf.String(), expectedFE) || !strings.Contains(logBuf.String(), expectedFE) {
+		t.Fatalf("expected explanation in outBuf and logBuf, got out=%q log=%q", outBuf.String(), logBuf.String())
+	}
+}
+
+func TestFlat65280v2ClockIRQ(t *testing.T) {
+	bus := NewBus()
+	bus.Engine = EngineFlat65280v2
+	cpu := NewCPU(bus)
+
+	if cpu.irqLine {
+		t.Fatalf("expected initial irqLine false")
+	}
+
+	// 1. Tick without IRQ enable ($02) does not assert IRQ
+	bus.ClockTick()
+	if (bus.ClockAndStop & 0x01) == 0 {
+		t.Fatalf("expected tick bit set")
+	}
+	if cpu.irqLine {
+		t.Fatalf("expected irqLine false when IRQ disabled ($02 is 0)")
+	}
+
+	// 2. Enabling IRQ while tick is already set asserts IRQ
+	bus.WriteByte(0xFF87, 0x02) // bit 1 = 1, bit 0 = 0 (so tick bit 0 is preserved!)
+	if !cpu.irqLine {
+		t.Fatalf("expected irqLine true after enabling IRQ with tick pending")
+	}
+
+	// 3. Acknowledging tick with low bit 1 deasserts IRQ
+	bus.WriteByte(0xFF87, 0x03) // acknowledge tick while keeping IRQ enable set
+	if cpu.irqLine {
+		t.Fatalf("expected irqLine false after acknowledging tick")
+	}
+	if bus.ReadByte(0xFF87) != 0x02 {
+		t.Fatalf("expected register to be 0x02, got 0x%02X", bus.ReadByte(0xFF87))
+	}
+
+	// 4. Tick with IRQ enable asserted asserts IRQ
+	bus.ClockTick()
+	if !cpu.irqLine {
+		t.Fatalf("expected irqLine true on ClockTick when enabled")
+	}
+
+	// 5. Test combined ACIA and Clock IRQ
+	// Enable ACIA IRQ and enqueue char
+	bus.WriteByte(0xFF88, 0x80) // RIE = 1
+	bus.EnqueueKey('X')
+	// Both ACIA and Clock have IRQ active
+	if !cpu.irqLine {
+		t.Fatalf("expected irqLine true with both ACIA and clock")
+	}
+	// Acknowledge Clock
+	bus.WriteByte(0xFF87, 0x03)
+	// IRQ should still be active because ACIA is pending
+	if !cpu.irqLine {
+		t.Fatalf("expected irqLine true while ACIA character is still pending")
+	}
+	// Read ACIA data
+	ch := bus.ReadByte(0xFF89)
+	if ch != 'X' {
+		t.Fatalf("expected 'X', got %q", ch)
+	}
+	// Now both are cleared, IRQ line should be false
+	if cpu.irqLine {
+		t.Fatalf("expected irqLine false after both clock and ACIA cleared")
+	}
+}
+
+func TestFlat65280v2ClockCPUExecution(t *testing.T) {
+	bus := NewBus()
+	bus.Engine = EngineFlat65280v2
+	bus.ConsoleOut = new(bytes.Buffer)
+	bus.LogOut = new(bytes.Buffer)
+	cpu := NewCPU(bus)
+
+	// Memory layout:
+	//   $1000: Main code
+	//     LDA #$02         ; 86 02
+	//     STA $FF87        ; B7 FF 87 (enable clock IRQ)
+	//     ANDCC #$EF       ; 1C EF (enable IRQs by clearing FlagI)
+	//   .loop:
+	//     BRA .loop        ; 20 FE
+	//
+	//   $2000: Clock ISR
+	//     LDA $FF87        ; B6 FF 87
+	//     ORA #$01         ; 8A 01
+	//     STA $FF87        ; B7 FF 87 (turn off firing condition)
+	//     INC $0050        ; 7C 00 50 (count tick)
+	//     RTI              ; 3B
+	//
+	//   Vectors:
+	//     $FFF8: $2000 (IRQ)
+	//     $FFFE: $1000 (RESET)
+
+	mainCode := []byte{
+		0x86, 0x02,
+		0xB7, 0xFF, 0x87,
+		0x1C, 0xEF,
+		0x20, 0xFE,
+	}
+	isrCode := []byte{
+		0xB6, 0xFF, 0x87,
+		0x8A, 0x01,
+		0xB7, 0xFF, 0x87,
+		0x7C, 0x00, 0x50,
+		0x3B,
+	}
+
+	copy(bus.Memory[0][0x1000:], mainCode)
+	copy(bus.Memory[0][0x2000:], isrCode)
+
+	// Set hardware stack
+	cpu.S = 0x0500
+
+	// Set vectors
+	bus.Memory[0][0xFFF8] = 0x20
+	bus.Memory[0][0xFFF9] = 0x00
+	bus.Memory[0][0xFFFE] = 0x10
+	bus.Memory[0][0xFFFF] = 0x00
+
+	cpu.Reset()
+	// Step through initialization until loop is reached
+	for cpu.PC != 0x1007 {
+		cpu.Step()
+	}
+
+	if (cpu.CC & FlagI) != 0 {
+		t.Fatalf("expected FlagI cleared in CC")
+	}
+
+	// Now trigger a clock tick
+	bus.ClockTick()
+	if !cpu.irqLine {
+		t.Fatalf("expected irqLine true after ClockTick")
+	}
+
+	// Step CPU: it should take IRQ, execute ISR, increment $0050, acknowledge tick, and RTI
+	steps := 0
+	for bus.Memory[0][0x0050] == 0 && steps < 100 {
+		cpu.Step()
+		steps++
+	}
+
+	if bus.Memory[0][0x0050] != 1 {
+		t.Fatalf("expected $0050 to be incremented to 1 by clock ISR, got %d", bus.Memory[0][0x0050])
+	}
+	if cpu.irqLine {
+		t.Fatalf("expected irqLine deasserted after ISR acknowledged tick")
+	}
+
+	// Test special stop value $FC execution by CPU
+	// Overwrite loop with LDA #$FC; STA $FF87
+	stopProg := []byte{0x86, 0xFC, 0xB7, 0xFF, 0x87}
+	copy(bus.Memory[0][cpu.PC:], stopProg)
+
+	for !cpu.Halted {
+		cpu.Step()
+	}
+	if !cpu.Halted || cpu.ExitCode != 0 {
+		t.Fatalf("expected CPU halted with exit code 0 on $FC, got halted=%v exit=%d", cpu.Halted, cpu.ExitCode)
+	}
+
+	// Test $FD execution
+	cpu.Halted = false
+	stopProg1 := []byte{0x86, 0xFD, 0xB7, 0xFF, 0x87}
+	copy(bus.Memory[0][0x1050:], stopProg1)
+	cpu.PC = 0x1050
+	for !cpu.Halted {
+		cpu.Step()
+	}
+	if !cpu.Halted || cpu.ExitCode != 1 {
+		t.Fatalf("expected CPU halted with exit code 1 on $FD, got halted=%v exit=%d", cpu.Halted, cpu.ExitCode)
+	}
+}
+
+
 

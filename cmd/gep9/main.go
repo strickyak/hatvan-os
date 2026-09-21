@@ -32,6 +32,7 @@ var (
 	curlyEscapeFlag   = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
 	traceTrapFlag     = flag.Bool("trace-trap", false, "print system call trap trace to stderr")
 	sharedCurtainFlag = flag.String("shared-curtain", "0xE000", "shared memory curtain address for tasks 0, 1, and 2")
+	engineFlag        = flag.String("engine", "hatvan", "emulation engine: \"hatvan\" (default) or \"flat65280v2\"")
 )
 
 func main() {
@@ -61,7 +62,17 @@ func main() {
 
 	// 1. Initialize Bus and CPU
 	bus := gep9.NewBus()
-	if *sharedCurtainFlag != "" {
+	switch *engineFlag {
+	case "hatvan":
+		bus.Engine = gep9.EngineHatvan
+	case "flat65280v2":
+		bus.Engine = gep9.EngineFlat65280v2
+	default:
+		fmt.Fprintf(os.Stderr, "Error: unknown engine %q (must be \"hatvan\" or \"flat65280v2\")\n", *engineFlag)
+		os.Exit(1)
+	}
+
+	if bus.Engine == gep9.EngineHatvan && *sharedCurtainFlag != "" {
 		s := strings.TrimPrefix(*sharedCurtainFlag, "0x")
 		s = strings.TrimPrefix(s, "$")
 		if v, err := strconv.ParseUint(s, 16, 16); err == nil {
@@ -113,38 +124,39 @@ func main() {
 		}
 	}
 
-	// Load Task 1 if specified or companion rbf_6809.decb exists
-	task1Path := *task1Flag
-	if task1Path == "" {
-		candidate := filepath.Join(filepath.Dir(binPath), "rbf_6809.decb")
-		if _, err := os.Stat(candidate); err == nil {
-			task1Path = candidate
+	// Load Task 1 and Task 2 only for Hatvan engine
+	if bus.Engine == gep9.EngineHatvan {
+		task1Path := *task1Flag
+		if task1Path == "" {
+			candidate := filepath.Join(filepath.Dir(binPath), "rbf_6809.decb")
+			if _, err := os.Stat(candidate); err == nil {
+				task1Path = candidate
+			}
 		}
-	}
-	if task1Path != "" {
-		d1, err := gep9.LoadDECBFile(task1Path)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading Task 1 DECB %q: %v\n", task1Path, err)
-			os.Exit(1)
+		if task1Path != "" {
+			d1, err := gep9.LoadDECBFile(task1Path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading Task 1 DECB %q: %v\n", task1Path, err)
+				os.Exit(1)
+			}
+			bus.LoadDECBIntoTask(1, d1)
 		}
-		bus.LoadDECBIntoTask(1, d1)
-	}
 
-	// Load Task 2 if specified or companion procfs_6809.decb exists
-	task2Path := *task2Flag
-	if task2Path == "" {
-		candidate := filepath.Join(filepath.Dir(binPath), "procfs_6809.decb")
-		if _, err := os.Stat(candidate); err == nil {
-			task2Path = candidate
+		task2Path := *task2Flag
+		if task2Path == "" {
+			candidate := filepath.Join(filepath.Dir(binPath), "procfs_6809.decb")
+			if _, err := os.Stat(candidate); err == nil {
+				task2Path = candidate
+			}
 		}
-	}
-	if task2Path != "" {
-		d2, err := gep9.LoadDECBFile(task2Path)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading Task 2 DECB %q: %v\n", task2Path, err)
-			os.Exit(1)
+		if task2Path != "" {
+			d2, err := gep9.LoadDECBFile(task2Path)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading Task 2 DECB %q: %v\n", task2Path, err)
+				os.Exit(1)
+			}
+			bus.LoadDECBIntoTask(2, d2)
 		}
-		bus.LoadDECBIntoTask(2, d2)
 	}
 
 	// 3. Scan for OS-9 modules in memory
@@ -234,11 +246,18 @@ func main() {
 			break
 		}
 
-		if cyclesPerTick > 0 {
+		if cyclesPerTick > 0 && bus.Engine == gep9.EngineHatvan {
 			cyclesSinceTick += uint64(c)
 			if cyclesSinceTick >= cyclesPerTick {
 				cyclesSinceTick -= cyclesPerTick
 				bus.TimerTick()
+			}
+		} else if bus.Engine == gep9.EngineFlat65280v2 {
+			cyclesSinceTick += uint64(c)
+			cpt := bus.ClockCyclesPerTick(*cpuClockHz)
+			if cpt > 0 && cyclesSinceTick >= cpt {
+				cyclesSinceTick %= cpt
+				bus.ClockTick()
 			}
 		}
 

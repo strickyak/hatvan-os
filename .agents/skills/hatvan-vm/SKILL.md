@@ -43,6 +43,7 @@ The emulator accepts a primary `.decb` file or raw 64KB `.img` system image, and
 | `--cpu-hz <N>` | `2000000` | Simulated CPU clock frequency in Hz (default 2 MHz). Used to scale timer ticks per cycle. |
 | `--disk0 <path>` | `""` | Attaches a raw disk image file (256 bytes/sector) to `/d0` (`$FF10 = 0`). |
 | `--disk1`..`--disk3` | `""` | Attaches disk images to `/d1`, `/d2`, and `/d3`. |
+| `--engine <name>` | `"hatvan"` | Emulation engine: `"hatvan"` (default) with 256 tasks and Hatvan I/O, or `"flat65280v2"` for flat 64K RAM with EMUDSK, CLOCK_AND_STOP ($FF87), and ACIA. |
 | `--hypercalls` | `false` | Enables GOMAR-compatible instruction traps (`fcb $12,$21,<hop>`). |
 
 > [!NOTE]
