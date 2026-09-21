@@ -27,6 +27,15 @@ var numPosArgs word
 var numBuf [8]byte
 var scriptName [64]byte
 
+const LOOP_NORMAL = 0
+const LOOP_BREAK = 1
+const LOOP_CONTINUE = 2
+
+var loopControl byte
+var breakCount word
+var continueCount word
+var subDepth word
+
 // ----------------------------------------------------------------------------
 // String Utilities
 // ----------------------------------------------------------------------------
@@ -717,6 +726,58 @@ func ExecuteSimpleCommand(cmdStr *byte) byte {
 		return 0
 	}
 
+	// Builtin: break
+	if strEq(firstWord, (*byte)("break")) {
+		cnt := word(1)
+		if numWords >= 2 {
+			wptr := word(&words[0]) + 1*MAX_WORD_LEN
+			cval := word(0)
+			for peekb(wptr) >= '0' && peekb(wptr) <= '9' {
+				cval = cval*10 + word(peekb(wptr) - '0')
+				wptr++
+			}
+			if cval > 0 {
+				cnt = cval
+			}
+		}
+		breakCount = cnt
+		loopControl = LOOP_BREAK
+		lastStatus = 0
+		return 0
+	}
+
+	// Builtin: continue
+	if strEq(firstWord, (*byte)("continue")) {
+		cnt := word(1)
+		if numWords >= 2 {
+			wptr := word(&words[0]) + 1*MAX_WORD_LEN
+			cval := word(0)
+			for peekb(wptr) >= '0' && peekb(wptr) <= '9' {
+				cval = cval*10 + word(peekb(wptr) - '0')
+				wptr++
+			}
+			if cval > 0 {
+				cnt = cval
+			}
+		}
+		continueCount = cnt
+		loopControl = LOOP_CONTINUE
+		lastStatus = 0
+		return 0
+	}
+
+	// Builtin: true / gtrue
+	if strEq(firstWord, (*byte)("true")) || strEq(firstWord, (*byte)("gtrue")) {
+		lastStatus = 0
+		return 0
+	}
+
+	// Builtin: false / gfalse
+	if strEq(firstWord, (*byte)("false")) || strEq(firstWord, (*byte)("gfalse")) {
+		lastStatus = 1
+		return 1
+	}
+
 	// External command execution
 	plen := word(0)
 	for i := word(1); i < numWords; i++ {
@@ -737,6 +798,13 @@ func ExecuteSimpleCommand(cmdStr *byte) byte {
 
 	st := sys.Spawn(firstWord, &paramBuf[0], plen)
 	if st == 127 {
+		if strEq(firstWord, (*byte)("expr")) {
+			st = sys.Spawn((*byte)("gexpr"), &paramBuf[0], plen)
+		} else if strEq(firstWord, (*byte)("test")) || strEq(firstWord, (*byte)("[")) {
+			st = sys.Spawn((*byte)("gtest"), &paramBuf[0], plen)
+		}
+	}
+	if st == 127 {
 		sys.Print(firstWord)
 		sys.Println((*byte)(": not found"))
 		lastStatus = 127
@@ -744,6 +812,178 @@ func ExecuteSimpleCommand(cmdStr *byte) byte {
 	}
 	lastStatus = st
 	return st
+}
+
+// ----------------------------------------------------------------------------
+// Command Substitution $( ... )
+// ----------------------------------------------------------------------------
+
+func hasCmdSub(s *byte) bool {
+	p := word(s)
+	inSingle := false
+	for peekb(p) != 0 {
+		c := peekb(p)
+		if c == '\'' {
+			inSingle = !inSingle
+		} else if !inSingle && c == '$' && peekb(p+1) == '(' {
+			return true
+		}
+		p++
+	}
+	return false
+}
+
+func EvalSubCmd(subCmd *byte, outBuf *byte, maxOut word) word {
+	savedStdout := sys.Dup(sys.STDOUT)
+	if savedStdout == 0xFF {
+		pokeb(word(outBuf), 0)
+		return 0
+	}
+	sys.Close(sys.STDOUT)
+
+	var tmpName [32]byte
+	tmpName[0] = '/'
+	tmpName[1] = 'd'
+	tmpName[2] = '0'
+	tmpName[3] = '/'
+	tmpName[4] = '_'
+	tmpName[5] = 's'
+	tmpName[6] = byte('0' + (subDepth % 10))
+	tmpName[7] = '.'
+	tmpName[8] = 't'
+	tmpName[9] = 'm'
+	tmpName[10] = 'p'
+	tmpName[11] = 0
+
+	subDepth++
+	tempFd := sys.Create(&tmpName[0], sys.MODE_WRITE, 3)
+	if tempFd == 0xFF {
+		sys.Dup(savedStdout)
+		sys.Close(savedStdout)
+		subDepth--
+		pokeb(word(outBuf), 0)
+		return 0
+	}
+
+	ExecuteScript(subCmd)
+
+	sys.Close(sys.STDOUT)
+	sys.Dup(savedStdout)
+	sys.Close(savedStdout)
+	subDepth--
+
+	rfd := sys.Open(&tmpName[0], sys.MODE_READ)
+	outLen := word(0)
+	if rfd != 0xFF {
+		outLen = sys.Read(rfd, outBuf, maxOut - 1)
+		sys.Close(rfd)
+		sys.Delete(&tmpName[0])
+	}
+
+	for outLen > 0 {
+		c := peekb(word(outBuf) + outLen - 1)
+		if c == '\n' || c == '\r' {
+			outLen--
+		} else {
+			break
+		}
+	}
+	pokeb(word(outBuf) + outLen, 0)
+	return outLen
+}
+
+func ExpandCmdSub(src *byte, dst *byte, maxDst word) {
+	p := word(src)
+	d := word(dst)
+	dlen := word(0)
+	inSingle := false
+	inDouble := false
+
+	for peekb(p) != 0 {
+		c := peekb(p)
+		if c == '\'' && !inDouble {
+			inSingle = !inSingle
+			if dlen < maxDst-1 {
+				pokeb(d+dlen, c)
+				dlen++
+			}
+			p++
+			continue
+		}
+		if c == '"' && !inSingle {
+			inDouble = !inDouble
+			if dlen < maxDst-1 {
+				pokeb(d+dlen, c)
+				dlen++
+			}
+			p++
+			continue
+		}
+
+		if !inSingle && c == '$' && peekb(p+1) == '(' {
+			p += 2 // skip "$("
+			var subCmd [256]byte
+			subLen := word(0)
+			parenNesting := word(1)
+			subSingle := false
+			subDouble := false
+
+			for peekb(p) != 0 {
+				sc := peekb(p)
+				if sc == '\\' {
+					if subLen < 255 {
+						subCmd[subLen] = sc
+						subLen++
+					}
+					p++
+					if peekb(p) != 0 {
+						if subLen < 255 {
+							subCmd[subLen] = peekb(p)
+							subLen++
+						}
+						p++
+					}
+					continue
+				}
+				if sc == '\'' && !subDouble {
+					subSingle = !subSingle
+				} else if sc == '"' && !subSingle {
+					subDouble = !subDouble
+				} else if !subSingle && !subDouble {
+					if sc == '(' {
+						parenNesting++
+					} else if sc == ')' {
+						parenNesting--
+						if parenNesting == 0 {
+							p++ // skip ')'
+							break
+						}
+					}
+				}
+				if subLen < 255 {
+					subCmd[subLen] = sc
+					subLen++
+				}
+				p++
+			}
+			subCmd[subLen] = 0
+
+			var subOut [256]byte
+			outLen := EvalSubCmd(&subCmd[0], &subOut[0], 255)
+			for i := word(0); i < outLen && dlen < maxDst-1; i++ {
+				pokeb(d+dlen, subOut[i])
+				dlen++
+			}
+			continue
+		}
+
+		if dlen < maxDst-1 {
+			pokeb(d+dlen, c)
+			dlen++
+		}
+		p++
+	}
+	pokeb(d+dlen, 0)
 }
 
 // ----------------------------------------------------------------------------
@@ -755,7 +995,18 @@ func isForLoop(s *byte) bool {
 	for peekb(p) == ' ' || peekb(p) == '\t' {
 		p++
 	}
-	if peekb(p) == 'f' && peekb(p+1) == 'o' && peekb(p+2) == 'r' && (peekb(p+3) == ' ' || peekb(p+3) == '\t') {
+	if peekb(p) == 'f' && peekb(p+1) == 'o' && peekb(p+2) == 'r' && (peekb(p+3) == ' ' || peekb(p+3) == '\t' || peekb(p+3) == '\n') {
+		return true
+	}
+	return false
+}
+
+func isWhileLoop(s *byte) bool {
+	p := word(s)
+	for peekb(p) == ' ' || peekb(p) == '\t' {
+		p++
+	}
+	if peekb(p) == 'w' && peekb(p+1) == 'h' && peekb(p+2) == 'i' && peekb(p+3) == 'l' && peekb(p+4) == 'e' && (peekb(p+5) == ' ' || peekb(p+5) == '\t' || peekb(p+5) == '\n') {
 		return true
 	}
 	return false
@@ -763,11 +1014,10 @@ func isForLoop(s *byte) bool {
 
 func checkHasDone(s *byte) bool {
 	p := word(s)
-	q := p
-	for peekb(q) == ' ' || peekb(q) == '\t' || peekb(q) == '\n' {
-		q++
+	for peekb(p) == ' ' || peekb(p) == '\t' || peekb(p) == '\n' {
+		p++
 	}
-	if peekb(q) == 'd' && peekb(q+1) == 'o' && peekb(q+2) == 'n' && peekb(q+3) == 'e' && (peekb(q+4) == ' ' || peekb(q+4) == '\t' || peekb(q+4) == ';' || peekb(q+4) == '\n' || peekb(q+4) == 0) {
+	if peekb(p) == 'd' && peekb(p+1) == 'o' && peekb(p+2) == 'n' && peekb(p+3) == 'e' && (peekb(p+4) == ' ' || peekb(p+4) == '\t' || peekb(p+4) == ';' || peekb(p+4) == '\n' || peekb(p+4) == 0) {
 		return true
 	}
 
@@ -782,14 +1032,15 @@ func checkHasDone(s *byte) bool {
 			inDouble = !inDouble
 		} else if !inSingle && !inDouble {
 			if c == ';' || c == ' ' || c == '\t' || c == '\n' {
-				q = p
+				q := p
 				if peekb(q) == ';' {
 					q++
 				}
 				for peekb(q) == ' ' || peekb(q) == '\t' || peekb(q) == '\n' {
 					q++
 				}
-				if peekb(q) == 'f' && peekb(q+1) == 'o' && peekb(q+2) == 'r' && (peekb(q+3) == ' ' || peekb(q+3) == '\t') {
+				if (peekb(q) == 'f' && peekb(q+1) == 'o' && peekb(q+2) == 'r' && (peekb(q+3) == ' ' || peekb(q+3) == '\t' || peekb(q+3) == '\n')) ||
+				   (peekb(q) == 'w' && peekb(q+1) == 'h' && peekb(q+2) == 'i' && peekb(q+3) == 'l' && peekb(q+4) == 'e' && (peekb(q+5) == ' ' || peekb(q+5) == '\t' || peekb(q+5) == '\n')) {
 					nesting++
 				}
 				if peekb(q) == 'd' && peekb(q+1) == 'o' && peekb(q+2) == 'n' && peekb(q+3) == 'e' && (peekb(q+4) == ' ' || peekb(q+4) == '\t' || peekb(q+4) == ';' || peekb(q+4) == '\n' || peekb(q+4) == 0) {
@@ -927,8 +1178,9 @@ func ExecuteFor(forStr *byte) byte {
 				for peekb(q) == ' ' || peekb(q) == '\t' || peekb(q) == '\n' {
 					q++
 				}
-				// Check for nested "for"
-				if peekb(q) == 'f' && peekb(q+1) == 'o' && peekb(q+2) == 'r' && (peekb(q+3) == ' ' || peekb(q+3) == '\t') {
+				// Check for nested "for" or "while"
+				if (peekb(q) == 'f' && peekb(q+1) == 'o' && peekb(q+2) == 'r' && (peekb(q+3) == ' ' || peekb(q+3) == '\t' || peekb(q+3) == '\n')) ||
+				   (peekb(q) == 'w' && peekb(q+1) == 'h' && peekb(q+2) == 'i' && peekb(q+3) == 'l' && peekb(q+4) == 'e' && (peekb(q+5) == ' ' || peekb(q+5) == '\t' || peekb(q+5) == '\n')) {
 					nesting++
 				}
 				// Check for "done"
@@ -961,7 +1213,13 @@ func ExecuteFor(forStr *byte) byte {
 	totalItems := word(0)
 
 	if hasIn {
-		TokenizeWords(&itemsStr[0])
+		if hasCmdSub(&itemsStr[0]) {
+			var expItems [256]byte
+			ExpandCmdSub(&itemsStr[0], &expItems[0], 255)
+			TokenizeWords(&expItems[0])
+		} else {
+			TokenizeWords(&itemsStr[0])
+		}
 		totalItems = numWords
 		for i := word(0); i < totalItems*MAX_WORD_LEN; i++ {
 			savedItems[i] = words[i]
@@ -978,10 +1236,190 @@ func ExecuteFor(forStr *byte) byte {
 		item := (*byte)(word(&savedItems[0]) + i*MAX_WORD_LEN)
 		SetVar(&varName[0], item)
 		forStatus = ExecuteScript(&bodyStr[0])
+		if loopControl == LOOP_BREAK {
+			if breakCount > 1 {
+				breakCount--
+			} else {
+				loopControl = LOOP_NORMAL
+				breakCount = 0
+			}
+			break
+		} else if loopControl == LOOP_CONTINUE {
+			if continueCount > 1 {
+				continueCount--
+				break
+			} else {
+				loopControl = LOOP_NORMAL
+				continueCount = 0
+				continue
+			}
+		}
 	}
 
 	lastStatus = forStatus
 	return forStatus
+}
+
+func ExecuteWhile(whileStr *byte) byte {
+	p := word(whileStr)
+	for peekb(p) == ' ' || peekb(p) == '\t' {
+		p++
+	}
+	p += 5 // skip "while"
+
+	// 1. Extract condition up to "do"
+	var condStr [256]byte
+	clen := word(0)
+	inSingle := false
+	inDouble := false
+	condNesting := word(0)
+
+	for {
+		c := peekb(p)
+		if c == 0 {
+			break
+		}
+
+		if !inSingle && !inDouble {
+			if c == ';' || c == ' ' || c == '\t' || c == '\n' {
+				q := p
+				if peekb(q) == ';' {
+					q++
+				}
+				for peekb(q) == ' ' || peekb(q) == '\t' || peekb(q) == '\n' {
+					q++
+				}
+				if (peekb(q) == 'f' && peekb(q+1) == 'o' && peekb(q+2) == 'r' && (peekb(q+3) == ' ' || peekb(q+3) == '\t' || peekb(q+3) == '\n')) ||
+				   (peekb(q) == 'w' && peekb(q+1) == 'h' && peekb(q+2) == 'i' && peekb(q+3) == 'l' && peekb(q+4) == 'e' && (peekb(q+5) == ' ' || peekb(q+5) == '\t' || peekb(q+5) == '\n')) {
+					condNesting++
+				}
+				if peekb(q) == 'd' && peekb(q+1) == 'o' && (peekb(q+2) == ' ' || peekb(q+2) == '\t' || peekb(q+2) == ';' || peekb(q+2) == '\n' || peekb(q+2) == 0) {
+					if condNesting > 0 {
+						// Inside a nested construct in condition
+					} else {
+						p = q + 2
+						break
+					}
+				}
+				if peekb(q) == 'd' && peekb(q+1) == 'o' && peekb(q+2) == 'n' && peekb(q+3) == 'e' && (peekb(q+4) == ' ' || peekb(q+4) == '\t' || peekb(q+4) == ';' || peekb(q+4) == '\n' || peekb(q+4) == 0) {
+					if condNesting > 0 {
+						condNesting--
+					}
+				}
+			}
+		}
+
+		if c == '\'' && !inDouble {
+			inSingle = !inSingle
+		} else if c == '"' && !inSingle {
+			inDouble = !inDouble
+		}
+
+		if clen < 255 {
+			condStr[clen] = c
+			clen++
+		}
+		p++
+	}
+	condStr[clen] = 0
+
+	// 2. Extract body up to "done"
+	var bodyStr [256]byte
+	blen := word(0)
+	inSingle = false
+	inDouble = false
+	nesting := word(0)
+
+	for {
+		c := peekb(p)
+		if c == 0 {
+			break
+		}
+
+		if !inSingle && !inDouble {
+			if c == ';' || c == ' ' || c == '\t' || c == '\n' {
+				q := p
+				if peekb(q) == ';' {
+					q++
+				}
+				for peekb(q) == ' ' || peekb(q) == '\t' || peekb(q) == '\n' {
+					q++
+				}
+				// Check for nested "for" or "while"
+				if (peekb(q) == 'f' && peekb(q+1) == 'o' && peekb(q+2) == 'r' && (peekb(q+3) == ' ' || peekb(q+3) == '\t' || peekb(q+3) == '\n')) ||
+				   (peekb(q) == 'w' && peekb(q+1) == 'h' && peekb(q+2) == 'i' && peekb(q+3) == 'l' && peekb(q+4) == 'e' && (peekb(q+5) == ' ' || peekb(q+5) == '\t' || peekb(q+5) == '\n')) {
+					nesting++
+				}
+				// Check for "done"
+				if peekb(q) == 'd' && peekb(q+1) == 'o' && peekb(q+2) == 'n' && peekb(q+3) == 'e' && (peekb(q+4) == ' ' || peekb(q+4) == '\t' || peekb(q+4) == ';' || peekb(q+4) == '\n' || peekb(q+4) == 0) {
+					if nesting > 0 {
+						nesting--
+					} else {
+						break
+					}
+				}
+			}
+		}
+
+		if c == '\'' && !inDouble {
+			inSingle = !inSingle
+		} else if c == '"' && !inSingle {
+			inDouble = !inDouble
+		}
+
+		if blen < 255 {
+			bodyStr[blen] = c
+			blen++
+		}
+		p++
+	}
+	bodyStr[blen] = 0
+
+	whileStatus := byte(0)
+	for {
+		condStatus := ExecuteScript(&condStr[0])
+		if condStatus != 0 || loopControl != LOOP_NORMAL {
+			if loopControl == LOOP_BREAK {
+				if breakCount > 1 {
+					breakCount--
+				} else {
+					loopControl = LOOP_NORMAL
+					breakCount = 0
+				}
+			} else if loopControl == LOOP_CONTINUE {
+				if continueCount > 1 {
+					continueCount--
+				} else {
+					loopControl = LOOP_NORMAL
+					continueCount = 0
+				}
+			}
+			break
+		}
+
+		whileStatus = ExecuteScript(&bodyStr[0])
+		if loopControl == LOOP_BREAK {
+			if breakCount > 1 {
+				breakCount--
+			} else {
+				loopControl = LOOP_NORMAL
+				breakCount = 0
+			}
+			break
+		} else if loopControl == LOOP_CONTINUE {
+			if continueCount > 1 {
+				continueCount--
+				break
+			} else {
+				loopControl = LOOP_NORMAL
+				continueCount = 0
+				continue
+			}
+		}
+	}
+
+	lastStatus = whileStatus
+	return whileStatus
 }
 
 // ----------------------------------------------------------------------------
@@ -1005,21 +1443,34 @@ func ExecuteScript(script *byte) byte {
 	prevStatus := lastStatus
 
 	for {
+		if loopControl != LOOP_NORMAL {
+			break
+		}
 		c := peekb(p)
 		if c == 0 {
 			break
 		}
 
 		if !inSingle && !inDouble {
-			// Check if we are at start of "for "
+			// Check if we are at start of "for " or "while "
 			if segLen == 0 {
 				q := p
 				for peekb(q) == ' ' || peekb(q) == '\t' {
 					q++
 				}
-				if peekb(q) == 'f' && peekb(q+1) == 'o' && peekb(q+2) == 'r' && (peekb(q+3) == ' ' || peekb(q+3) == '\t') {
+				isLoop := false
+				if (peekb(q) == 'f' && peekb(q+1) == 'o' && peekb(q+2) == 'r' && (peekb(q+3) == ' ' || peekb(q+3) == '\t' || peekb(q+3) == '\n')) ||
+				   (peekb(q) == 'w' && peekb(q+1) == 'h' && peekb(q+2) == 'i' && peekb(q+3) == 'l' && peekb(q+4) == 'e' && (peekb(q+5) == ' ' || peekb(q+5) == '\t' || peekb(q+5) == '\n')) {
+					isLoop = true
+				}
+				if isLoop {
+					for p < q && segLen < 255 {
+						segBuf[segLen] = peekb(p)
+						segLen++
+						p++
+					}
 					// Scan until matching "done"
-					forNesting := word(0)
+					loopNesting := word(0)
 					for peekb(p) != 0 {
 						fc := peekb(p)
 						if fc == '\'' && !inDouble {
@@ -1035,12 +1486,13 @@ func ExecuteScript(script *byte) byte {
 								for peekb(fq) == ' ' || peekb(fq) == '\t' || peekb(fq) == '\n' {
 									fq++
 								}
-								if peekb(fq) == 'f' && peekb(fq+1) == 'o' && peekb(fq+2) == 'r' && (peekb(fq+3) == ' ' || peekb(fq+3) == '\t') {
-									forNesting++
+								if (peekb(fq) == 'f' && peekb(fq+1) == 'o' && peekb(fq+2) == 'r' && (peekb(fq+3) == ' ' || peekb(fq+3) == '\t' || peekb(fq+3) == '\n')) ||
+								   (peekb(fq) == 'w' && peekb(fq+1) == 'h' && peekb(fq+2) == 'i' && peekb(fq+3) == 'l' && peekb(fq+4) == 'e' && (peekb(fq+5) == ' ' || peekb(fq+5) == '\t' || peekb(fq+5) == '\n')) {
+									loopNesting++
 								}
 								if peekb(fq) == 'd' && peekb(fq+1) == 'o' && peekb(fq+2) == 'n' && peekb(fq+3) == 'e' && (peekb(fq+4) == ' ' || peekb(fq+4) == '\t' || peekb(fq+4) == ';' || peekb(fq+4) == '\n' || peekb(fq+4) == 0) {
-									if forNesting > 0 {
-										forNesting--
+									if loopNesting > 0 {
+										loopNesting--
 									} else {
 										// Copy any characters from p up to fq
 										for ; p < fq && segLen < 255; p++ {
@@ -1122,10 +1574,27 @@ func ExecuteScript(script *byte) byte {
 			if peekb(sp) != 0 {
 				if isForLoop((*byte)(sp)) {
 					prevStatus = ExecuteFor((*byte)(sp))
+				} else if isWhileLoop((*byte)(sp)) {
+					prevStatus = ExecuteWhile((*byte)(sp))
 				} else {
-					prevStatus = ExecuteSimpleCommand((*byte)(sp))
+					if hasCmdSub((*byte)(sp)) {
+						var expBuf [256]byte
+						ExpandCmdSub((*byte)(sp), &expBuf[0], 255)
+						prevStatus = ExecuteSimpleCommand(&expBuf[0])
+					} else {
+						prevStatus = ExecuteSimpleCommand((*byte)(sp))
+					}
+				}
+				if loopControl != LOOP_NORMAL {
+					lastStatus = prevStatus
+					return prevStatus
 				}
 			}
+		}
+
+		if loopControl != LOOP_NORMAL {
+			lastStatus = prevStatus
+			return prevStatus
 		}
 
 		segLen = 0
@@ -1145,7 +1614,7 @@ func ExecuteScript(script *byte) byte {
 		}
 	}
 
-	if shouldRun {
+	if shouldRun && loopControl == LOOP_NORMAL {
 		sp := word(&segBuf[0])
 		for peekb(sp) == ' ' || peekb(sp) == '\t' {
 			sp++
@@ -1153,8 +1622,16 @@ func ExecuteScript(script *byte) byte {
 		if peekb(sp) != 0 {
 			if isForLoop((*byte)(sp)) {
 				prevStatus = ExecuteFor((*byte)(sp))
+			} else if isWhileLoop((*byte)(sp)) {
+				prevStatus = ExecuteWhile((*byte)(sp))
 			} else {
-				prevStatus = ExecuteSimpleCommand((*byte)(sp))
+				if hasCmdSub((*byte)(sp)) {
+					var expBuf [256]byte
+					ExpandCmdSub((*byte)(sp), &expBuf[0], 255)
+					prevStatus = ExecuteSimpleCommand(&expBuf[0])
+				} else {
+					prevStatus = ExecuteSimpleCommand((*byte)(sp))
+				}
 			}
 		}
 	}
@@ -1242,6 +1719,7 @@ func main() {
 			}
 
 			ExecuteScript(&scriptBuf[0])
+			loopControl = LOOP_NORMAL
 			sys.Exit(lastStatus)
 			return
 		}
@@ -1300,12 +1778,12 @@ func main() {
 			}
 			lineBuf[n] = 0
 
-			// If line starts a "for" without "done", keep reading until "done"
+			// If line starts a "for" or "while" without "done", keep reading until "done"
 			sp := word(&lineBuf[0])
 			for peekb(sp) == ' ' || peekb(sp) == '\t' {
 				sp++
 			}
-			if peekb(sp) == 'f' && peekb(sp+1) == 'o' && peekb(sp+2) == 'r' && (peekb(sp+3) == ' ' || peekb(sp+3) == '\t') {
+			if isForLoop((*byte)(sp)) || isWhileLoop((*byte)(sp)) {
 				curTotal := n
 				for !checkHasDone(&lineBuf[0]) {
 					var contBuf [256]byte
@@ -1330,6 +1808,7 @@ func main() {
 			}
 
 			ExecuteScript(&lineBuf[0])
+			loopControl = LOOP_NORMAL
 		}
 		sys.Close(fd)
 		sys.Exit(lastStatus)
@@ -1348,12 +1827,12 @@ func main() {
 		}
 		lineBuf[n] = 0
 
-		// If line starts a "for" without "done", keep reading until "done"
+		// If line starts a "for" or "while" without "done", keep reading until "done"
 		sp := word(&lineBuf[0])
 		for peekb(sp) == ' ' || peekb(sp) == '\t' {
 			sp++
 		}
-		if peekb(sp) == 'f' && peekb(sp+1) == 'o' && peekb(sp+2) == 'r' && (peekb(sp+3) == ' ' || peekb(sp+3) == '\t') {
+		if isForLoop((*byte)(sp)) || isWhileLoop((*byte)(sp)) {
 			curTotal := n
 			for !checkHasDone(&lineBuf[0]) {
 				sys.Print((*byte)("> "))
@@ -1379,6 +1858,7 @@ func main() {
 		}
 
 		ExecuteScript(&lineBuf[0])
+		loopControl = LOOP_NORMAL
 	}
 
 	sys.Exit(lastStatus)

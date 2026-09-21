@@ -49,7 +49,7 @@ SREC2DECB="$REPO_DIR/scripts/srec2decb.py"
 
 TARGETS="$@"
 if [ -z "$TARGETS" ]; then
-    TARGETS="gecho gcat gdir gdump gsh gtest gexpr"
+    TARGETS="gecho gcat gdir gdump gsh gtest gexpr gtrue gfalse"
 fi
 
 for TARGET in $TARGETS; do
@@ -83,7 +83,7 @@ for TARGET in $TARGETS; do
     # --- Motorola 6809 Target (*.9.decb) ---
     echo "  [6809] Compiling with MiniGolf..."
     "$MINIGOLF" -m M6809 \
-        -global_var_offset 32768 \
+        -global_var_offset 45056 \
         -I "$CMDS_DIR/lib" \
         -I "$REPO_DIR/kernel/common" \
         -o "$BUILD_DIR/$BASE.9.asm" \

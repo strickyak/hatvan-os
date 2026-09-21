@@ -112,6 +112,32 @@ f_sys__SysClose:
     move.l  d1, d0
     rts
 
+f_sys__SysDup:
+    move.l  4(sp), d1
+    move.l  #$82, d0
+    trap    #0
+    bcs     .dup_err_k
+    and.l   #$FF, d1
+    move.l  d1, d0
+    rts
+.dup_err_k:
+    move.b  d1, v_sys.LastErr
+    moveq   #-1, d0
+    rts
+
+f_sys__SysDelete:
+    move.l  4(sp), a0
+    move.l  #$87, d0
+    trap    #0
+    bcs     .del_err_k
+    moveq   #0, d0
+    rts
+.del_err_k:
+    move.b  d1, v_sys.LastErr
+    and.l   #$FF, d1
+    move.l  d1, d0
+    rts
+
 f_sys__SysExit:
     move.l  4(sp), d1
     move.l  #$06, d0

@@ -1,0 +1,7 @@
+package main
+
+import "sys"
+
+func main() {
+	sys.Exit(0)
+}

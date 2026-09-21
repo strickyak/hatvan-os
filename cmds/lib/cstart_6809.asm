@@ -141,6 +141,37 @@ f_sys__SysClose:
     tfr d,x
     rts
 
+f_sys__SysDup:
+    lda 2,s
+    swi2
+    fcb $82 ; I$Dup
+    bcs .dup_err
+    tfr a,b
+    clra
+    tfr d,x
+    rts
+.dup_err:
+    stb v_sys.LastErr
+    ldb #$FF
+    clra
+    tfr d,x
+    rts
+
+f_sys__SysDelete:
+    ldx 2,s
+    swi2
+    fcb $87 ; I$Delete
+    bcs .del_err
+    clra
+    clrb
+    ldx #0
+    rts
+.del_err:
+    stb v_sys.LastErr
+    clra
+    tfr d,x
+    rts
+
 f_sys__SysExit:
     ldb 2,s
     swi2

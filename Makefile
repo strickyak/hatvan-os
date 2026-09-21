@@ -30,7 +30,7 @@ PROCFS_68K  := $(BUILD_DIR)/procfs_68k.srec
 # Command Targets
 CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod $(BUILD_DIR)/sh.mod
 CMDS_68K    := $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb $(BUILD_DIR)/catk.decb $(BUILD_DIR)/shk.decb
-GOLF_CMDS   := gecho gcat gdir gdump gsh gtest gexpr
+GOLF_CMDS   := gecho gcat gdir gdump gsh gtest gexpr gtrue gfalse
 CMDS_GOLF_9 := $(patsubst %,$(REPO_DIR)/cmds/%.9.decb,$(GOLF_CMDS))
 CMDS_GOLF_K := $(patsubst %,$(REPO_DIR)/cmds/%.k.decb,$(GOLF_CMDS))
 
@@ -254,6 +254,10 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(REPO_DIR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gsh.9.decb $@,Cmds9/GSH
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.9.decb $@,Cmds9/GTEST
 	$(OS9) copy -r $(REPO_DIR)/cmds/gexpr.9.decb $@,Cmds9/GEXPR
+	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.9.decb $@,Cmds9/TEST
+	$(OS9) copy -r $(REPO_DIR)/cmds/gexpr.9.decb $@,Cmds9/EXPR
+	$(OS9) copy -r $(REPO_DIR)/cmds/gtrue.9.decb $@,Cmds9/GTRUE
+	$(OS9) copy -r $(REPO_DIR)/cmds/gfalse.9.decb $@,Cmds9/GFALSE
 	$(OS9) makdir $@,CmdsK
 	$(OS9) copy -r $(BUILD_DIR)/echok.decb $@,CmdsK/ECHO
 	$(OS9) copy -r $(BUILD_DIR)/dirk.decb $@,CmdsK/DIR
@@ -267,7 +271,13 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(REPO_DIR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gsh.k.decb $@,CmdsK/GSH
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.k.decb $@,CmdsK/GTEST
 	$(OS9) copy -r $(REPO_DIR)/cmds/gexpr.k.decb $@,CmdsK/GEXPR
+	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.k.decb $@,CmdsK/TEST
+	$(OS9) copy -r $(REPO_DIR)/cmds/gexpr.k.decb $@,CmdsK/EXPR
+	$(OS9) copy -r $(REPO_DIR)/cmds/gtrue.k.decb $@,CmdsK/GTRUE
+	$(OS9) copy -r $(REPO_DIR)/cmds/gfalse.k.decb $@,CmdsK/GFALSE
 	$(OS9) copy -r $(REPO_DIR)/testdata/test_expr.sh $@,test_expr.sh
+	$(OS9) copy -r $(REPO_DIR)/testdata/test_while.sh $@,test_while.sh
+	$(OS9) copy -r $(REPO_DIR)/testdata/triangle.sh $@,triangle.sh
 	cp -f $@ $(TEST_DISK)
 
 $(TEST_DISK): $(DISK_IMAGE)

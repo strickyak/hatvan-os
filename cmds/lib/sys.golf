@@ -28,6 +28,8 @@ func SysReadLn(path byte, buf *byte, maxLen word) word
 func SysWrite(path byte, buf *byte, count word) word
 func SysWritLn(path byte, buf *byte, count word) word
 func SysClose(path byte) byte
+func SysDup(path byte) byte
+func SysDelete(path *byte) byte
 func SysExit(status byte)
 func SysFork(cmd *byte, params *byte, paramLen word) byte
 func SysWait() word
@@ -39,6 +41,14 @@ func Open(path *byte, mode byte) byte {
 
 func Create(path *byte, mode byte, attrs byte) byte {
 	return SysCreate(path, mode, attrs)
+}
+
+func Dup(path byte) byte {
+	return SysDup(path)
+}
+
+func Delete(path *byte) byte {
+	return SysDelete(path)
 }
 
 func Read(path byte, buf *byte, maxLen word) word {
