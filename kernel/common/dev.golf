@@ -10,6 +10,7 @@ const DEV_LOG = 2
 const DEV_NULL = 3
 const DEV_DISK = 4
 const DEV_PROC = 5
+const DEV_DUP = 6
 
 const TTY_RING_SIZE = 1024
 var ttyRing [1024]byte
@@ -64,6 +65,19 @@ func ParsePathDevice(path *byte, defaultDrive byte) (byte, byte, *byte) {
 
 	// Check for leading slash
 	if peekb(p) == '/' {
+		// Check /0 .. /3 (numbered path dup devices)
+		c1 := peekb(p + 1)
+		if c1 >= '0' && c1 <= '3' {
+			c2 := peekb(p + 2)
+			if c2 == 0 || c2 == '/' || c2 == ' ' || c2 == '\t' || c2 == '\r' || c2 == '\n' || c2 == ',' {
+				rem := p + 2
+				if c2 == '/' {
+					rem++
+				}
+				return DEV_DUP, c1 - '0', (*byte)(rem)
+			}
+		}
+
 		// Check /term
 		if peekb(p+1) == 't' && peekb(p+2) == 'e' && peekb(p+3) == 'r' && peekb(p+4) == 'm' {
 			c := peekb(p + 5)

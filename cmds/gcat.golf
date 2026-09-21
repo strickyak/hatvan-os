@@ -5,17 +5,16 @@ import "sys"
 func main() {
 	var filename [128]byte
 	flen := sys.CopyArg(&filename[0], 128)
+	var fd byte
 	if flen == 0 {
-		sys.PrintErr((*byte)("Usage: gcat <file>"))
-		sys.Exit(1)
-		return
-	}
-
-	fd := sys.Open(&filename[0], sys.MODE_READ)
-	if fd == 0xFF {
-		sys.PrintErr((*byte)("gcat: cannot open"))
-		sys.Exit(1)
-		return
+		fd = sys.STDIN
+	} else {
+		fd = sys.Open(&filename[0], sys.MODE_READ)
+		if fd == 0xFF {
+			sys.PrintErr((*byte)("gcat: cannot open"))
+			sys.Exit(1)
+			return
+		}
 	}
 
 	var buf [256]byte
@@ -27,6 +26,8 @@ func main() {
 		sys.WritLn(sys.STDOUT, &buf[0], n)
 	}
 
-	sys.Close(fd)
+	if flen > 0 {
+		sys.Close(fd)
+	}
 	sys.Exit(0)
 }

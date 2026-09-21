@@ -76,12 +76,30 @@ func PathFree(pathId byte) {
 
 // SysOpen opens a file or device and returns (pathId, errCode)
 func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word, cxdLSN word) (byte, byte) {
+	devType, drive, remPath := dev.ParsePathDevice(pathStr, defaultDrive)
+
+	// Numbered process path dup devices: /0 .. /3
+	if devType == dev.DEV_DUP {
+		if task >= tables.MAX_PROCS || tables.Shared.ProcTable[task].State == 0 {
+			return 0xFF, E_BPNUM
+		}
+		targetProcPath := drive
+		targetPathId := tables.Shared.ProcTable[task].Paths[targetProcPath]
+		if targetPathId == 0xFF || targetPathId >= MAX_PATHS {
+			return 0xFF, E_BPNUM
+		}
+		err := SysDup(targetPathId)
+		if err != 0 {
+			return 0xFF, err
+		}
+		return targetPathId, 0
+	}
+
 	pathId, pd := PathAlloc()
 	if pathId == 0xFF {
 		return 0xFF, E_PTHFUL
 	}
 
-	devType, drive, remPath := dev.ParsePathDevice(pathStr, defaultDrive)
 	pd.DevType = devType
 	pd.Drive = drive
 	pd.Mode = mode
@@ -125,9 +143,9 @@ func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word
 
 // SysCreate creates or opens a file for writing and returns (pathId, errCode)
 func SysCreate(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word, cxdLSN word) (byte, byte) {
-	// For devices (/term, /log, /null), create is equivalent to open write
+	// For devices (/term, /log, /null, /0../3), create is equivalent to open write
 	devType, _, _ := dev.ParsePathDevice(pathStr, defaultDrive)
-	if devType == dev.DEV_TERM || devType == dev.DEV_LOG || devType == dev.DEV_NULL {
+	if devType == dev.DEV_TERM || devType == dev.DEV_LOG || devType == dev.DEV_NULL || devType == dev.DEV_DUP {
 		return SysOpen(task, pathStr, mode|MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
 	}
 	if devType == dev.DEV_PROC {

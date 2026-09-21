@@ -113,6 +113,13 @@ func main() {
 				dev.KLog((*byte)("PROC:DUP:OK"))
 			}
 
+			// Test numbered path dup device: open "/2" should dup path 2 (stderr)
+			pDupDev, devErr := proc.ProcOpen(p1PID, (*byte)("/2"), path.MODE_READ)
+			if devErr == 0 && pDupDev == 4 && p1.Paths[4] == p1.Paths[2] {
+				proc.ProcClose(p1PID, pDupDev)
+				dev.KLog((*byte)("PATH:DUPDEV:OK"))
+			}
+
 			// Now fork/allocate child Process from parent Process
 			p2PID, p2 := proc.ProcAlloc(p1PID)
 			if p2PID > 0 && p2 != (*tables.Process)(0) {
