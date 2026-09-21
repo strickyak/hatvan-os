@@ -1,0 +1,604 @@
+package prelude
+
+const HEAP_SIZE = 4000 + (sizeof[*word]()-2)*61440 // 4000 on M6809, 126K on M68K
+
+func peek[T any](addr word) T {
+	return *((*T)(addr))
+}
+
+func poke[T any](addr word, value T) {
+	*((*T)(addr)) = value
+}
+
+func peekb(addr word) byte        { return *((*byte)(addr)) }
+func peekw(addr word) word        { return *((*word)(addr)) }
+func pokeb(addr word, value byte) { *((*byte)(addr)) = value }
+func pokew(addr word, value word) { *((*word)(addr)) = value }
+
+// golf:volatile
+func vpeekb(addr word) byte { return *((*byte)(addr)) }
+
+// golf:volatile
+func vpeekw(addr word) word { return *((*word)(addr)) }
+
+// golf:volatile
+func vpokeb(addr word, value byte) { *((*byte)(addr)) = value }
+
+// golf:volatile
+func vpokew(addr word, value word) { *((*word)(addr)) = value }
+
+// abort terminates the program abnormally, satisfying the C extern void abort(void)
+// declaration that cc_to_golf emits for <assert.h> and similar headers.
+func abort() {
+	panic("abort")
+}
+
+func pointer_add[T any](ptr *T, i int) *T {
+	return (*T)(word(ptr) + word(i)*sizeof[T]())
+}
+func pointer_sub[T any](ptr *T, i int) *T {
+	return (*T)(word(ptr) - word(i)*sizeof[T]())
+}
+func pointer_diff[T any](a *T, b *T) int {
+	return int(word(a)-word(b)) / int(sizeof[T]())
+}
+
+/////////////////////////////////////////////
+
+// post_decrement returns the current value of *p and then decrements *p.
+// Use this to translate C's postfix -- operator when used as an expression.
+func post_decrement[T any](p *T) T {
+	z := *p
+	*p--
+	return z
+}
+
+// post_increment returns the current value of *p and then increments *p.
+// Use this to translate C's postfix ++ operator when used as an expression.
+func post_increment[T any](p *T) T {
+	z := *p
+	*p++
+	return z
+}
+
+// pre_increment increments *p and returns the new value.
+// Use this to translate C's prefix ++ operator when used as an expression.
+func pre_increment[T any](p *T) T {
+	*p++
+	return *p
+}
+
+// pre_decrement decrements *p and returns the new value.
+// Use this to translate C's prefix -- operator when used as an expression.
+func pre_decrement[T any](p *T) T {
+	*p--
+	return *p
+}
+
+func pointer_post_increment[T any](p **T) *T {
+	z := *p
+	*p = pointer_add[T](*p, 1)
+	return z
+}
+
+func pointer_post_decrement[T any](p **T) *T {
+	z := *p
+	*p = pointer_sub[T](*p, 1)
+	return z
+}
+
+func pointer_pre_increment[T any](p **T) *T {
+	*p = pointer_add[T](*p, 1)
+	return *p
+}
+
+func pointer_pre_decrement[T any](p **T) *T {
+	*p = pointer_sub[T](*p, 1)
+	return *p
+}
+
+/////////////////////////////////////////////
+
+func clear[T any](p *T) {
+	addr := word(p)
+	for i := range sizeof[T]() {
+		pokeb(addr+i, 0)
+	}
+}
+func memset(p *byte, x byte, n word) {
+	addr := word(p)
+	for i := range n {
+		pokeb(i+addr, x)
+	}
+}
+
+func memcmp(a *byte, b *byte, n word) int {
+	for i := word(0); i < n; i++ {
+		va := peekb(word(a) + i)
+		vb := peekb(word(b) + i)
+		if va < vb {
+			return -1
+		}
+		if va > vb {
+			return 1
+		}
+	}
+	return 0
+}
+
+func memeq(a *byte, b *byte, n word) bool {
+	for i := word(0); i < n; i++ {
+		va := peekb(word(a) + i)
+		vb := peekb(word(b) + i)
+		if va != vb {
+			return 0
+		}
+	}
+	return 1
+}
+func strcmp(a string, b string) int {
+	n := a.Len
+	if b.Len < n {
+		n = b.Len
+	}
+	c := memcmp((*byte)(a.Base), (*byte)(b.Base), n)
+	if c != 0 {
+		return c
+	}
+	if a.Len < b.Len {
+		return -1
+	}
+	if a.Len > b.Len {
+		return 1
+	}
+	return 0
+}
+
+func streq(a string, b string) (z bool) {
+	// println("# streq: a.Len=", a.Len, " b.Len=", b.Len, " a=", a, " b=", b)
+	if a.Len == b.Len {
+		z = memeq((*byte)(a.Base), (*byte)(b.Base), a.Len)
+	}
+	// println("# =>", z)
+	return z
+}
+
+func strlen(s *byte) (n word) {
+	for *s != 0 {
+		n++
+		s = (*byte)(word(s) + 1)
+	}
+	return
+}
+
+/////////////////////////////////////////////
+
+type any struct {
+	BaseAddr word
+	TypeStr  word
+}
+
+func printany(x any) {
+	//var t string = x.TypeStr
+	//t.Len = strlen(x.TypeStr)
+	tlen := strlen(x.TypeStr)
+	t := string{Base: x.TypeStr, Len: tlen, Cap: tlen}
+
+	if t == "byte" {
+		println("b=", peek[byte](x.BaseAddr))
+	} else if t == "word" {
+		println("w=", peek[word](x.BaseAddr))
+	} else if t == "*byte" {
+		println("*b=", (*byte)(peek[word](x.BaseAddr)))
+	} else if t == "string" {
+		println("s=", peek[string](x.BaseAddr))
+		//} else if t == "slice_byte" {
+		//println("sb=", peek[string](x.BaseAddr))
+	} else if t == "slice[byte]" {
+		println("s[b]=", peek[string](x.BaseAddr))
+		//} else if t == "prelude.slice_byte" {
+		//println("psb=", peek[string](x.BaseAddr))
+	} else {
+		println("?", (*byte)(x.TypeStr), "?")
+		i := 0
+		for peekb(x.TypeStr+i) > 0 {
+			print(" #", peekb(x.TypeStr+i))
+			tmp := string{peekb(x.TypeStr + i)}
+			print("<", tmp, ">  ")
+			i++
+		}
+		println("")
+	}
+}
+
+/////////////////////////////////////////////
+
+type slice[T any] struct {
+	Base word
+	Cap  word
+	Len  word
+}
+
+func (o *slice[T]) Append(x T) {
+	if o.Base == 0 {
+		o.Base = word(zalloc(8 * sizeof[T]()))
+		o.Cap = 8
+		o.Len = 1
+		o.Put(0, x)
+		return
+	}
+	n := o.Len
+	if n+1 < o.Cap {
+		o.Len++
+		o.Put(n, x)
+		return
+	}
+
+	// Must re-alloc
+	var z slice[T]
+	z.Cap = o.Cap + o.Cap
+	if z.Cap < 8 {
+		z.Cap = 8
+	}
+	z.Base = word(zalloc(z.Cap * sizeof[T]()))
+	z.Len = n + 1
+
+	for i := range n {
+		z.Put(i, o.Get(i))
+	}
+	z.Put(n, x)
+	free((*byte)(o.Base))
+	*o = z
+}
+
+func (o *slice[T]) Address(i word) word {
+	if i >= o.Len {
+		panic("2001")
+	}
+	p := (i * sizeof[T]())
+	return o.Base + p
+}
+
+func (o *slice[T]) Get(i word) T {
+	p := (i * sizeof[T]())
+	if i >= o.Len {
+		panic("2002")
+	}
+	return peek[T](o.Base + p)
+}
+
+func (o *slice[T]) Put(i word, x T) {
+	p := (i * sizeof[T]())
+	if i >= o.Len {
+		panic("2003")
+	}
+	poke[T](o.Base+p, x)
+}
+
+func (o *slice[T]) Chop(start word, limit word) slice[T] {
+	if start > limit {
+		panic("2004")
+	}
+	if limit > o.Cap {
+		panic("2005")
+	}
+	var z slice[T]
+	z.Base = o.Base + start*sizeof[T]()
+	z.Len = limit - start
+	z.Cap = z.Len
+	return z
+}
+
+func (o *slice[T]) Pop() T {
+	if o.Len == 0 {
+		panic("calling Pop() on empty slice")
+	}
+	result := o.Get(0)
+	*o = o.Chop(1, o.Len)
+	return result
+}
+
+// makeslice[T](n) is like make([]T, n) in golang.
+func makeslice[T any](n word) slice[T] {
+	var z slice[T]
+	if n == 0 {
+		return z
+	}
+	z.Base := zalloc(n * sizeof[T]())
+	z.Len = n
+	z.Cap = n
+	return z
+}
+
+// freeslice frees a malloced slice's contents, if it was made by Appending a zero slice, or by makeslice.
+func freeslice[T any](a slice[T]) {
+	p := (*byte)(a.Base)
+	free(p)
+}
+
+/////////////////////////////////////////////
+
+var _panic_ *byte
+var _jmp_chain_ *byte
+
+func recover() *byte {
+	z := _panic_
+	_panic_ = (*byte)(0)
+	return z
+}
+
+/////////////////////////////////////////////
+
+func mul_byte(a byte, b byte) word
+
+func mul_word(a word, b word) word {
+	return a * b
+}
+
+func div_word(a0 word, b word) word {
+	return a0 / b
+}
+
+func mod_word(a0 word, b word) word {
+	return a0 % b
+}
+
+/////////////////////////////////////////////
+// Signed integer (int) arithmetic.
+// MiniGolf's int is a signed word; mul/div/mod are not built-in
+// so we implement them by stripping the sign, doing unsigned word
+// arithmetic, and restoring the sign.
+
+// abs_int returns the absolute value of x as an unsigned word.
+func abs_int(x int) word {
+	if x < 0 {
+		return word(int(0) - x)
+	}
+	return word(x)
+}
+
+// mul_int multiplies two signed integers.
+// Sign rule: same signs → positive; different signs → negative.
+func mul_int(a int, b int) int {
+	var neg byte
+	if a < 0 {
+		neg ^= 1
+	}
+	if b < 0 {
+		neg ^= 1
+	}
+	result := int(mul_word(abs_int(a), abs_int(b)))
+	if neg != 0 {
+		return int(0) - result
+	}
+	return result
+}
+
+// div_int divides two signed integers (truncated toward zero, C99 semantics).
+// Sign rule: same signs → positive; different signs → negative.
+func div_int(a int, b int) int {
+	var neg byte
+	if a < 0 {
+		neg ^= 1
+	}
+	if b < 0 {
+		neg ^= 1
+	}
+	result := int(div_word(abs_int(a), abs_int(b)))
+	if neg != 0 {
+		return int(0) - result
+	}
+	return result
+}
+
+// mod_int computes the signed remainder (C99 semantics: result has sign of dividend).
+func mod_int(a int, b int) int {
+	result := int(mod_word(abs_int(a), abs_int(b)))
+	if a < 0 {
+		return int(0) - result
+	}
+	return result
+}
+
+/////////////////////////////////////////////
+
+// strdup uses the arg's Len and allocates a copy of the string, with NUL-termination past its Len
+func strdup(a string) string {
+	n := a.Len
+	p := word(malloc(n + 1))
+	for i := range n {
+		pokeb(p+i, a[i])
+	}
+	pokeb(p+n, 0) // NUL-terminate.
+
+	var z string
+	z.Base = p
+	z.Len = n
+	z.Cap = n + 1
+	return z
+}
+
+func strfree(a string) {
+	p := (*byte)(a.Base)
+	free(p)
+}
+
+/////////////////////////////////////////////
+
+type MallocHeader struct {
+	next  *MallocHeader
+	size  word
+	magic word
+}
+
+var Heap [HEAP_SIZE + 1]byte
+
+var base MallocHeader
+var freep *MallocHeader
+
+func malloc_init(heap_start *byte, heap_size word) {
+	if HEAP_SIZE < 1 {
+		panic("4043")
+	}
+	var p *MallocHeader = (*MallocHeader)(word(heap_start))
+
+	// Calculate how many MallocHeader-sized units fit in the heap
+	p.size = div_word(heap_size, sizeof[MallocHeader]())
+	p.magic = 42424
+	p.next = &base
+
+	base.next = p
+	base.size = 0
+	freep = &base
+}
+
+const TOO_BIG = 20000 // Assume an error, if malloc more than this big.
+
+// zalloc allocates zeroed memory using alloc
+func zalloc(nbytes word) word {
+	p := word(malloc(nbytes))
+	for i := range nbytes {
+		pokeb(p+i, 0)
+	}
+	return p
+}
+
+func malloc(nbytes word) *byte {
+	if HEAP_SIZE < 1 {
+		panic("4041")
+		var null *byte
+		return null
+	}
+	var p *MallocHeader
+	var prevp *MallocHeader
+	var nunits word
+
+	if nbytes > TOO_BIG {
+		panic("4044")
+	}
+
+	// Calculate how many MallocHeader units we need (including the 1 unit for metadata)
+	nunits = div_word((nbytes+sizeof[MallocHeader]()-1), sizeof[MallocHeader]()) + 1
+
+	prevp = freep
+	if word(prevp) == 0 {
+		panic("4001")
+		return (*byte)(0) // Heap wasn't initialized!
+	}
+
+	// Traverse the circularly linked free list
+	p = prevp.next
+	for {
+		if p.size >= nunits { // First-fit strategy
+			if p.size == nunits {
+				// Exactly the right size; splice it out of the free list
+				prevp.next = p.next
+			} else {
+				// Block is bigger than needed; allocate from the tail end
+				p.size = p.size - nunits
+				p = (*MallocHeader)(word(p) + mul_word(p.size, sizeof[MallocHeader]()))
+				p.size = nunits
+			}
+			p.magic = 42424
+			freep = prevp
+			return (*byte)(word(p) + sizeof[MallocHeader]())
+		}
+		if word(p) == word(freep) {
+			panic("4002")
+			return (*byte)(0) // Wrapped around the list: Out of Memory!
+		}
+		prevp = p
+		p = p.next
+	}
+	panic("4003")
+	return (*byte)(0)
+}
+
+func free(ap *byte) {
+	if HEAP_SIZE < 1 {
+		panic("4042")
+		return
+	}
+	var bp *MallocHeader
+	var p *MallocHeader
+	// println("#free <<", word(ap) )
+
+	if word(ap) == 0 {
+		return
+	}
+
+	// Safety check: Only free pointers that actually reside inside the Heap!
+	// This prevents crashing when Appending to string literals (which live in .data)
+	heap_start := word(&Heap[0])
+	heap_end := heap_start + HEAP_SIZE
+	if word(ap) < heap_start || word(ap) >= heap_end {
+		return
+	}
+
+	// Move pointer backward to find the actual header
+	bp = (*MallocHeader)(word(ap) - sizeof[MallocHeader]())
+
+	if bp.magic != 42424 {
+		return // Not a valid malloc pointer!
+	}
+	// Prevent double free
+	bp.magic = 0
+
+	// Find the right chronological spot in the free list to insert it
+	var done byte = 0
+	p = freep
+	for done == 0 {
+		if word(bp) > word(p) && word(bp) < word(p.next) {
+			done = 1
+		} else if word(p) >= word(p.next) && (word(bp) > word(p) || word(bp) < word(p.next)) {
+			done = 1 // Insert at the extreme beginning or end of the list
+		}
+
+		if done == 0 {
+			p = p.next
+		}
+	}
+
+	// Coalesce (merge) with the next block if they are physically adjacent
+	if word(bp)+mul_word(bp.size, sizeof[MallocHeader]()) == word(p.next) {
+		bp.size = bp.size + p.next.size
+		bp.next = p.next.next
+	} else {
+		bp.next = p.next
+	}
+
+	// Coalesce (merge) with the previous block if they are physically adjacent
+	if word(p)+mul_word(p.size, sizeof[MallocHeader]()) == word(bp) {
+		p.size = p.size + bp.size
+		p.next = bp.next
+	} else {
+		p.next = bp
+	}
+
+	freep = p
+}
+
+func BytesFree() word {
+	if HEAP_SIZE < 1 {
+		return 0
+	}
+	var total_units word = 0
+	curr := freep.next
+	for word(curr) != word(freep) {
+		total_units = total_units + curr.size
+		curr = curr.next
+	}
+	total_units = total_units + freep.size
+	return mul_word(total_units, sizeof[MallocHeader]())
+}
+
+func init() {
+	if HEAP_SIZE > 0 {
+		malloc_init(&Heap[0], HEAP_SIZE)
+	}
+}
+
+///////////////////////////////
+
+// minigolf:linkage("putchar")
+func putchar(b byte) // External; linkage overrides to C stdlib putchar

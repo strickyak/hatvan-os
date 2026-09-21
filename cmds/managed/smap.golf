@@ -1,0 +1,84 @@
+package smap
+
+type InternTable struct {
+	guts slice[string]
+}
+
+func (o *InternTable) Intern(s string) string {
+	for i, e := range o.guts {
+		if e == s { // string comparison, slow.
+			return e
+		}
+	}
+	z := strdup(s)
+	o.guts.Append(z)
+	return z
+}
+
+///////////////////////////////////////////////
+
+// Imap is an Interned String Map
+type Imap[T any] struct {
+	keys   slice[string]
+	values slice[T]
+}
+
+func (o *Imap[T]) Lookup(key /* interned */ string) (T, bool) {
+	for i, e := range o.keys {
+		if e.Base == key.Base { // base comparison, fast.
+			return o.values[i], true
+		}
+	}
+	var zero word
+	return peek[T](word(&zero)), false
+}
+
+// Insert returns true if the key is fresh, false if value is replaced at old key slot.
+func (o *Imap[T]) Insert(key /* interned */ string, value T) bool {
+	for i, e := range o.keys {
+		if e.Base == key.Base { // base comparison, fast.
+			o.values[i] = value
+			return false
+		}
+	}
+	o.keys.Append(key)
+	o.values.Append(value)
+	return true
+}
+
+func (o *Imap[T]) Keys() slice[string] { return o.keys }
+
+///////////////////////////////////////////////
+
+// Smap is a String Map (for normal, not-interned strings)
+type Smap[T any] struct {
+	keys   slice[string]
+	values slice[T]
+}
+
+func (o *Smap[T]) Lookup(key string) (T, bool) {
+	for i, e := range o.keys {
+		if e == key { // string comparison, slow.
+			return o.values[i], true
+		}
+	}
+	var zeroT T
+	return zeroT, false
+}
+
+// Insert returns true if the key is fresh, false if value is replaced at old key slot.
+func (o *Smap[T]) Insert(key string, value T) bool {
+	for i, e := range o.keys {
+		if e == key { // string comparison, slow.
+			o.values[i] = value
+			return false
+		}
+	}
+	o.keys.Append(key)
+	o.values.Append(value)
+	return true
+}
+
+func (o *Smap[T]) Keys() slice[string] { return o.keys }
+
+///////////////////////////////////////////////

@@ -49,7 +49,7 @@ SREC2DECB="$REPO_DIR/scripts/srec2decb.py"
 
 TARGETS="$@"
 if [ -z "$TARGETS" ]; then
-    TARGETS="gecho gcat gdir gdump gsh gtest gexpr gtrue gfalse"
+    TARGETS="gecho gcat gdir gdump gsh gsh2 gtest gexpr gtrue gfalse"
 fi
 
 for TARGET in $TARGETS; do
@@ -78,12 +78,26 @@ for TARGET in $TARGETS; do
             ;;
     esac
 
+    MANAGED_FLAG_9=""
+    MANAGED_FLAG_K=""
+    OPT_FLAGS_9=""
+    OPT_FLAGS_K=""
+    GLOBAL_OFFSET=45056
+    if grep -q 'import "mem"\|import "smap"' "$SRC" 2>/dev/null || [ "$BASE" = "gsh2" ]; then
+        MANAGED_FLAG_9="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=8000"
+        MANAGED_FLAG_K="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=64000"
+        OPT_FLAGS_9="-no-slotsharing6809 -no-stackalloc -no-inline -no-leaf-opt6809"
+        OPT_FLAGS_K="-no-stackalloc -no-inline"
+        GLOBAL_OFFSET=48128
+    fi
+
     echo "=== Building $BASE ($SRC) ==="
 
     # --- Motorola 6809 Target (*.9.decb) ---
     echo "  [6809] Compiling with MiniGolf..."
     "$MINIGOLF" -m M6809 \
-        -global_var_offset 45056 \
+        -global_var_offset $GLOBAL_OFFSET \
+        $MANAGED_FLAG_9 $OPT_FLAGS_9 \
         -I "$CMDS_DIR/lib" \
         -I "$REPO_DIR/kernel/common" \
         -o "$BUILD_DIR/$BASE.9.asm" \
@@ -99,6 +113,7 @@ for TARGET in $TARGETS; do
     # --- Motorola 68000 Target (*.k.decb) ---
     echo "  [68K]  Compiling with MiniGolf..."
     "$MINIGOLF" -m=k \
+        $MANAGED_FLAG_K $OPT_FLAGS_K \
         -I "$CMDS_DIR/lib" \
         -I "$REPO_DIR/kernel/common" \
         -o "$BUILD_DIR/$BASE.k.s" \

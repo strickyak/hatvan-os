@@ -10,12 +10,52 @@ cstart:
     trap    #0
 
 _printf:
+    move.l  4(sp), a0
+    cmpa.w  #0, a0
+    beq.s   .printf_arg1
+    move.l  a0, a1
+    clr.l   d2
+.printf_len:
+    tst.b   (a1)+
+    beq.s   .printf_write
+    addq.l  #1, d2
+    bra.s   .printf_len
+.printf_write:
+    tst.l   d2
+    beq.s   .printf_arg1
+    move.l  #2, d1
+    move.l  #$8A, d0
+    trap    #0
+.printf_arg1:
+    move.l  8(sp), a0
+    cmpa.w  #0, a0
+    beq.s   .printf_ret
+    move.l  a0, a1
+    clr.l   d2
+.printf_len2:
+    tst.b   (a1)+
+    beq.s   .printf_write2
+    addq.l  #1, d2
+    bra.s   .printf_len2
+.printf_write2:
+    tst.l   d2
+    beq.s   .printf_ret
+    move.l  #2, d1
+    move.l  #$8A, d0
+    trap    #0
+.printf_ret:
     rts
 
 _exit:
     clr.l   d1
     move.l  #$06, d0
     trap    #0
+
+f_prelude__mul_byte:
+    move.l  4(sp), d0
+    move.l  8(sp), d1
+    mulu.w  d1, d0
+    rts
 
 f_sys__SysOpen:
     move.l  4(sp), a0

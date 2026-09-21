@@ -30,7 +30,7 @@ PROCFS_68K  := $(BUILD_DIR)/procfs_68k.srec
 # Command Targets
 CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod $(BUILD_DIR)/sh.mod
 CMDS_68K    := $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb $(BUILD_DIR)/catk.decb $(BUILD_DIR)/shk.decb
-GOLF_CMDS   := gecho gcat gdir gdump gsh gtest gexpr gtrue gfalse
+GOLF_CMDS   := gecho gcat gdir gdump gsh gsh2 gtest gexpr gtrue gfalse
 CMDS_GOLF_9 := $(patsubst %,$(REPO_DIR)/cmds/%.9.decb,$(GOLF_CMDS))
 CMDS_GOLF_K := $(patsubst %,$(REPO_DIR)/cmds/%.k.decb,$(GOLF_CMDS))
 
@@ -242,6 +242,7 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(REPO_DIR
 	$(OS9) makdir $@,Cmds9
 	unzip -q -o $(REPO_DIR)/cmds/os9-6809-level1.zip -d $(BUILD_DIR)
 	for f in $(BUILD_DIR)/os9-6809-level1/*; do $(OS9) copy -r "$$f" $@,Cmds9; done
+	for f in $(BUILD_DIR)/os9-6809-level1/*; do $(OS9) attr -r -w -e -pr -pe $@,Cmds9/$$(basename $$f); done
 	$(OS9) copy -r $(BUILD_DIR)/echo.mod $@,Cmds9/ECHO
 	$(OS9) copy -r $(BUILD_DIR)/cat.mod $@,Cmds9/CAT
 	$(OS9) copy -r $(BUILD_DIR)/sh.mod $@,Cmds9/SH
@@ -252,12 +253,30 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(REPO_DIR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gdir.9.decb $@,Cmds9/GDIR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gdump.9.decb $@,Cmds9/GDUMP
 	$(OS9) copy -r $(REPO_DIR)/cmds/gsh.9.decb $@,Cmds9/GSH
+	$(OS9) copy -r $(REPO_DIR)/cmds/gsh2.9.decb $@,Cmds9/GSH2
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.9.decb $@,Cmds9/GTEST
 	$(OS9) copy -r $(REPO_DIR)/cmds/gexpr.9.decb $@,Cmds9/GEXPR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.9.decb $@,Cmds9/TEST
 	$(OS9) copy -r $(REPO_DIR)/cmds/gexpr.9.decb $@,Cmds9/EXPR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtrue.9.decb $@,Cmds9/GTRUE
 	$(OS9) copy -r $(REPO_DIR)/cmds/gfalse.9.decb $@,Cmds9/GFALSE
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/ECHO
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/CAT
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/SH
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/TESTCMD
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/TESTDECB
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GECHO
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GCAT
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GDIR
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GDUMP
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GSH
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GSH2
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GTEST
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GEXPR
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/TEST
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/EXPR
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GTRUE
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GFALSE
 	$(OS9) makdir $@,CmdsK
 	$(OS9) copy -r $(BUILD_DIR)/echok.decb $@,CmdsK/ECHO
 	$(OS9) copy -r $(BUILD_DIR)/dirk.decb $@,CmdsK/DIR
@@ -269,6 +288,7 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(REPO_DIR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gdir.k.decb $@,CmdsK/GDIR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gdump.k.decb $@,CmdsK/GDUMP
 	$(OS9) copy -r $(REPO_DIR)/cmds/gsh.k.decb $@,CmdsK/GSH
+	$(OS9) copy -r $(REPO_DIR)/cmds/gsh2.k.decb $@,CmdsK/GSH2
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.k.decb $@,CmdsK/GTEST
 	$(OS9) copy -r $(REPO_DIR)/cmds/gexpr.k.decb $@,CmdsK/GEXPR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.k.decb $@,CmdsK/TEST

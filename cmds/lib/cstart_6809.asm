@@ -13,6 +13,40 @@ cstart:
     fcb $06 ; F$Exit
 
 _printf:
+    ldx 2,s
+    cmpx #0
+    beq .printf_arg1
+    ldy #0
+.printf_len:
+    tst ,x+
+    beq .printf_write
+    leay 1,y
+    bra .printf_len
+.printf_write:
+    cmpy #0
+    beq .printf_arg1
+    ldx 2,s
+    lda #2 ; stderr
+    swi2
+    fcb $8A ; I$Write
+.printf_arg1:
+    ldx 4,s
+    cmpx #0
+    beq .printf_ret
+    ldy #0
+.printf_len2:
+    tst ,x+
+    beq .printf_write2
+    leay 1,y
+    bra .printf_len2
+.printf_write2:
+    cmpy #0
+    beq .printf_ret
+    ldx 4,s
+    lda #2 ; stderr
+    swi2
+    fcb $8A ; I$Write
+.printf_ret:
     rts
 
 __exit:

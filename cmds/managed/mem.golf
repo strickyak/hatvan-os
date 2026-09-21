@@ -1,0 +1,254 @@
+package mem
+
+type List[T any] struct {
+	guts slice[T]
+}
+
+func (o *List[T]) Len() word {
+	return o.guts.Len
+}
+func (o *List[T]) Append(x T) {
+	o.guts.Append(x)
+}
+func (o *List[T]) AppendSlice(v slice[T]) {
+	for _, x := range v {
+		o.guts.Append(x)
+	}
+}
+func (o *List[T]) Put(i word, x T) {
+	o.guts[i] = x
+}
+func (o *List[T]) Get(i word) T {
+	return o.guts[i]
+}
+func (o *List[T]) At(i word) *T {
+	return (*T)(o.guts.Address(i))
+}
+func (o *List[T]) Chop(i word, j word) slice[T] {
+	return o.guts[i:j]
+}
+func (o *List[T]) Init() {
+	o.guts.Base = 0
+	o.guts.Cap = 0
+	o.guts.Len = 0
+}
+func (o *List[T]) Clear() {
+	o.guts.Len = 0
+}
+func (o *List[T]) Pop() T {
+	return o.guts.Pop()
+}
+func (o *List[T]) destructor() {
+	if o.guts.Base == 0 {
+		return
+	}
+
+	free(o.guts.Base)
+	o.guts.Base = 0
+	o.guts.Cap = 0
+	o.guts.Len = 0
+}
+
+type ListD[DT any] struct {
+	guts slice[DT]
+}
+
+func (o *ListD[DT]) Len() word {
+	return o.guts.Len
+}
+func (o *ListD[DT]) Get(i word) DT {
+	return o.guts[i]
+}
+func (o *ListD[DT]) At(i word) *DT {
+	return (*DT)(o.guts.Address(i))
+}
+func (o *ListD[DT]) Put(i word, x DT) {
+	o.guts[i] = x
+}
+func (o *ListD[DT]) Append(x DT) {
+	o.guts.Append(x)
+}
+func (o *ListD[DT]) Init() {
+	o.guts.Base = 0
+	o.guts.Cap = 0
+	o.guts.Len = 0
+}
+func (o *ListD[DT]) Clear() {
+	for i := word(0); i < o.guts.Len; i++ {
+		p := (*DT)(o.guts.Address(i))
+		p.destructor()
+	}
+	o.guts.Len = 0
+}
+func (o *ListD[DT]) destructor() {
+	if o.guts.Base == 0 {
+		return
+	}
+	for i := word(0); i < o.guts.Len; i++ {
+		p := (*DT)(o.guts.Address(i))
+		p.destructor()
+	}
+	free(o.guts.Base)
+	o.guts.Base = 0
+	o.guts.Cap = 0
+	o.guts.Len = 0
+}
+
+type Buffer struct {
+	guts slice[byte]
+}
+
+func (o *Buffer) Init() {
+	o.guts.Base = 0
+	o.guts.Cap = 0
+	o.guts.Len = 0
+}
+func (o *Buffer) Len() word {
+	return o.guts.Len
+}
+func (o *Buffer) Clear() {
+	o.guts.Len = 0
+}
+func (o *Buffer) Take() string {
+	s := o.guts
+	o.guts.Base = 0
+	o.guts.Len = 0
+	o.guts.Cap = 0
+	return s
+}
+func (o *Buffer) TakeNul() string {
+	if o.guts.Base == 0 {
+		var z string
+		return z
+	}
+	o.guts.Append(0)
+	s := o.guts
+	s.Len--
+	o.guts.Base = 0
+	o.guts.Len = 0
+	o.guts.Cap = 0
+	return s
+}
+func (o *Buffer) destructor() {
+	if o.guts.Base == 0 {
+		return
+	}
+
+	free(o.guts.Base)
+	o.guts.Base = 0
+	o.guts.Cap = 0
+	o.guts.Len = 0
+}
+
+func (o *Buffer) String() string {
+	return o.guts
+}
+
+func (o *Buffer) Append(x byte) {
+	o.guts.Append(x)
+}
+func (o *Buffer) AppendString(s string) {
+	for _, c := range s {
+		o.guts.Append(c)
+	}
+}
+
+func (o *Buffer) Format(format string, args ...any) {
+	n := format.Len
+	k := 0
+	for i := 0; i < n; i++ {
+		ch := format[i]
+		if ch == '%' {
+			i++
+			c2 := format[i]
+			if c2 == 'd' {
+				ptr := args[k].BaseAddr
+				o.guts = FormatDecimal(o.guts, peek[int](ptr))
+				k++
+			} else if c2 == 'u' {
+				ptr := args[k].BaseAddr
+				o.guts = FormatDecimalUnsigned(o.guts, peek[uint](ptr))
+				k++
+			} else if false && c2 == 'x' {
+				//ptr := args[k].BaseAddr
+				//o.guts = FormatHex(o.guts, peek[uint](ptr))
+				//k++
+			} else if c2 == 's' {
+				ptr := args[k].BaseAddr
+				o.guts = FormatString(o.guts, peek[string](ptr))
+				k++
+			} else if false && c2 == 'q' {
+				// ptr := args[k].BaseAddr
+				// o.guts = FormatStringQuoted(o.guts, peek[string](ptr))
+				// k++
+			} else {
+				o.guts.Append(c2)
+			}
+		} else {
+			o.guts.Append(ch)
+		}
+	}
+}
+
+func FormatString(z slice[byte], s string) slice[byte] {
+	for _, ch := range s {
+		z.Append(ch)
+	}
+	return z
+}
+
+func FormatDecimal(z slice[byte], x int) slice[byte] {
+	if x < 0 {
+		z.Append('-')
+		x = -x
+	}
+	return FormatDecimalUnsigned(z, word(x))
+}
+
+func FormatDecimalUnsigned(z slice[byte], w word) slice[byte] {
+	var n byte
+	var active bool
+
+	for w >= 10000 {
+		w -= 10000
+		n++
+		active = true
+	}
+	if active {
+		z.Append('0' + n)
+		n = 0
+	}
+
+	for w >= 1000 {
+		w -= 1000
+		n++
+		active = true
+	}
+	if active {
+		z.Append('0' + n)
+		n = 0
+	}
+
+	for w >= 100 {
+		w -= 100
+		n++
+		active = true
+	}
+	if active {
+		z.Append('0' + n)
+		n = 0
+	}
+
+	for w >= 10 {
+		w -= 10
+		n++
+		active = true
+	}
+	if active {
+		z.Append('0' + n)
+		n = 0
+	}
+
+	z.Append('0' + byte(w))
+	return z
+}

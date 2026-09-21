@@ -1,0 +1,1754 @@
+package main
+
+import "mem"
+import "smap"
+import "sys"
+
+// ============================================================================
+// Shell Global State
+// ============================================================================
+
+var NamedVars smap.Smap[string]
+var PosArgs mem.List[string]
+var LastStatus byte
+var ScriptName string
+var SubDepth word
+
+const LOOP_NORMAL = 0
+const LOOP_BREAK = 1
+const LOOP_CONTINUE = 2
+
+var LoopControl byte
+var BreakCount word
+var ContinueCount word
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+func toUpper(c byte) byte {
+	if c >= 'a' && c <= 'z' {
+		return c - 32
+	}
+	return c
+}
+
+func isVarChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+func isDigit(c byte) bool {
+	return c >= '0' && c <= '9'
+}
+
+func findEquals(s string) word {
+	for i := word(0); i < s.Len; i++ {
+		if s[i] == '=' {
+			return i
+		}
+		if !isVarChar(s[i]) {
+			return 0
+		}
+	}
+	return 0
+}
+
+func parseUint(s string) word {
+	val := word(0)
+	for i := word(0); i < s.Len; i++ {
+		c := s[i]
+		if isDigit(c) {
+			val = val*10 + word(c-'0')
+		} else {
+			break
+		}
+	}
+	return val
+}
+
+// formatByte converts a byte to a decimal string in a heap-allocated buffer.
+func formatByte(b byte) string {
+	var buf mem.Buffer
+	buf.Init()
+	w := word(b)
+	if w >= 100 {
+		buf.Append('0' + byte(w/100))
+		w = w % 100
+		buf.Append('0' + byte(w/10))
+		w = w % 10
+	} else if w >= 10 {
+		buf.Append('0' + byte(w/10))
+		w = w % 10
+	}
+	buf.Append('0' + byte(w))
+	return buf.TakeNul()
+}
+
+var lenBuf [8]byte
+
+func formatByteStatic(b byte) string {
+	return formatWordStatic(word(b))
+}
+
+func formatWordStatic(w word) string {
+	if w == 0 {
+		lenBuf[0] = '0'
+		lenBuf[1] = 0
+		return string{Base: word(&lenBuf[0]), Len: 1, Cap: 8}
+	}
+	var rev [10]byte
+	rlen := word(0)
+	for w > 0 {
+		rev[rlen] = '0' + byte(w%10)
+		rlen++
+		w = w / 10
+	}
+	pos := word(0)
+	for rlen > 0 {
+		rlen--
+		lenBuf[pos] = rev[rlen]
+		pos++
+	}
+	lenBuf[pos] = 0
+	return string{Base: word(&lenBuf[0]), Len: pos, Cap: 8}
+}
+
+// formatWord converts a word to a decimal string in a heap-allocated buffer.
+func formatWord(w word) string {
+	var buf mem.Buffer
+	buf.Init()
+	if w == 0 {
+		buf.Append('0')
+		return buf.TakeNul()
+	}
+	var rev [10]byte
+	rlen := word(0)
+	for w > 0 {
+		rev[rlen] = '0' + byte(w%10)
+		rlen++
+		w = w / 10
+	}
+	for rlen > 0 {
+		rlen--
+		buf.Append(rev[rlen])
+	}
+	return buf.TakeNul()
+}
+
+// ============================================================================
+// Shell Variables (smap.Smap for named, mem.List for positional)
+// ============================================================================
+
+func cloneString(s string) string {
+	var buf mem.Buffer
+	buf.Init()
+	buf.AppendString(s)
+	return buf.TakeNul()
+}
+
+func SetVar(name string, val string) {
+	for i := word(0); i < NamedVars.keys.Len; i++ {
+		k := NamedVars.keys[i]
+		if k == name {
+			oldVal := NamedVars.values[i]
+			free((*byte)(oldVal.Base))
+			NamedVars.values[i] = cloneString(val)
+			return
+		}
+	}
+	NamedVars.Insert(cloneString(name), cloneString(val))
+}
+
+func GetVar(name string) string {
+	if name == "?" {
+		return formatByteStatic(LastStatus)
+	}
+	if name == "#" {
+		return formatWordStatic(PosArgs.Len())
+	}
+	if name == "0" {
+		if ScriptName.Len > 0 {
+			return ScriptName
+		}
+		return "gsh2"
+	}
+
+	// Positional arguments: $1, $2, etc.
+	if name.Len > 0 && isDigit(name[0]) {
+		idx := parseUint(name)
+		if idx >= 1 && idx <= PosArgs.Len() {
+			return PosArgs.Get(idx - 1)
+		}
+		return ""
+	}
+
+	val, ok := NamedVars.Lookup(name)
+	if ok {
+		return val
+	}
+	return ""
+}
+
+// ============================================================================
+// Pattern Matching & Globbing
+// ============================================================================
+
+func MatchPattern(pat string, str string) bool {
+	p := word(0)
+	s := word(0)
+	for {
+		if p >= pat.Len {
+			return s >= str.Len
+		}
+		pc := pat[p]
+		if pc == '*' {
+			for p+1 < pat.Len && pat[p+1] == '*' {
+				p++
+			}
+			if p+1 >= pat.Len {
+				return true
+			}
+			for s < str.Len {
+				if MatchPattern(pat[p+1:pat.Len], str[s:str.Len]) {
+					return true
+				}
+				s++
+			}
+			return MatchPattern(pat[p+1:pat.Len], str[s:str.Len])
+		}
+		if s >= str.Len {
+			return false
+		}
+		sc := str[s]
+		if pc == '?' {
+			p++
+			s++
+			continue
+		}
+		if toUpper(pc) != toUpper(sc) {
+			return false
+		}
+		p++
+		s++
+	}
+}
+
+func hasGlobChar(s string) bool {
+	inSingle := false
+	inDouble := false
+	for i := word(0); i < s.Len; i++ {
+		c := s[i]
+		if c == '\'' && !inDouble {
+			inSingle = !inSingle
+		} else if c == '"' && !inSingle {
+			inDouble = !inDouble
+		} else if !inSingle && !inDouble {
+			if c == '*' || c == '?' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func ExpandGlob(pat string, outList *mem.List[string]) bool {
+	var dirBuf mem.Buffer
+	var nameBuf mem.Buffer
+	var fullBuf mem.Buffer
+	dirBuf.Init()
+	nameBuf.Init()
+	fullBuf.Init()
+
+	lastSlash := word(0xFFFF)
+	for i := word(0); i < pat.Len; i++ {
+		if pat[i] == '/' {
+			lastSlash = i
+		}
+	}
+
+	var dirPath string
+	var filePat string
+	if lastSlash == 0xFFFF {
+		dirPath = "."
+		filePat = pat
+	} else if lastSlash == 0 {
+		dirPath = "/"
+		filePat = pat[1:pat.Len]
+	} else {
+		dirPath = pat[0:lastSlash]
+		filePat = pat[lastSlash+1 : pat.Len]
+	}
+
+	dirBuf.AppendString(dirPath)
+	dirNul := dirBuf.TakeNul()
+
+	fd := sys.Open((*byte)(dirNul.Base), sys.MODE_READ|sys.MODE_DIR)
+	free((*byte)(dirNul.Base))
+	if fd == 0xFF {
+		outList.Append(pat)
+		return false
+	}
+
+	matches := word(0)
+	var dirent [32]byte
+
+	for {
+		n := sys.Read(fd, &dirent[0], 32)
+		if n < 32 {
+			break
+		}
+		c0 := dirent[0]
+		if c0 == 0 || c0 == 0xE5 {
+			continue
+		}
+		if (c0&0x7F) == '.' && filePat.Len > 0 && filePat[0] != '.' {
+			continue
+		}
+
+		nameBuf.Clear()
+		for k := word(0); k < 29; k++ {
+			ch := dirent[k]
+			nameBuf.Append(ch & 0x7F)
+			if (ch & 0x80) != 0 {
+				break
+			}
+		}
+		entryName := nameBuf.String()
+		if MatchPattern(filePat, entryName) {
+			fullBuf.Init()
+			if lastSlash != 0xFFFF {
+				if dirPath == "/" {
+					fullBuf.Append('/')
+				} else {
+					fullBuf.AppendString(dirPath)
+					fullBuf.Append('/')
+				}
+			}
+			fullBuf.AppendString(entryName)
+			outList.Append(fullBuf.TakeNul())
+			matches++
+		}
+	}
+	sys.Close(fd)
+
+	if matches == 0 {
+		outList.Append(pat)
+		return false
+	}
+	return true
+}
+
+// ============================================================================
+// Lexer
+// ============================================================================
+
+const TOK_EOF = 0
+const TOK_WORD = 1
+const TOK_SEMI = 2    // ;
+const TOK_NEWLINE = 3 // \n
+const TOK_PIPE = 4    // |
+const TOK_AND = 5     // &&
+const TOK_OR = 6      // ||
+const TOK_AMP = 7     // &
+const TOK_LT = 8      // <
+const TOK_GT = 9      // >
+const TOK_GTGT = 10   // >>
+
+type Token struct {
+	Kind word
+	Text string
+}
+
+func Tokenize(line string, tokens *mem.List[Token]) {
+	p := word(0)
+	n := line.Len
+	var wbuf mem.Buffer
+	wbuf.Init()
+
+	for p < n {
+		c := line[p]
+		if c == ' ' || c == '\t' || c == '\r' {
+			p++
+			continue
+		}
+		if c == '#' {
+			// Skip comment until newline or end of line
+			for p < n && line[p] != '\n' {
+				p++
+			}
+			continue
+		}
+		if c == '\n' {
+			tokens.Append(Token{Kind: TOK_NEWLINE, Text: "\n"})
+			p++
+			continue
+		}
+		if c == ';' {
+			tokens.Append(Token{Kind: TOK_SEMI, Text: ";"})
+			p++
+			continue
+		}
+		if c == '&' {
+			if p+1 < n && line[p+1] == '&' {
+				tokens.Append(Token{Kind: TOK_AND, Text: "&&"})
+				p += 2
+			} else {
+				tokens.Append(Token{Kind: TOK_AMP, Text: "&"})
+				p++
+			}
+			continue
+		}
+		if c == '|' {
+			if p+1 < n && line[p+1] == '|' {
+				tokens.Append(Token{Kind: TOK_OR, Text: "||"})
+				p += 2
+			} else {
+				tokens.Append(Token{Kind: TOK_PIPE, Text: "|"})
+				p++
+			}
+			continue
+		}
+		if c == '<' {
+			tokens.Append(Token{Kind: TOK_LT, Text: "<"})
+			p++
+			continue
+		}
+		if c == '>' {
+			if p+1 < n && line[p+1] == '>' {
+				tokens.Append(Token{Kind: TOK_GTGT, Text: ">>"})
+				p += 2
+			} else {
+				tokens.Append(Token{Kind: TOK_GT, Text: ">"})
+				p++
+			}
+			continue
+		}
+
+		// Read a word token (including quotes and $(...) blocks)
+		wbuf.Init()
+		for p < n {
+			ch := line[p]
+			if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == ';' || ch == '|' || ch == '&' || ch == '<' || ch == '>' {
+				break
+			}
+			if ch == '#' && wbuf.Len() == 0 {
+				break
+			}
+			if ch == '\'' {
+				wbuf.Append('\'')
+				p++
+				for p < n && line[p] != '\'' {
+					wbuf.Append(line[p])
+					p++
+				}
+				if p < n && line[p] == '\'' {
+					wbuf.Append('\'')
+					p++
+				}
+				continue
+			}
+			if ch == '"' {
+				wbuf.Append('"')
+				p++
+				for p < n && line[p] != '"' {
+					if line[p] == '\\' && p+1 < n {
+						wbuf.Append(line[p])
+						wbuf.Append(line[p+1])
+						p += 2
+					} else {
+						wbuf.Append(line[p])
+						p++
+					}
+				}
+				if p < n && line[p] == '"' {
+					wbuf.Append('"')
+					p++
+				}
+				continue
+			}
+			if ch == '$' && p+1 < n && line[p+1] == '(' {
+				wbuf.Append('$')
+				wbuf.Append('(')
+				p += 2
+				parenDepth := 1
+				for p < n && parenDepth > 0 {
+					pc := line[p]
+					if pc == '(' {
+						parenDepth++
+					} else if pc == ')' {
+						parenDepth--
+					}
+					wbuf.Append(pc)
+					p++
+				}
+				continue
+			}
+			if ch == '\\' && p+1 < n {
+				wbuf.Append(line[p])
+				wbuf.Append(line[p+1])
+				p += 2
+				continue
+			}
+			wbuf.Append(ch)
+			p++
+		}
+		tokens.Append(Token{Kind: TOK_WORD, Text: wbuf.TakeNul()})
+	}
+}
+
+// ============================================================================
+// Parser & AST Nodes
+// ============================================================================
+
+const NODE_SIMPLE = 1
+const NODE_PIPELINE = 2
+const NODE_AND = 3
+const NODE_OR = 4
+const NODE_SEQ = 5
+const NODE_WHILE = 6
+const NODE_FOR = 7
+
+type Node struct {
+	Kind word
+
+	// Binary tree connections
+	Left  *Node
+	Right *Node
+
+	// For NODE_SIMPLE:
+	Words     mem.List[string]
+	RedirIn   string
+	RedirOut  string
+	AppendOut bool
+
+	// For NODE_WHILE:
+	Cond *Node
+	Body *Node
+
+	// For NODE_FOR:
+	VarName string
+	Items   mem.List[string]
+
+	// Flags:
+	Background bool
+}
+
+func NewNode(kind word) *Node {
+	p := (*Node)(prelude.zalloc(sizeof[Node]()))
+	p.Kind = kind
+	return p
+}
+
+func FreeNode(n *Node) {
+	if n == (*Node)(0) {
+		return
+	}
+	FreeNode(n.Left)
+	FreeNode(n.Right)
+	FreeNode(n.Cond)
+	FreeNode(n.Body)
+
+	n.Words.destructor()
+	n.Items.destructor()
+	free((*byte)(word(n)))
+}
+
+func peekToken(tokens *mem.List[Token], pos word) Token {
+	if pos < tokens.Len() {
+		return tokens.Get(pos)
+	}
+	return Token{Kind: TOK_EOF, Text: ""}
+}
+
+func consumeToken(tokens *mem.List[Token], pos *word) Token {
+	tok := peekToken(tokens, *pos)
+	if *pos < tokens.Len() {
+		*pos = *pos + 1
+	}
+	return tok
+}
+
+func matchToken(tokens *mem.List[Token], pos *word, kind word) bool {
+	tok := peekToken(tokens, *pos)
+	if tok.Kind == kind {
+		consumeToken(tokens, pos)
+		return true
+	}
+	return false
+}
+
+func matchKeyword(tokens *mem.List[Token], pos *word, kw string) bool {
+	tok := peekToken(tokens, *pos)
+	if tok.Kind == TOK_WORD && tok.Text == kw {
+		consumeToken(tokens, pos)
+		return true
+	}
+	return false
+}
+
+func skipSeparators(tokens *mem.List[Token], pos *word) {
+	for {
+		tok := peekToken(tokens, *pos)
+		if tok.Kind == TOK_SEMI || tok.Kind == TOK_NEWLINE {
+			*pos = *pos + 1
+		} else {
+			break
+		}
+	}
+}
+
+func ParseStatementList(tokens *mem.List[Token], pos *word) *Node {
+	skipSeparators(tokens, pos)
+	tok := peekToken(tokens, *pos)
+	if tok.Kind == TOK_EOF {
+		return (*Node)(0)
+	}
+
+	node := ParseAndOr(tokens, pos)
+	if node == (*Node)(0) {
+		return (*Node)(0)
+	}
+
+	for {
+		tok = peekToken(tokens, *pos)
+		if tok.Kind != TOK_SEMI && tok.Kind != TOK_NEWLINE {
+			break
+		}
+		*pos = *pos + 1
+		skipSeparators(tokens, pos)
+		nextTok := peekToken(tokens, *pos)
+		if nextTok.Kind == TOK_EOF || (nextTok.Kind == TOK_WORD && (nextTok.Text == "do" || nextTok.Text == "done")) {
+			break
+		}
+		next := ParseAndOr(tokens, pos)
+		if next != (*Node)(0) {
+			seq := NewNode(NODE_SEQ)
+			seq.Left = node
+			seq.Right = next
+			node = seq
+		}
+	}
+	return node
+}
+
+func ParseAndOr(tokens *mem.List[Token], pos *word) *Node {
+	node := ParsePipeline(tokens, pos)
+	if node == (*Node)(0) {
+		return (*Node)(0)
+	}
+
+	for {
+		if matchToken(tokens, pos, TOK_AND) {
+			right := ParsePipeline(tokens, pos)
+			andNode := NewNode(NODE_AND)
+			andNode.Left = node
+			andNode.Right = right
+			node = andNode
+		} else if matchToken(tokens, pos, TOK_OR) {
+			right := ParsePipeline(tokens, pos)
+			orNode := NewNode(NODE_OR)
+			orNode.Left = node
+			orNode.Right = right
+			node = orNode
+		} else {
+			break
+		}
+	}
+	return node
+}
+
+func ParsePipeline(tokens *mem.List[Token], pos *word) *Node {
+	node := ParseCommand(tokens, pos)
+	if node == (*Node)(0) {
+		return (*Node)(0)
+	}
+
+	for matchToken(tokens, pos, TOK_PIPE) {
+		right := ParseCommand(tokens, pos)
+		pipeNode := NewNode(NODE_PIPELINE)
+		pipeNode.Left = node
+		pipeNode.Right = right
+		node = pipeNode
+	}
+
+	if matchToken(tokens, pos, TOK_AMP) {
+		node.Background = true
+	}
+	return node
+}
+
+func ParseCommand(tokens *mem.List[Token], pos *word) *Node {
+	tok := peekToken(tokens, *pos)
+	if tok.Kind == TOK_WORD {
+		if tok.Text == "while" {
+			return ParseWhile(tokens, pos)
+		}
+		if tok.Text == "for" {
+			return ParseFor(tokens, pos)
+		}
+	}
+	return ParseSimple(tokens, pos)
+}
+
+func ParseWhile(tokens *mem.List[Token], pos *word) *Node {
+	consumeToken(tokens, pos) // consume "while"
+	cond := ParseStatementList(tokens, pos)
+	skipSeparators(tokens, pos)
+	if !matchKeyword(tokens, pos, "do") {
+		FreeNode(cond)
+		return (*Node)(0)
+	}
+	skipSeparators(tokens, pos)
+	body := ParseStatementList(tokens, pos)
+	skipSeparators(tokens, pos)
+	if !matchKeyword(tokens, pos, "done") {
+		FreeNode(cond)
+		FreeNode(body)
+		return (*Node)(0)
+	}
+	node := NewNode(NODE_WHILE)
+	node.Cond = cond
+	node.Body = body
+	return node
+}
+
+func ParseFor(tokens *mem.List[Token], pos *word) *Node {
+	consumeToken(tokens, pos) // consume "for"
+	varTok := consumeToken(tokens, pos)
+	if varTok.Kind != TOK_WORD {
+		return (*Node)(0)
+	}
+	skipSeparators(tokens, pos)
+	if !matchKeyword(tokens, pos, "in") {
+		return (*Node)(0)
+	}
+
+	node := NewNode(NODE_FOR)
+	node.VarName = varTok.Text
+
+	for {
+		tok := peekToken(tokens, *pos)
+		if tok.Kind != TOK_WORD || tok.Text == "do" || tok.Text == ";" || tok.Text == "\n" {
+			break
+		}
+		consumeToken(tokens, pos)
+		node.Items.Append(tok.Text)
+	}
+	skipSeparators(tokens, pos)
+	if !matchKeyword(tokens, pos, "do") {
+		FreeNode(node)
+		return (*Node)(0)
+	}
+	skipSeparators(tokens, pos)
+	body := ParseStatementList(tokens, pos)
+	skipSeparators(tokens, pos)
+	if !matchKeyword(tokens, pos, "done") {
+		FreeNode(node)
+		FreeNode(body)
+		return (*Node)(0)
+	}
+	node.Body = body
+	return node
+}
+
+func ParseSimple(tokens *mem.List[Token], pos *word) *Node {
+	node := NewNode(NODE_SIMPLE)
+
+	for {
+		tok := peekToken(tokens, *pos)
+		if tok.Kind == TOK_WORD {
+			if tok.Text == "do" || tok.Text == "done" || tok.Text == "then" || tok.Text == "else" || tok.Text == "fi" {
+				break
+			}
+			consumeToken(tokens, pos)
+			node.Words.Append(tok.Text)
+		} else if tok.Kind == TOK_LT {
+			consumeToken(tokens, pos)
+			target := consumeToken(tokens, pos)
+			node.RedirIn = target.Text
+		} else if tok.Kind == TOK_GT {
+			consumeToken(tokens, pos)
+			target := consumeToken(tokens, pos)
+			node.RedirOut = target.Text
+			node.AppendOut = false
+		} else if tok.Kind == TOK_GTGT {
+			consumeToken(tokens, pos)
+			target := consumeToken(tokens, pos)
+			node.RedirOut = target.Text
+			node.AppendOut = true
+		} else {
+			break
+		}
+	}
+
+	if node.Words.Len() == 0 && node.RedirIn.Len == 0 && node.RedirOut.Len == 0 {
+		FreeNode(node)
+		return (*Node)(0)
+	}
+	return node
+}
+
+// ============================================================================
+// Word Expansion ($VAR, $(cmd), globbing)
+// ============================================================================
+
+func EvalCmdSub(subCmd string) string {
+	var tmpBuf mem.Buffer
+	var outBuf mem.Buffer
+	tmpBuf.Init()
+	outBuf.Init()
+
+	savedStdout := sys.Dup(sys.STDOUT)
+	if savedStdout == 0xFF {
+		return ""
+	}
+	sys.Close(sys.STDOUT)
+
+	tmpBuf.AppendString("/d0/_s")
+	tmpBuf.Append(byte('0' + (SubDepth % 10)))
+	tmpBuf.AppendString(".tmp")
+	tmpName := tmpBuf.TakeNul()
+
+	SubDepth++
+	tempFd := sys.Create((*byte)(tmpName.Base), sys.MODE_WRITE, 3)
+	if tempFd == 0xFF {
+		sys.Dup(savedStdout)
+		sys.Close(savedStdout)
+		SubDepth--
+		free((*byte)(tmpName.Base))
+		return ""
+	}
+
+	ExecuteLine(subCmd)
+
+	sys.Close(sys.STDOUT)
+	sys.Dup(savedStdout)
+	sys.Close(savedStdout)
+	SubDepth--
+
+	rfd := sys.Open((*byte)(tmpName.Base), sys.MODE_READ)
+	if rfd != 0xFF {
+		var chunk [128]byte
+		for {
+			nr := sys.Read(rfd, &chunk[0], 128)
+			if nr == 0 {
+				break
+			}
+			for k := word(0); k < nr; k++ {
+				outBuf.Append(chunk[k])
+			}
+		}
+		sys.Close(rfd)
+		sys.Delete((*byte)(tmpName.Base))
+	}
+	free((*byte)(tmpName.Base))
+
+	// Strip trailing newlines and carriage returns
+	for outBuf.Len() > 0 {
+		s := outBuf.String()
+		lastChar := s[s.Len-1]
+		if lastChar == '\n' || lastChar == '\r' {
+			outBuf.guts.Len--
+		} else {
+			break
+		}
+	}
+	return outBuf.TakeNul()
+}
+
+func ExpandWord(raw string, outList *mem.List[string]) {
+	var ebuf mem.Buffer
+	var subBuf mem.Buffer
+	var varNameBuf mem.Buffer
+	ebuf.Init()
+	subBuf.Init()
+	varNameBuf.Init()
+
+	p := word(0)
+	n := raw.Len
+	inSingle := false
+	inDouble := false
+
+	for p < n {
+		c := raw[p]
+		if c == '\'' && !inDouble {
+			inSingle = !inSingle
+			p++
+			continue
+		}
+		if c == '"' && !inSingle {
+			inDouble = !inDouble
+			p++
+			continue
+		}
+		if c == '\\' && !inSingle {
+			if p+1 < n {
+				ebuf.Append(raw[p+1])
+				p += 2
+				continue
+			}
+		}
+
+		if !inSingle && c == '$' {
+			if p+1 < n && raw[p+1] == '(' {
+				// Command substitution: $(cmd)
+				p += 2
+				subBuf.Init()
+				parenDepth := 1
+				for p < n && parenDepth > 0 {
+					ch := raw[p]
+					if ch == '(' {
+						parenDepth++
+					} else if ch == ')' {
+						parenDepth--
+						if parenDepth == 0 {
+							p++
+							break
+						}
+					}
+					subBuf.Append(ch)
+					p++
+				}
+				subCmd := subBuf.TakeNul()
+				subResult := EvalCmdSub(subCmd)
+				free((*byte)(subCmd.Base))
+				ebuf.AppendString(subResult)
+				free((*byte)(subResult.Base))
+				continue
+			}
+
+			if p+1 < n && raw[p+1] == '{' {
+				// Braced variable: ${VAR}
+				p += 2
+				varNameBuf.Init()
+				for p < n && raw[p] != '}' {
+					varNameBuf.Append(raw[p])
+					p++
+				}
+				if p < n && raw[p] == '}' {
+					p++
+				}
+				vName := varNameBuf.TakeNul()
+				val := GetVar(vName)
+				free((*byte)(vName.Base))
+				ebuf.AppendString(val)
+				continue
+			}
+
+			if p+1 < n {
+				c1 := raw[p+1]
+				if c1 == '?' || c1 == '#' || c1 == '0' || isDigit(c1) {
+					p += 2
+					var nameStr [2]byte
+					nameStr[0] = c1
+					nameStr[1] = 0
+					val := GetVar(string{Base: word(&nameStr[0]), Len: 1, Cap: 2})
+					ebuf.AppendString(val)
+					continue
+				}
+
+				if isVarChar(c1) {
+					p++
+					varNameBuf.Init()
+					for p < n && isVarChar(raw[p]) {
+						varNameBuf.Append(raw[p])
+						p++
+					}
+					vName := varNameBuf.TakeNul()
+					val := GetVar(vName)
+					free((*byte)(vName.Base))
+					ebuf.AppendString(val)
+					continue
+				}
+			}
+		}
+
+		ebuf.Append(c)
+		p++
+	}
+
+	expanded := ebuf.TakeNul()
+	if hasGlobChar(expanded) {
+		matched := ExpandGlob(expanded, outList)
+		if matched {
+			free((*byte)(expanded.Base))
+		}
+	} else {
+		outList.Append(expanded)
+	}
+}
+
+// ============================================================================
+// Execution Engine
+// ============================================================================
+
+func cleanupRedir(savedStdin byte, savedStdout byte) {
+	if savedStdin != 0xFF {
+		sys.Close(sys.STDIN)
+		sys.Dup(savedStdin)
+		sys.Close(savedStdin)
+	}
+	if savedStdout != 0xFF {
+		sys.Close(sys.STDOUT)
+		sys.Dup(savedStdout)
+		sys.Close(savedStdout)
+	}
+}
+
+func ExecuteSimple(n *Node) byte {
+	var argv mem.List[string]
+	argv.Init()
+	for i := word(0); i < n.Words.Len(); i++ {
+		ExpandWord(n.Words.Get(i), &argv)
+	}
+
+	if argv.Len() == 0 {
+		return LastStatus
+	}
+
+	st := ExecuteSimpleInternal(n, &argv)
+	for i := word(0); i < argv.Len(); i++ {
+		w := argv.Get(i)
+		free((*byte)(w.Base))
+	}
+	LastStatus = st
+	return st
+}
+
+func ExecuteSimpleInternal(n *Node, argv *mem.List[string]) byte {
+	first := argv.Get(0)
+
+	var inList mem.List[string]
+	var outList mem.List[string]
+	var echoBuf mem.Buffer
+	var tbuf mem.Buffer
+	var firstBuf mem.Buffer
+	var paramBuf mem.Buffer
+	inList.Init()
+	outList.Init()
+	echoBuf.Init()
+	tbuf.Init()
+	firstBuf.Init()
+	paramBuf.Init()
+
+	// Check for variable assignment: NAME=value
+	eqIdx := findEquals(first)
+	if eqIdx > 0 {
+		for i := word(0); i < argv.Len(); i++ {
+			w := argv.Get(i)
+			e := findEquals(w)
+			if e > 0 {
+				aname := w[0:e]
+				aval := w[e+1 : w.Len]
+				SetVar(aname, aval)
+			}
+		}
+		return 0
+	}
+
+	// Redirection Setup
+	savedStdin := byte(0xFF)
+	savedStdout := byte(0xFF)
+
+	if n.RedirIn.Len > 0 {
+		inList.Init()
+		ExpandWord(n.RedirIn, &inList)
+		if inList.Len() > 0 {
+			inPath := (*byte)(inList.Get(0).Base)
+			inFd := sys.Open(inPath, sys.MODE_READ)
+			free((*byte)(inList.Get(0).Base))
+			if inFd == 0xFF {
+				sys.PrintErr((*byte)("gsh2: cannot open input file"))
+				return 1
+			}
+			savedStdin = sys.Dup(sys.STDIN)
+			sys.Close(sys.STDIN)
+			sys.Dup(inFd)
+			sys.Close(inFd)
+		}
+	}
+
+	if n.RedirOut.Len > 0 {
+		outList.Init()
+		ExpandWord(n.RedirOut, &outList)
+		if outList.Len() > 0 {
+			outPath := (*byte)(outList.Get(0).Base)
+			var outFd byte
+			if n.AppendOut {
+				outFd = sys.Open(outPath, sys.MODE_WRITE)
+				if outFd == 0xFF {
+					outFd = sys.Create(outPath, sys.MODE_WRITE, 3)
+				}
+			} else {
+				outFd = sys.Create(outPath, sys.MODE_WRITE, 3)
+			}
+			free((*byte)(outList.Get(0).Base))
+			if outFd == 0xFF {
+				sys.PrintErr((*byte)("gsh2: cannot open output file"))
+				cleanupRedir(savedStdin, savedStdout)
+				return 1
+			}
+			savedStdout = sys.Dup(sys.STDOUT)
+			sys.Close(sys.STDOUT)
+			sys.Dup(outFd)
+			sys.Close(outFd)
+		}
+	}
+
+	// Builtin: echo / gecho
+	if first == "echo" || first == "gecho" {
+		echoBuf.Init()
+		for i := word(1); i < argv.Len(); i++ {
+			if i > 1 {
+				echoBuf.Append(' ')
+			}
+			echoBuf.AppendString(argv.Get(i))
+		}
+		echoStr := echoBuf.TakeNul()
+		sys.Println((*byte)(echoStr.Base))
+		free((*byte)(echoStr.Base))
+		cleanupRedir(savedStdin, savedStdout)
+		return 0
+	}
+
+	// Builtin: cd
+	if first == "cd" {
+		target := "/"
+		if argv.Len() >= 2 {
+			target = argv.Get(1)
+		}
+		tbuf.Init()
+		tbuf.AppendString(target)
+		td := tbuf.TakeNul()
+		err := sys.ChgDir((*byte)(td.Base), sys.MODE_READ)
+		free((*byte)(td.Base))
+		cleanupRedir(savedStdin, savedStdout)
+		if err != 0 {
+			sys.PrintErr((*byte)("cd: path not found"))
+			return 1
+		}
+		return 0
+	}
+
+	// Builtin: cx
+	if first == "cx" {
+		target := "/Cmds9"
+		if sizeof[*word]() > 2 {
+			target = "/CmdsK"
+		}
+		if argv.Len() >= 2 {
+			target = argv.Get(1)
+		}
+		tbuf.Init()
+		tbuf.AppendString(target)
+		td := tbuf.TakeNul()
+		err := sys.ChgDir((*byte)(td.Base), sys.MODE_EXEC)
+		free((*byte)(td.Base))
+		cleanupRedir(savedStdin, savedStdout)
+		if err != 0 {
+			sys.PrintErr((*byte)("cx: path not found"))
+			return 1
+		}
+		return 0
+	}
+
+	// Builtin: exit
+	if first == "exit" {
+		code := LastStatus
+		if argv.Len() >= 2 {
+			code = byte(parseUint(argv.Get(1)))
+		}
+		cleanupRedir(savedStdin, savedStdout)
+		sys.Exit(code)
+		return code
+	}
+
+	// Builtin: shift
+	if first == "shift" {
+		cnt := word(1)
+		if argv.Len() >= 2 {
+			cval := parseUint(argv.Get(1))
+			if cval > 0 {
+				cnt = cval
+			}
+		}
+		for s := word(0); s < cnt; s++ {
+			if PosArgs.Len() > 0 {
+				oldArg := PosArgs.Get(0)
+				free((*byte)(oldArg.Base))
+				for i := word(0); i < PosArgs.Len()-1; i++ {
+					PosArgs.Put(i, PosArgs.Get(i+1))
+				}
+				PosArgs.Pop()
+			}
+		}
+		cleanupRedir(savedStdin, savedStdout)
+		return 0
+	}
+
+	// Builtin: break
+	if first == "break" {
+		cnt := word(1)
+		if argv.Len() >= 2 {
+			cval := parseUint(argv.Get(1))
+			if cval > 0 {
+				cnt = cval
+			}
+		}
+		BreakCount = cnt
+		LoopControl = LOOP_BREAK
+		cleanupRedir(savedStdin, savedStdout)
+		return 0
+	}
+
+	// Builtin: continue
+	if first == "continue" {
+		cnt := word(1)
+		if argv.Len() >= 2 {
+			cval := parseUint(argv.Get(1))
+			if cval > 0 {
+				cnt = cval
+			}
+		}
+		ContinueCount = cnt
+		LoopControl = LOOP_CONTINUE
+		cleanupRedir(savedStdin, savedStdout)
+		return 0
+	}
+
+	// Builtin: true / gtrue
+	if first == "true" || first == "gtrue" {
+		cleanupRedir(savedStdin, savedStdout)
+		return 0
+	}
+
+	// Builtin: false / gfalse
+	if first == "false" || first == "gfalse" {
+		cleanupRedir(savedStdin, savedStdout)
+		return 1
+	}
+
+	// External command execution
+	paramBuf.Init()
+	for i := word(1); i < argv.Len(); i++ {
+		if i > 1 {
+			paramBuf.Append(' ')
+		}
+		paramBuf.AppendString(argv.Get(i))
+	}
+	paramBuf.Append('\r')
+	paramBuf.Append(0)
+	paramLen := paramBuf.Len() - 1 // length excluding final 0
+	paramStr := paramBuf.Take()
+
+	firstBuf.Init()
+	firstBuf.AppendString(first)
+	firstStr := firstBuf.TakeNul()
+
+	st := sys.Spawn((*byte)(firstStr.Base), (*byte)(paramStr.Base), paramLen)
+	if st == 127 {
+		if first == "expr" {
+			st = sys.Spawn((*byte)("gexpr"), (*byte)(paramStr.Base), paramLen)
+		} else if first == "test" || first == "[" {
+			st = sys.Spawn((*byte)("gtest"), (*byte)(paramStr.Base), paramLen)
+		}
+	}
+
+	cleanupRedir(savedStdin, savedStdout)
+	free((*byte)(paramStr.Base))
+
+	if st == 127 {
+		sys.Print((*byte)(firstStr.Base))
+		sys.Println((*byte)(": not found"))
+		free((*byte)(firstStr.Base))
+		return 127
+	}
+	free((*byte)(firstStr.Base))
+	return st
+}
+
+func ExecutePipeline(n *Node) byte {
+	if n.Right == (*Node)(0) {
+		return ExecuteNode(n.Left)
+	}
+
+	// Pipe via temporary file
+	var tmpBuf mem.Buffer
+	tmpBuf.Init()
+	tmpBuf.AppendString("/d0/_p")
+	tmpBuf.Append(byte('0' + (SubDepth % 10)))
+	tmpBuf.AppendString(".tmp")
+	tmpName := tmpBuf.TakeNul()
+
+	savedStdout := sys.Dup(sys.STDOUT)
+	if savedStdout == 0xFF {
+		free((*byte)(tmpName.Base))
+		return 1
+	}
+	sys.Close(sys.STDOUT)
+
+	SubDepth++
+	pipeFd := sys.Create((*byte)(tmpName.Base), sys.MODE_WRITE, 3)
+	if pipeFd == 0xFF {
+		sys.Dup(savedStdout)
+		sys.Close(savedStdout)
+		SubDepth--
+		free((*byte)(tmpName.Base))
+		return 1
+	}
+
+	ExecuteNode(n.Left)
+
+	sys.Close(sys.STDOUT)
+	sys.Dup(savedStdout)
+	sys.Close(savedStdout)
+
+	savedStdin := sys.Dup(sys.STDIN)
+	if savedStdin == 0xFF {
+		SubDepth--
+		sys.Delete((*byte)(tmpName.Base))
+		free((*byte)(tmpName.Base))
+		return 1
+	}
+	sys.Close(sys.STDIN)
+
+	rfd := sys.Open((*byte)(tmpName.Base), sys.MODE_READ)
+	if rfd == 0xFF {
+		sys.Dup(savedStdin)
+		sys.Close(savedStdin)
+		SubDepth--
+		sys.Delete((*byte)(tmpName.Base))
+		free((*byte)(tmpName.Base))
+		return 1
+	}
+
+	st := ExecuteNode(n.Right)
+
+	sys.Close(sys.STDIN)
+	sys.Dup(savedStdin)
+	sys.Close(savedStdin)
+	SubDepth--
+	sys.Delete((*byte)(tmpName.Base))
+	free((*byte)(tmpName.Base))
+
+	return st
+}
+
+func ExecuteWhile(n *Node) byte {
+	bodyStatus := byte(0)
+	for {
+		st := ExecuteNode(n.Cond)
+		if st != 0 || LoopControl != LOOP_NORMAL {
+			break
+		}
+		bodyStatus = ExecuteNode(n.Body)
+		if LoopControl == LOOP_BREAK {
+			BreakCount--
+			if BreakCount == 0 {
+				LoopControl = LOOP_NORMAL
+			}
+			break
+		}
+		if LoopControl == LOOP_CONTINUE {
+			ContinueCount--
+			if ContinueCount == 0 {
+				LoopControl = LOOP_NORMAL
+				continue
+			}
+			break
+		}
+	}
+	LastStatus = bodyStatus
+	return bodyStatus
+}
+
+func ExecuteFor(n *Node) byte {
+	var expandedItems mem.List[string]
+	expandedItems.Init()
+	for i := word(0); i < n.Items.Len(); i++ {
+		ExpandWord(n.Items.Get(i), &expandedItems)
+	}
+
+	for i := word(0); i < expandedItems.Len(); i++ {
+		SetVar(n.VarName, expandedItems.Get(i))
+		ExecuteNode(n.Body)
+		if LoopControl == LOOP_BREAK {
+			BreakCount--
+			if BreakCount == 0 {
+				LoopControl = LOOP_NORMAL
+			}
+			break
+		}
+		if LoopControl == LOOP_CONTINUE {
+			ContinueCount--
+			if ContinueCount == 0 {
+				LoopControl = LOOP_NORMAL
+				continue
+			}
+			break
+		}
+	}
+	for i := word(0); i < expandedItems.Len(); i++ {
+		w := expandedItems.Get(i)
+		free((*byte)(w.Base))
+	}
+	return LastStatus
+}
+
+func ExecuteNode(n *Node) byte {
+	if n == (*Node)(0) {
+		return LastStatus
+	}
+	if LoopControl != LOOP_NORMAL {
+		return LastStatus
+	}
+
+	if n.Kind == NODE_SIMPLE {
+		return ExecuteSimple(n)
+	}
+	if n.Kind == NODE_PIPELINE {
+		return ExecutePipeline(n)
+	}
+	if n.Kind == NODE_AND {
+		st := ExecuteNode(n.Left)
+		if st == 0 && LoopControl == LOOP_NORMAL {
+			return ExecuteNode(n.Right)
+		}
+		return st
+	}
+	if n.Kind == NODE_OR {
+		st := ExecuteNode(n.Left)
+		if st != 0 && LoopControl == LOOP_NORMAL {
+			return ExecuteNode(n.Right)
+		}
+		return st
+	}
+	if n.Kind == NODE_SEQ {
+		st := ExecuteNode(n.Left)
+		if LoopControl == LOOP_NORMAL && n.Right != (*Node)(0) {
+			return ExecuteNode(n.Right)
+		}
+		return st
+	}
+	if n.Kind == NODE_WHILE {
+		return ExecuteWhile(n)
+	}
+	if n.Kind == NODE_FOR {
+		return ExecuteFor(n)
+	}
+	return 0
+}
+
+func ExecuteLine(line string) byte {
+	var tokens mem.List[Token]
+	tokens.Init()
+	Tokenize(line, &tokens)
+	if tokens.Len() == 0 {
+		return LastStatus
+	}
+	pos := word(0)
+	ast := ParseStatementList(&tokens, &pos)
+	st := ExecuteNode(ast)
+	FreeNode(ast)
+	for i := word(0); i < tokens.Len(); i++ {
+		tok := tokens.Get(i)
+		if tok.Kind == TOK_WORD {
+			free((*byte)(tok.Text.Base))
+		}
+	}
+	return st
+}
+
+// ============================================================================
+// Block Checking (multi-line loops)
+// ============================================================================
+
+func hasUnclosedBlocks(line string) bool {
+	p := word(0)
+	n := line.Len
+	loopDepth := word(0)
+	atStatementStart := true
+
+	for p < n {
+		c := line[p]
+		if c == ' ' || c == '\t' || c == '\r' || c == '\n' {
+			if c == '\n' {
+				atStatementStart = true
+			}
+			p++
+			continue
+		}
+		if c == ';' || c == '|' || c == '&' {
+			atStatementStart = true
+			p++
+			continue
+		}
+		if c == '#' {
+			for p < n && line[p] != '\n' {
+				p++
+			}
+			atStatementStart = true
+			continue
+		}
+		if c == '\'' {
+			atStatementStart = false
+			p++
+			for p < n && line[p] != '\'' {
+				p++
+			}
+			if p < n {
+				p++
+			}
+			continue
+		}
+		if c == '"' {
+			atStatementStart = false
+			p++
+			for p < n && line[p] != '"' {
+				if line[p] == '\\' && p+1 < n {
+					p += 2
+				} else {
+					p++
+				}
+			}
+			if p < n {
+				p++
+			}
+			continue
+		}
+
+		start := p
+		for p < n {
+			ch := line[p]
+			if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == ';' || ch == '|' || ch == '&' || ch == '#' || ch == '\'' || ch == '"' {
+				break
+			}
+			p++
+		}
+		wlen := p - start
+		w := string{Base: line.Base + start, Len: wlen, Cap: wlen}
+		if atStatementStart {
+			if w == "while" || w == "for" {
+				loopDepth++
+			} else if w == "done" {
+				if loopDepth > 0 {
+					loopDepth--
+				}
+			}
+			if w != "do" {
+				atStatementStart = false
+			}
+		}
+	}
+	return loopDepth > 0
+}
+
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+func main() {
+	var cmdBuf mem.Buffer
+	var argBuf mem.Buffer
+	var filenameBuf mem.Buffer
+	var lineBuf mem.Buffer
+	var inputBuf mem.Buffer
+	cmdBuf.Init()
+	argBuf.Init()
+	filenameBuf.Init()
+	lineBuf.Init()
+	inputBuf.Init()
+
+	LastStatus = 0
+	SubDepth = 0
+	LoopControl = LOOP_NORMAL
+	BreakCount = 0
+	ContinueCount = 0
+	ScriptName = "gsh2"
+
+	// Default PATH
+	if sizeof[*word]() > 2 {
+		SetVar("PATH", "/CmdsK")
+	} else {
+		SetVar("PATH", "/Cmds9")
+	}
+
+	args := sys.Args()
+	hasArgs := false
+	if args != (*byte)(0) {
+		p := word(args)
+		for peekb(p) == ' ' || peekb(p) == '\t' {
+			p++
+		}
+		c0 := peekb(p)
+		if c0 != 0 && c0 != '\r' && c0 != '\n' {
+			hasArgs = true
+		}
+	}
+
+	if hasArgs {
+		p := word(args)
+		for peekb(p) == ' ' || peekb(p) == '\t' {
+			p++
+		}
+
+		// Option: -c "commands..."
+		if peekb(p) == '-' && peekb(p+1) == 'c' && (peekb(p+2) == ' ' || peekb(p+2) == '\t') {
+			p += 3
+			for peekb(p) == ' ' || peekb(p) == '\t' {
+				p++
+			}
+			quote := byte(0)
+			if peekb(p) == '\'' || peekb(p) == '"' {
+				quote = peekb(p)
+				p++
+			}
+			cmdBuf.Init()
+			for peekb(p) != 0 && peekb(p) != '\r' && peekb(p) != '\n' {
+				if quote != 0 && peekb(p) == quote {
+					p++
+					break
+				}
+				cmdBuf.Append(peekb(p))
+				p++
+			}
+			cmdStr := cmdBuf.TakeNul()
+
+			// Extract any remaining positional arguments
+			for {
+				for peekb(p) == ' ' || peekb(p) == '\t' {
+					p++
+				}
+				c := peekb(p)
+				if c == 0 || c == '\r' || c == '\n' {
+					break
+				}
+				argBuf.Init()
+				for peekb(p) != ' ' && peekb(p) != '\t' && peekb(p) != '\r' && peekb(p) != '\n' && peekb(p) != 0 {
+					argBuf.Append(peekb(p))
+					p++
+				}
+				PosArgs.Append(argBuf.TakeNul())
+			}
+
+			ExecuteLine(cmdStr)
+			sys.Exit(LastStatus)
+			return
+		}
+
+		// Script file execution
+		filenameBuf.Init()
+		for peekb(p) != ' ' && peekb(p) != '\t' && peekb(p) != '\r' && peekb(p) != '\n' && peekb(p) != 0 {
+			filenameBuf.Append(peekb(p))
+			p++
+		}
+		scriptFile := filenameBuf.TakeNul()
+		ScriptName = scriptFile
+
+		// Extract remaining arguments into PosArgs ($1, $2, ...)
+		for {
+			for peekb(p) == ' ' || peekb(p) == '\t' {
+				p++
+			}
+			c := peekb(p)
+			if c == 0 || c == '\r' || c == '\n' {
+				break
+			}
+			argBuf.Init()
+			for peekb(p) != ' ' && peekb(p) != '\t' && peekb(p) != '\r' && peekb(p) != '\n' && peekb(p) != 0 {
+				argBuf.Append(peekb(p))
+				p++
+			}
+			PosArgs.Append(argBuf.TakeNul())
+		}
+
+		fd := sys.Open((*byte)(scriptFile.Base), sys.MODE_READ)
+		if fd == 0xFF {
+			sys.PrintErr((*byte)("gsh2: cannot open script"))
+			sys.Exit(1)
+			return
+		}
+
+		lineBuf.Init()
+		var chunk [256]byte
+
+		for {
+			lineBuf.Clear()
+			n := sys.ReadLn(fd, &chunk[0], 255)
+			if n == 0 {
+				break
+			}
+			for n > 0 && (chunk[n-1] == '\r' || chunk[n-1] == '\n') {
+				n--
+			}
+			for k := word(0); k < n; k++ {
+				lineBuf.Append(chunk[k])
+			}
+			lineBuf.Append(0)
+			lineBuf.guts.Len--
+
+			// Check for multi-line block
+			for hasUnclosedBlocks(lineBuf.String()) {
+				cn := sys.ReadLn(fd, &chunk[0], 255)
+				if cn == 0 {
+					break
+				}
+				for cn > 0 && (chunk[cn-1] == '\r' || chunk[cn-1] == '\n') {
+					cn--
+				}
+				lineBuf.Append('\n')
+				for k := word(0); k < cn; k++ {
+					lineBuf.Append(chunk[k])
+				}
+				lineBuf.Append(0)
+				lineBuf.guts.Len--
+			}
+
+			ExecuteLine(lineBuf.String())
+			LoopControl = LOOP_NORMAL
+		}
+		sys.Close(fd)
+		sys.Exit(LastStatus)
+		return
+	}
+
+	// Interactive REPL loop
+	inputBuf.Init()
+	var lineChunk [256]byte
+
+	for {
+		sys.Print((*byte)("gsh2% "))
+		inputBuf.Clear()
+		n := sys.ReadLn(sys.STDIN, &lineChunk[0], 255)
+		if n == 0 {
+			break
+		}
+		for n > 0 && (lineChunk[n-1] == '\r' || lineChunk[n-1] == '\n') {
+			n--
+		}
+		for k := word(0); k < n; k++ {
+			inputBuf.Append(lineChunk[k])
+		}
+
+		// Continuation lines for multi-line loop/blocks
+		for hasUnclosedBlocks(inputBuf.String()) {
+			sys.Print((*byte)("> "))
+			cn := sys.ReadLn(sys.STDIN, &lineChunk[0], 255)
+			if cn == 0 {
+				break
+			}
+			for cn > 0 && (lineChunk[cn-1] == '\r' || lineChunk[cn-1] == '\n') {
+				cn--
+			}
+			inputBuf.Append('\n')
+			for k := word(0); k < cn; k++ {
+				inputBuf.Append(lineChunk[k])
+			}
+		}
+
+		ExecuteLine(inputBuf.String())
+		LoopControl = LOOP_NORMAL
+	}
+
+	sys.Exit(LastStatus)
+}
