@@ -1,0 +1,1385 @@
+package main
+
+import "sys"
+
+const MAX_WORDS = 48
+const MAX_WORD_LEN = 64
+var words [3072]byte // MAX_WORDS * MAX_WORD_LEN
+var numWords word
+
+const MAX_VARS = 32
+const MAX_VAR_NAME = 32
+const MAX_VAR_VAL = 128
+var varNames [1024]byte   // MAX_VARS * MAX_VAR_NAME
+var varValues [4096]byte  // MAX_VARS * MAX_VAR_VAL
+var varCount word
+var lastStatus byte
+var statusBuf [8]byte
+
+var lineBuf [512]byte
+var scriptBuf [512]byte
+var cmdBuf [256]byte
+var paramBuf [256]byte
+
+const MAX_POS_ARGS = 32
+var posArgs [2048]byte // MAX_POS_ARGS * MAX_WORD_LEN
+var numPosArgs word
+var numBuf [8]byte
+var scriptName [64]byte
+
+// ----------------------------------------------------------------------------
+// String Utilities
+// ----------------------------------------------------------------------------
+
+func strLen(s *byte) word {
+	if s == (*byte)(0) {
+		return 0
+	}
+	p := word(s)
+	n := word(0)
+	for peekb(p+n) != 0 {
+		n++
+	}
+	return n
+}
+
+func strEq(s1 *byte, s2 *byte) bool {
+	if s1 == (*byte)(0) || s2 == (*byte)(0) {
+		return s1 == s2
+	}
+	p1 := word(s1)
+	p2 := word(s2)
+	for {
+		c1 := peekb(p1)
+		c2 := peekb(p2)
+		if c1 != c2 {
+			return false
+		}
+		if c1 == 0 {
+			return true
+		}
+		p1++
+		p2++
+	}
+}
+
+func strCopy(dst *byte, src *byte, maxLen word) {
+	d := word(dst)
+	s := word(src)
+	n := word(0)
+	for n < maxLen-1 {
+		c := peekb(s + n)
+		if c == 0 {
+			break
+		}
+		pokeb(d+n, c)
+		n++
+	}
+	pokeb(d+n, 0)
+}
+
+func toUpper(c byte) byte {
+	if c >= 'a' && c <= 'z' {
+		return c - 32
+	}
+	return c
+}
+
+func isVarChar(c byte) bool {
+	if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+		return true
+	}
+	return false
+}
+
+// ----------------------------------------------------------------------------
+// Shell Variables
+// ----------------------------------------------------------------------------
+
+func SetVar(name *byte, val *byte) {
+	for i := word(0); i < varCount; i++ {
+		curName := (*byte)(word(&varNames[0]) + i*MAX_VAR_NAME)
+		if strEq(curName, name) {
+			curVal := (*byte)(word(&varValues[0]) + i*MAX_VAR_VAL)
+			strCopy(curVal, val, MAX_VAR_VAL)
+			return
+		}
+	}
+	if varCount < MAX_VARS {
+		curName := (*byte)(word(&varNames[0]) + varCount*MAX_VAR_NAME)
+		curVal := (*byte)(word(&varValues[0]) + varCount*MAX_VAR_VAL)
+		strCopy(curName, name, MAX_VAR_NAME)
+		strCopy(curVal, val, MAX_VAR_VAL)
+		varCount++
+	}
+}
+
+func GetVar(name *byte) *byte {
+	if strEq(name, (*byte)("?")) {
+		v := lastStatus
+		idx := word(0)
+		if v >= 100 {
+			statusBuf[idx] = '0' + (v / 100)
+			idx++
+			v = v % 100
+		}
+		if idx > 0 || v >= 10 {
+			statusBuf[idx] = '0' + (v / 10)
+			idx++
+			v = v % 10
+		}
+		statusBuf[idx] = '0' + v
+		idx++
+		statusBuf[idx] = 0
+		return &statusBuf[0]
+	}
+
+	if strEq(name, (*byte)("#")) {
+		v := numPosArgs
+		idx := word(0)
+		if v >= 100 {
+			numBuf[idx] = '0' + byte(v / 100)
+			idx++
+			v = v % 100
+		}
+		if idx > 0 || v >= 10 {
+			numBuf[idx] = '0' + byte(v / 10)
+			idx++
+			v = v % 10
+		}
+		numBuf[idx] = '0' + byte(v)
+		idx++
+		numBuf[idx] = 0
+		return &numBuf[0]
+	}
+
+	if strEq(name, (*byte)("0")) {
+		if scriptName[0] != 0 {
+			return &scriptName[0]
+		}
+		return (*byte)("gsh")
+	}
+
+	p := word(name)
+	isNum := true
+	nval := word(0)
+	for peekb(p) != 0 {
+		c := peekb(p)
+		if c < '0' || c > '9' {
+			isNum = false
+			break
+		}
+		nval = nval*10 + word(c - '0')
+		p++
+	}
+	if isNum && p != word(name) {
+		if nval >= 1 && nval <= numPosArgs {
+			return (*byte)(word(&posArgs[0]) + (nval - 1)*MAX_WORD_LEN)
+		}
+		return (*byte)("")
+	}
+
+	for i := word(0); i < varCount; i++ {
+		curName := (*byte)(word(&varNames[0]) + i*MAX_VAR_NAME)
+		if strEq(curName, name) {
+			return (*byte)(word(&varValues[0]) + i*MAX_VAR_VAL)
+		}
+	}
+	return (*byte)("")
+}
+
+// ----------------------------------------------------------------------------
+// Pattern Matching & Globbing
+// ----------------------------------------------------------------------------
+
+func MatchPattern(pat *byte, str *byte) bool {
+	p := pat
+	s := str
+	for {
+		pc := peekb(word(p))
+		sc := peekb(word(s))
+		if pc == 0 {
+			return sc == 0
+		}
+		if pc == '*' {
+			for peekb(word(p)+1) == '*' {
+				p = (*byte)(word(p) + 1)
+			}
+			if peekb(word(p)+1) == 0 {
+				return true
+			}
+			for peekb(word(s)) != 0 {
+				if MatchPattern((*byte)(word(p)+1), s) {
+					return true
+				}
+				s = (*byte)(word(s) + 1)
+			}
+			return MatchPattern((*byte)(word(p)+1), s)
+		}
+		if sc == 0 {
+			return false
+		}
+		if pc == '?' {
+			p = (*byte)(word(p) + 1)
+			s = (*byte)(word(s) + 1)
+			continue
+		}
+		if toUpper(pc) != toUpper(sc) {
+			return false
+		}
+		p = (*byte)(word(p) + 1)
+		s = (*byte)(word(s) + 1)
+	}
+}
+
+func AddWord(w *byte) {
+	if numWords < MAX_WORDS {
+		dst := (*byte)(word(&words[0]) + numWords*MAX_WORD_LEN)
+		strCopy(dst, w, MAX_WORD_LEN)
+		numWords++
+	}
+}
+
+func ExpandGlob(pat *byte) {
+	plen := strLen(pat)
+	lastSlash := word(0xFFFF)
+	for i := word(0); i < plen; i++ {
+		if peekb(word(pat)+i) == '/' {
+			lastSlash = i
+		}
+	}
+
+	if lastSlash == 0xFFFF {
+		// Pattern in current directory (no slash)
+		fd := sys.Open((*byte)("."), sys.MODE_READ|sys.MODE_DIR)
+		if fd == 0xFF {
+			AddWord(pat)
+			return
+		}
+
+		matches := word(0)
+		var dirent [32]byte
+		var name [32]byte
+
+		for {
+			n := sys.Read(fd, &dirent[0], 32)
+			if n < 32 {
+				break
+			}
+			c0 := dirent[0]
+			if c0 == 0 || c0 == 0xE5 {
+				continue
+			}
+			if (c0&0x7F) == '.' && peekb(word(pat)) != '.' {
+				continue
+			}
+
+			nameLen := word(0)
+			for nameLen < 29 {
+				ch := dirent[nameLen]
+				name[nameLen] = ch & 0x7F
+				nameLen++
+				if (ch & 0x80) != 0 {
+					break
+				}
+			}
+			name[nameLen] = 0
+
+			if MatchPattern(pat, &name[0]) {
+				AddWord(&name[0])
+				matches++
+			}
+		}
+		sys.Close(fd)
+
+		if matches == 0 {
+			AddWord(pat)
+		}
+		return
+	}
+
+	// Pattern with directory prefix (has slash)
+	var dirBuf [128]byte
+	var patBuf [64]byte
+
+	if lastSlash == 0 {
+		dirBuf[0] = '/'
+		dirBuf[1] = 0
+	} else {
+		for i := word(0); i < lastSlash; i++ {
+			dirBuf[i] = peekb(word(pat) + i)
+		}
+		dirBuf[lastSlash] = 0
+	}
+	pi := word(0)
+	for i := lastSlash + 1; i < plen && pi < 63; i++ {
+		patBuf[pi] = peekb(word(pat) + i)
+		pi++
+	}
+	patBuf[pi] = 0
+
+	fd := sys.Open(&dirBuf[0], sys.MODE_READ|sys.MODE_DIR)
+	if fd == 0xFF {
+		AddWord(pat)
+		return
+	}
+
+	matches := word(0)
+	var dirent [32]byte
+	var name [32]byte
+	var combined [128]byte
+
+	for {
+		n := sys.Read(fd, &dirent[0], 32)
+		if n < 32 {
+			break
+		}
+		c0 := dirent[0]
+		if c0 == 0 || c0 == 0xE5 {
+			continue
+		}
+		if (c0&0x7F) == '.' && patBuf[0] != '.' {
+			continue
+		}
+
+		nameLen := word(0)
+		for nameLen < 29 {
+			ch := dirent[nameLen]
+			name[nameLen] = ch & 0x7F
+			nameLen++
+			if (ch & 0x80) != 0 {
+				break
+			}
+		}
+		name[nameLen] = 0
+
+		if MatchPattern(&patBuf[0], &name[0]) {
+			dlen := strLen(&dirBuf[0])
+			for k := word(0); k < dlen; k++ {
+				combined[k] = dirBuf[k]
+			}
+			if lastSlash > 0 {
+				combined[dlen] = '/'
+				dlen++
+			}
+			for k := word(0); k <= nameLen; k++ {
+				combined[dlen+k] = name[k]
+			}
+			AddWord(&combined[0])
+			matches++
+		}
+	}
+	sys.Close(fd)
+
+	if matches == 0 {
+		AddWord(pat)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Tokenizer / Word Expander
+// ----------------------------------------------------------------------------
+
+func TokenizeWords(line *byte) {
+	numWords = 0
+	p := word(line)
+
+	var curWord [MAX_WORD_LEN]byte
+	curLen := word(0)
+	inSingle := false
+	inDouble := false
+	hasGlob := false
+	wordStarted := false
+
+	for {
+		c := peekb(p)
+		if c == 0 || c == '\r' || c == '\n' {
+			break
+		}
+
+		if inSingle {
+			if c == '\'' {
+				inSingle = false
+				p++
+				continue
+			}
+			if curLen < MAX_WORD_LEN-1 {
+				curWord[curLen] = c
+				curLen++
+			}
+			wordStarted = true
+			p++
+			continue
+		}
+
+		if inDouble {
+			if c == '"' {
+				inDouble = false
+				p++
+				continue
+			}
+			if c == '$' {
+				p++
+				var varName [32]byte
+				vnLen := word(0)
+				if peekb(p) == '{' {
+					p++
+					for peekb(p) != '}' && peekb(p) != 0 && vnLen < 31 {
+						varName[vnLen] = peekb(p)
+						vnLen++
+						p++
+					}
+					if peekb(p) == '}' {
+						p++
+					}
+				} else if peekb(p) == '?' || peekb(p) == '#' {
+					varName[0] = peekb(p)
+					vnLen = 1
+					p++
+				} else if peekb(p) >= '0' && peekb(p) <= '9' {
+					varName[0] = peekb(p)
+					vnLen = 1
+					p++
+				} else {
+					for isVarChar(peekb(p)) && vnLen < 31 {
+						varName[vnLen] = peekb(p)
+						vnLen++
+						p++
+					}
+				}
+				varName[vnLen] = 0
+				val := GetVar(&varName[0])
+				vp := word(val)
+				for peekb(vp) != 0 && curLen < MAX_WORD_LEN-1 {
+					curWord[curLen] = peekb(vp)
+					curLen++
+					vp++
+				}
+				wordStarted = true
+				continue
+			}
+
+			if curLen < MAX_WORD_LEN-1 {
+				curWord[curLen] = c
+				curLen++
+			}
+			wordStarted = true
+			p++
+			continue
+		}
+
+		// Outside quotes:
+		if c == '\'' {
+			inSingle = true
+			wordStarted = true
+			p++
+			continue
+		}
+		if c == '"' {
+			inDouble = true
+			wordStarted = true
+			p++
+			continue
+		}
+
+		if c == ' ' || c == '\t' {
+			if wordStarted {
+				curWord[curLen] = 0
+				if hasGlob {
+					ExpandGlob(&curWord[0])
+				} else {
+					AddWord(&curWord[0])
+				}
+				curLen = 0
+				hasGlob = false
+				wordStarted = false
+			}
+			p++
+			continue
+		}
+
+		if c == '$' {
+			p++
+			var varName [32]byte
+			vnLen := word(0)
+			if peekb(p) == '{' {
+				p++
+				for peekb(p) != '}' && peekb(p) != 0 && vnLen < 31 {
+					varName[vnLen] = peekb(p)
+					vnLen++
+					p++
+				}
+				if peekb(p) == '}' {
+					p++
+				}
+			} else if peekb(p) == '?' || peekb(p) == '#' {
+				varName[0] = peekb(p)
+				vnLen = 1
+				p++
+			} else if peekb(p) >= '0' && peekb(p) <= '9' {
+				varName[0] = peekb(p)
+				vnLen = 1
+				p++
+			} else {
+				for isVarChar(peekb(p)) && vnLen < 31 {
+					varName[vnLen] = peekb(p)
+					vnLen++
+					p++
+				}
+			}
+			varName[vnLen] = 0
+			val := GetVar(&varName[0])
+			vp := word(val)
+			for peekb(vp) != 0 && curLen < MAX_WORD_LEN-1 {
+				curWord[curLen] = peekb(vp)
+				curLen++
+				vp++
+			}
+			wordStarted = true
+			continue
+		}
+
+		if c == '*' || c == '?' {
+			hasGlob = true
+		}
+
+		if curLen < MAX_WORD_LEN-1 {
+			curWord[curLen] = c
+			curLen++
+		}
+		wordStarted = true
+		p++
+	}
+
+	if wordStarted {
+		curWord[curLen] = 0
+		if hasGlob {
+			ExpandGlob(&curWord[0])
+		} else {
+			AddWord(&curWord[0])
+		}
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Simple Command Execution
+// ----------------------------------------------------------------------------
+
+func ExecuteSimpleCommand(cmdStr *byte) byte {
+	TokenizeWords(cmdStr)
+	if numWords == 0 {
+		return lastStatus
+	}
+
+	firstWord := (*byte)(word(&words[0]))
+	if peekb(word(firstWord)) == '#' {
+		return lastStatus
+	}
+	fwLen := strLen(firstWord)
+
+	// Check if this is a variable assignment: name=val
+	eqIdx := word(0xFFFF)
+	for i := word(0); i < fwLen; i++ {
+		c := peekb(word(firstWord) + i)
+		if c == '=' {
+			eqIdx = i
+			break
+		}
+		if !isVarChar(c) {
+			break
+		}
+	}
+
+	if eqIdx != 0xFFFF && eqIdx > 0 {
+		// Process assignments for all words that match name=value
+		for w := word(0); w < numWords; w++ {
+			cw := (*byte)(word(&words[0]) + w*MAX_WORD_LEN)
+			clen := strLen(cw)
+			e := word(0xFFFF)
+			for i := word(0); i < clen; i++ {
+				if peekb(word(cw)+i) == '=' {
+					e = i
+					break
+				}
+			}
+			if e != 0xFFFF && e > 0 {
+				var aname [32]byte
+				for i := word(0); i < e && i < 31; i++ {
+					aname[i] = peekb(word(cw) + i)
+				}
+				aname[e] = 0
+				aval := (*byte)(word(cw) + e + 1)
+				SetVar(&aname[0], aval)
+			}
+		}
+		lastStatus = 0
+		return 0
+	}
+
+	// Builtin: echo / gecho
+	if strEq(firstWord, (*byte)("echo")) || strEq(firstWord, (*byte)("gecho")) {
+		var outBuf [256]byte
+		olen := word(0)
+		for i := word(1); i < numWords; i++ {
+			if i > 1 && olen < 254 {
+				outBuf[olen] = ' '
+				olen++
+			}
+			wptr := (*byte)(word(&words[0]) + i*MAX_WORD_LEN)
+			wlen := strLen(wptr)
+			for k := word(0); k < wlen && olen < 254; k++ {
+				outBuf[olen] = peekb(word(wptr) + k)
+				olen++
+			}
+		}
+		outBuf[olen] = 0
+		sys.Println(&outBuf[0])
+		lastStatus = 0
+		return 0
+	}
+
+	// Builtin: cd
+	if strEq(firstWord, (*byte)("cd")) {
+		var target *byte
+		if numWords >= 2 {
+			target = (*byte)(word(&words[0]) + 1*MAX_WORD_LEN)
+		} else {
+			target = (*byte)("/")
+		}
+		err := sys.ChgDir(target, sys.MODE_READ)
+		if err != 0 {
+			sys.PrintErr((*byte)("cd: path not found"))
+			lastStatus = 1
+			return 1
+		}
+		lastStatus = 0
+		return 0
+	}
+
+	// Builtin: cx
+	if strEq(firstWord, (*byte)("cx")) {
+		var target *byte
+		if numWords >= 2 {
+			target = (*byte)(word(&words[0]) + 1*MAX_WORD_LEN)
+		} else {
+			target = (*byte)("/Cmds9")
+		}
+		err := sys.ChgDir(target, sys.MODE_EXEC)
+		if err != 0 {
+			sys.PrintErr((*byte)("cx: path not found"))
+			lastStatus = 1
+			return 1
+		}
+		lastStatus = 0
+		return 0
+	}
+
+	// Builtin: exit
+	if strEq(firstWord, (*byte)("exit")) {
+		code := lastStatus
+		if numWords >= 2 {
+			wptr := word(&words[0]) + 1*MAX_WORD_LEN
+			code = 0
+			for peekb(wptr) >= '0' && peekb(wptr) <= '9' {
+				code = code*10 + (peekb(wptr) - '0')
+				wptr++
+			}
+		}
+		sys.Exit(code)
+		return code
+	}
+
+	// Builtin: shift
+	if strEq(firstWord, (*byte)("shift")) {
+		cnt := word(1)
+		if numWords >= 2 {
+			wptr := word(&words[0]) + 1*MAX_WORD_LEN
+			cval := word(0)
+			for peekb(wptr) >= '0' && peekb(wptr) <= '9' {
+				cval = cval*10 + word(peekb(wptr) - '0')
+				wptr++
+			}
+			if cval > 0 {
+				cnt = cval
+			}
+		}
+		for s := word(0); s < cnt; s++ {
+			if numPosArgs > 0 {
+				for i := word(0); i < numPosArgs-1; i++ {
+					dst := (*byte)(word(&posArgs[0]) + i*MAX_WORD_LEN)
+					src := (*byte)(word(&posArgs[0]) + (i+1)*MAX_WORD_LEN)
+					strCopy(dst, src, MAX_WORD_LEN)
+				}
+				numPosArgs--
+			}
+		}
+		lastStatus = 0
+		return 0
+	}
+
+	// External command execution
+	plen := word(0)
+	for i := word(1); i < numWords; i++ {
+		if i > 1 && plen < 253 {
+			paramBuf[plen] = ' '
+			plen++
+		}
+		wptr := (*byte)(word(&words[0]) + i*MAX_WORD_LEN)
+		wlen := strLen(wptr)
+		for k := word(0); k < wlen && plen < 253; k++ {
+			paramBuf[plen] = peekb(word(wptr) + k)
+			plen++
+		}
+	}
+	paramBuf[plen] = '\r'
+	plen++
+	paramBuf[plen] = 0
+
+	st := sys.Spawn(firstWord, &paramBuf[0], plen)
+	if st == 127 {
+		sys.Print(firstWord)
+		sys.Println((*byte)(": not found"))
+		lastStatus = 127
+		return 127
+	}
+	lastStatus = st
+	return st
+}
+
+// ----------------------------------------------------------------------------
+// For Statement Parser & Execution
+// ----------------------------------------------------------------------------
+
+func isForLoop(s *byte) bool {
+	p := word(s)
+	for peekb(p) == ' ' || peekb(p) == '\t' {
+		p++
+	}
+	if peekb(p) == 'f' && peekb(p+1) == 'o' && peekb(p+2) == 'r' && (peekb(p+3) == ' ' || peekb(p+3) == '\t') {
+		return true
+	}
+	return false
+}
+
+func checkHasDone(s *byte) bool {
+	p := word(s)
+	q := p
+	for peekb(q) == ' ' || peekb(q) == '\t' || peekb(q) == '\n' {
+		q++
+	}
+	if peekb(q) == 'd' && peekb(q+1) == 'o' && peekb(q+2) == 'n' && peekb(q+3) == 'e' && (peekb(q+4) == ' ' || peekb(q+4) == '\t' || peekb(q+4) == ';' || peekb(q+4) == '\n' || peekb(q+4) == 0) {
+		return true
+	}
+
+	inSingle := false
+	inDouble := false
+	nesting := word(0)
+	for peekb(p) != 0 {
+		c := peekb(p)
+		if c == '\'' && !inDouble {
+			inSingle = !inSingle
+		} else if c == '"' && !inSingle {
+			inDouble = !inDouble
+		} else if !inSingle && !inDouble {
+			if c == ';' || c == ' ' || c == '\t' || c == '\n' {
+				q = p
+				if peekb(q) == ';' {
+					q++
+				}
+				for peekb(q) == ' ' || peekb(q) == '\t' || peekb(q) == '\n' {
+					q++
+				}
+				if peekb(q) == 'f' && peekb(q+1) == 'o' && peekb(q+2) == 'r' && (peekb(q+3) == ' ' || peekb(q+3) == '\t') {
+					nesting++
+				}
+				if peekb(q) == 'd' && peekb(q+1) == 'o' && peekb(q+2) == 'n' && peekb(q+3) == 'e' && (peekb(q+4) == ' ' || peekb(q+4) == '\t' || peekb(q+4) == ';' || peekb(q+4) == '\n' || peekb(q+4) == 0) {
+					if nesting > 0 {
+						nesting--
+					} else {
+						return true
+					}
+				}
+			}
+		}
+		p++
+	}
+	return false
+}
+
+func ExecuteFor(forStr *byte) byte {
+	p := word(forStr)
+	for peekb(p) == ' ' || peekb(p) == '\t' {
+		p++
+	}
+	p += 4 // skip "for "
+
+	// 1. Extract variable name
+	for peekb(p) == ' ' || peekb(p) == '\t' {
+		p++
+	}
+	var varName [32]byte
+	vlen := word(0)
+	for isVarChar(peekb(p)) && vlen < 31 {
+		varName[vlen] = peekb(p)
+		vlen++
+		p++
+	}
+	varName[vlen] = 0
+
+	// 2. Check for "in"
+	for peekb(p) == ' ' || peekb(p) == '\t' {
+		p++
+	}
+	hasIn := false
+	if peekb(p) == 'i' && peekb(p+1) == 'n' && (peekb(p+2) == ' ' || peekb(p+2) == '\t' || peekb(p+2) == ';' || peekb(p+2) == '\n') {
+		hasIn = true
+		p += 2
+	}
+
+	var itemsStr [256]byte
+	ilen := word(0)
+	inSingle := false
+	inDouble := false
+
+	if hasIn {
+		// 3. Extract items up to "do"
+		for {
+			c := peekb(p)
+			if c == 0 {
+				break
+			}
+			if !inSingle && !inDouble {
+				// Check for "do" keyword
+				if (c == ';' || c == ' ' || c == '\t' || c == '\n') {
+					q := p
+					if peekb(q) == ';' {
+						q++
+					}
+					for peekb(q) == ' ' || peekb(q) == '\t' || peekb(q) == '\n' {
+						q++
+					}
+					if peekb(q) == 'd' && peekb(q+1) == 'o' && (peekb(q+2) == ' ' || peekb(q+2) == '\t' || peekb(q+2) == ';' || peekb(q+2) == '\n' || peekb(q+2) == 0) {
+						p = q + 2
+						break
+					}
+				}
+			}
+
+			if c == '\'' && !inDouble {
+				inSingle = !inSingle
+			} else if c == '"' && !inSingle {
+				inDouble = !inDouble
+			}
+
+			if ilen < 255 {
+				itemsStr[ilen] = c
+				ilen++
+			}
+			p++
+		}
+		itemsStr[ilen] = 0
+	} else {
+		// No "in": scan directly to "do" keyword
+		for {
+			c := peekb(p)
+			if c == 0 {
+				break
+			}
+			if c == ';' || c == ' ' || c == '\t' || c == '\n' {
+				q := p
+				if peekb(q) == ';' {
+					q++
+				}
+				for peekb(q) == ' ' || peekb(q) == '\t' || peekb(q) == '\n' {
+					q++
+				}
+				if peekb(q) == 'd' && peekb(q+1) == 'o' && (peekb(q+2) == ' ' || peekb(q+2) == '\t' || peekb(q+2) == ';' || peekb(q+2) == '\n' || peekb(q+2) == 0) {
+					p = q + 2
+					break
+				}
+			} else if peekb(p) == 'd' && peekb(p+1) == 'o' && (peekb(p+2) == ' ' || peekb(p+2) == '\t' || peekb(p+2) == ';' || peekb(p+2) == '\n' || peekb(p+2) == 0) {
+				p += 2
+				break
+			}
+			p++
+		}
+	}
+
+	// 4. Extract body up to "done"
+	var bodyStr [256]byte
+	blen := word(0)
+	inSingle = false
+	inDouble = false
+	nesting := word(0)
+
+	for {
+		c := peekb(p)
+		if c == 0 {
+			break
+		}
+
+		if !inSingle && !inDouble {
+			if (c == ';' || c == ' ' || c == '\t' || c == '\n') {
+				q := p
+				if peekb(q) == ';' {
+					q++
+				}
+				for peekb(q) == ' ' || peekb(q) == '\t' || peekb(q) == '\n' {
+					q++
+				}
+				// Check for nested "for"
+				if peekb(q) == 'f' && peekb(q+1) == 'o' && peekb(q+2) == 'r' && (peekb(q+3) == ' ' || peekb(q+3) == '\t') {
+					nesting++
+				}
+				// Check for "done"
+				if peekb(q) == 'd' && peekb(q+1) == 'o' && peekb(q+2) == 'n' && peekb(q+3) == 'e' && (peekb(q+4) == ' ' || peekb(q+4) == '\t' || peekb(q+4) == ';' || peekb(q+4) == '\n' || peekb(q+4) == 0) {
+					if nesting > 0 {
+						nesting--
+					} else {
+						break
+					}
+				}
+			}
+		}
+
+		if c == '\'' && !inDouble {
+			inSingle = !inSingle
+		} else if c == '"' && !inSingle {
+			inDouble = !inDouble
+		}
+
+		if blen < 255 {
+			bodyStr[blen] = c
+			blen++
+		}
+		p++
+	}
+	bodyStr[blen] = 0
+
+	// 5. Expand items
+	var savedItems [MAX_WORDS * MAX_WORD_LEN]byte
+	totalItems := word(0)
+
+	if hasIn {
+		TokenizeWords(&itemsStr[0])
+		totalItems = numWords
+		for i := word(0); i < totalItems*MAX_WORD_LEN; i++ {
+			savedItems[i] = words[i]
+		}
+	} else {
+		totalItems = numPosArgs
+		for i := word(0); i < totalItems*MAX_WORD_LEN; i++ {
+			savedItems[i] = posArgs[i]
+		}
+	}
+
+	forStatus := byte(0)
+	for i := word(0); i < totalItems; i++ {
+		item := (*byte)(word(&savedItems[0]) + i*MAX_WORD_LEN)
+		SetVar(&varName[0], item)
+		forStatus = ExecuteScript(&bodyStr[0])
+	}
+
+	lastStatus = forStatus
+	return forStatus
+}
+
+// ----------------------------------------------------------------------------
+// Script / Pipeline Execution (;, \n, &&, !!, ||)
+// ----------------------------------------------------------------------------
+
+const OP_FIRST = 0
+const OP_SEQ = 1
+const OP_AND = 2
+const OP_OR = 3
+
+func ExecuteScript(script *byte) byte {
+	p := word(script)
+	var segBuf [256]byte
+	segLen := word(0)
+	nextOp := byte(OP_FIRST)
+	curOp := byte(OP_FIRST)
+
+	inSingle := false
+	inDouble := false
+	prevStatus := lastStatus
+
+	for {
+		c := peekb(p)
+		if c == 0 {
+			break
+		}
+
+		if !inSingle && !inDouble {
+			// Check if we are at start of "for "
+			if segLen == 0 {
+				q := p
+				for peekb(q) == ' ' || peekb(q) == '\t' {
+					q++
+				}
+				if peekb(q) == 'f' && peekb(q+1) == 'o' && peekb(q+2) == 'r' && (peekb(q+3) == ' ' || peekb(q+3) == '\t') {
+					// Scan until matching "done"
+					forNesting := word(0)
+					for peekb(p) != 0 {
+						fc := peekb(p)
+						if fc == '\'' && !inDouble {
+							inSingle = !inSingle
+						} else if fc == '"' && !inSingle {
+							inDouble = !inDouble
+						} else if !inSingle && !inDouble {
+							if (fc == ';' || fc == ' ' || fc == '\t' || fc == '\n') {
+								fq := p
+								if peekb(fq) == ';' {
+									fq++
+								}
+								for peekb(fq) == ' ' || peekb(fq) == '\t' || peekb(fq) == '\n' {
+									fq++
+								}
+								if peekb(fq) == 'f' && peekb(fq+1) == 'o' && peekb(fq+2) == 'r' && (peekb(fq+3) == ' ' || peekb(fq+3) == '\t') {
+									forNesting++
+								}
+								if peekb(fq) == 'd' && peekb(fq+1) == 'o' && peekb(fq+2) == 'n' && peekb(fq+3) == 'e' && (peekb(fq+4) == ' ' || peekb(fq+4) == '\t' || peekb(fq+4) == ';' || peekb(fq+4) == '\n' || peekb(fq+4) == 0) {
+									if forNesting > 0 {
+										forNesting--
+									} else {
+										// Copy any characters from p up to fq
+										for ; p < fq && segLen < 255; p++ {
+											segBuf[segLen] = peekb(p)
+											segLen++
+										}
+										// Copy "done"
+										for k := word(0); k < 4 && segLen < 255; k++ {
+											segBuf[segLen] = peekb(fq + k)
+											segLen++
+										}
+										p = fq + 4
+										break
+									}
+								}
+							}
+						}
+						if segLen < 255 {
+							segBuf[segLen] = fc
+							segLen++
+						}
+						p++
+					}
+					continue
+				}
+			}
+
+			// Check operators: &&, !!, ||, ;, \n
+			if c == '&' && peekb(p+1) == '&' {
+				nextOp = OP_AND
+				p += 2
+				goto flush_seg
+			}
+			if (c == '!' && peekb(p+1) == '!') || (c == '|' && peekb(p+1) == '|') {
+				nextOp = OP_OR
+				p += 2
+				goto flush_seg
+			}
+			if c == ';' || c == '\n' {
+				nextOp = OP_SEQ
+				p++
+				goto flush_seg
+			}
+		}
+
+		if c == '\'' && !inDouble {
+			inSingle = !inSingle
+		} else if c == '"' && !inSingle {
+			inDouble = !inDouble
+		}
+
+		if segLen < 255 {
+			segBuf[segLen] = c
+			segLen++
+		}
+		p++
+		continue
+
+	flush_seg:
+		segBuf[segLen] = 0
+		// Execute segment according to curOp
+		shouldRun := true
+		if curOp == OP_AND {
+			if prevStatus != 0 {
+				shouldRun = false
+			}
+		} else if curOp == OP_OR {
+			if prevStatus == 0 {
+				shouldRun = false
+			}
+		}
+
+		if shouldRun {
+			// Trim spaces
+			sp := word(&segBuf[0])
+			for peekb(sp) == ' ' || peekb(sp) == '\t' {
+				sp++
+			}
+			if peekb(sp) != 0 {
+				if isForLoop((*byte)(sp)) {
+					prevStatus = ExecuteFor((*byte)(sp))
+				} else {
+					prevStatus = ExecuteSimpleCommand((*byte)(sp))
+				}
+			}
+		}
+
+		segLen = 0
+		curOp = nextOp
+	}
+
+	// Flush remaining segment
+	segBuf[segLen] = 0
+	shouldRun := true
+	if curOp == OP_AND {
+		if prevStatus != 0 {
+			shouldRun = false
+		}
+	} else if curOp == OP_OR {
+		if prevStatus == 0 {
+			shouldRun = false
+		}
+	}
+
+	if shouldRun {
+		sp := word(&segBuf[0])
+		for peekb(sp) == ' ' || peekb(sp) == '\t' {
+			sp++
+		}
+		if peekb(sp) != 0 {
+			if isForLoop((*byte)(sp)) {
+				prevStatus = ExecuteFor((*byte)(sp))
+			} else {
+				prevStatus = ExecuteSimpleCommand((*byte)(sp))
+			}
+		}
+	}
+
+	lastStatus = prevStatus
+	return prevStatus
+}
+
+// ----------------------------------------------------------------------------
+// Main Entry Point
+// ----------------------------------------------------------------------------
+
+func main() {
+	varCount = 0
+	lastStatus = 0
+	numPosArgs = 0
+	strCopy(&scriptName[0], (*byte)("gsh"), 64)
+
+	args := sys.Args()
+	hasArgs := false
+	if args != (*byte)(0) {
+		p := word(args)
+		for peekb(p) == ' ' || peekb(p) == '\t' {
+			p++
+		}
+		c0 := peekb(p)
+		if c0 != 0 && c0 != '\r' && c0 != '\n' {
+			hasArgs = true
+		}
+	}
+
+	if hasArgs {
+		p := word(args)
+		for peekb(p) == ' ' || peekb(p) == '\t' {
+			p++
+		}
+
+		// Check for -c "commands..."
+		if peekb(p) == '-' && peekb(p+1) == 'c' && (peekb(p+2) == ' ' || peekb(p+2) == '\t') {
+			p += 3
+			for peekb(p) == ' ' || peekb(p) == '\t' {
+				p++
+			}
+			quote := byte(0)
+			if peekb(p) == '\'' || peekb(p) == '"' {
+				quote = peekb(p)
+				p++
+			}
+			slen := word(0)
+			for peekb(p) != 0 && peekb(p) != '\r' && peekb(p) != '\n' && slen < 511 {
+				if quote != 0 && peekb(p) == quote {
+					p++
+					break
+				}
+				scriptBuf[slen] = peekb(p)
+				slen++
+				p++
+			}
+			scriptBuf[slen] = 0
+
+			// Extract any remaining positional arguments
+			for {
+				for peekb(p) == ' ' || peekb(p) == '\t' {
+					p++
+				}
+				c := peekb(p)
+				if c == 0 || c == '\r' || c == '\n' {
+					break
+				}
+				if numPosArgs < MAX_POS_ARGS {
+					dst := (*byte)(word(&posArgs[0]) + numPosArgs*MAX_WORD_LEN)
+					alen := word(0)
+					for peekb(p) != ' ' && peekb(p) != '\t' && peekb(p) != '\r' && peekb(p) != '\n' && peekb(p) != 0 && alen < MAX_WORD_LEN-1 {
+						pokeb(word(dst)+alen, peekb(p))
+						alen++
+						p++
+					}
+					pokeb(word(dst)+alen, 0)
+					numPosArgs++
+				} else {
+					for peekb(p) != ' ' && peekb(p) != '\t' && peekb(p) != '\r' && peekb(p) != '\n' && peekb(p) != 0 {
+						p++
+					}
+				}
+			}
+
+			ExecuteScript(&scriptBuf[0])
+			sys.Exit(lastStatus)
+			return
+		}
+
+		// Script file execution
+		var filename [128]byte
+		flen := word(0)
+		for peekb(p) != ' ' && peekb(p) != '\t' && peekb(p) != '\r' && peekb(p) != '\n' && peekb(p) != 0 && flen < 127 {
+			filename[flen] = peekb(p)
+			flen++
+			p++
+		}
+		filename[flen] = 0
+		strCopy(&scriptName[0], &filename[0], 64)
+
+		// Parse remaining arguments into $1, $2, $3...
+		for {
+			for peekb(p) == ' ' || peekb(p) == '\t' {
+				p++
+			}
+			c := peekb(p)
+			if c == 0 || c == '\r' || c == '\n' {
+				break
+			}
+			if numPosArgs < MAX_POS_ARGS {
+				dst := (*byte)(word(&posArgs[0]) + numPosArgs*MAX_WORD_LEN)
+				alen := word(0)
+				for peekb(p) != ' ' && peekb(p) != '\t' && peekb(p) != '\r' && peekb(p) != '\n' && peekb(p) != 0 && alen < MAX_WORD_LEN-1 {
+					pokeb(word(dst)+alen, peekb(p))
+					alen++
+					p++
+				}
+				pokeb(word(dst)+alen, 0)
+				numPosArgs++
+			} else {
+				for peekb(p) != ' ' && peekb(p) != '\t' && peekb(p) != '\r' && peekb(p) != '\n' && peekb(p) != 0 {
+					p++
+				}
+			}
+		}
+
+		fd := sys.Open(&filename[0], sys.MODE_READ)
+		if fd == 0xFF {
+			sys.PrintErr((*byte)("gsh: cannot open script"))
+			sys.Exit(1)
+			return
+		}
+
+		for {
+			n := sys.ReadLn(fd, &lineBuf[0], 255)
+			if n == 0 {
+				break
+			}
+			for n > 0 && (lineBuf[n-1] == '\r' || lineBuf[n-1] == '\n') {
+				n--
+			}
+			lineBuf[n] = 0
+
+			// If line starts a "for" without "done", keep reading until "done"
+			sp := word(&lineBuf[0])
+			for peekb(sp) == ' ' || peekb(sp) == '\t' {
+				sp++
+			}
+			if peekb(sp) == 'f' && peekb(sp+1) == 'o' && peekb(sp+2) == 'r' && (peekb(sp+3) == ' ' || peekb(sp+3) == '\t') {
+				curTotal := n
+				for !checkHasDone(&lineBuf[0]) {
+					var contBuf [256]byte
+					cn := sys.ReadLn(fd, &contBuf[0], 255)
+					if cn == 0 {
+						break
+					}
+					for cn > 0 && (contBuf[cn-1] == '\r' || contBuf[cn-1] == '\n') {
+						cn--
+					}
+					contBuf[cn] = 0
+					if curTotal < 500 {
+						lineBuf[curTotal] = '\n'
+						curTotal++
+						for k := word(0); k < cn && curTotal < 510; k++ {
+							lineBuf[curTotal] = contBuf[k]
+							curTotal++
+						}
+						lineBuf[curTotal] = 0
+					}
+				}
+			}
+
+			ExecuteScript(&lineBuf[0])
+		}
+		sys.Close(fd)
+		sys.Exit(lastStatus)
+		return
+	}
+
+	// Interactive / Stdin loop
+	for {
+		sys.Print((*byte)("gsh$ "))
+		n := sys.ReadLn(sys.STDIN, &lineBuf[0], 255)
+		if n == 0 {
+			break
+		}
+		for n > 0 && (lineBuf[n-1] == '\r' || lineBuf[n-1] == '\n') {
+			n--
+		}
+		lineBuf[n] = 0
+
+		// If line starts a "for" without "done", keep reading until "done"
+		sp := word(&lineBuf[0])
+		for peekb(sp) == ' ' || peekb(sp) == '\t' {
+			sp++
+		}
+		if peekb(sp) == 'f' && peekb(sp+1) == 'o' && peekb(sp+2) == 'r' && (peekb(sp+3) == ' ' || peekb(sp+3) == '\t') {
+			curTotal := n
+			for !checkHasDone(&lineBuf[0]) {
+				sys.Print((*byte)("> "))
+				var contBuf [256]byte
+				cn := sys.ReadLn(sys.STDIN, &contBuf[0], 255)
+				if cn == 0 {
+					break
+				}
+				for cn > 0 && (contBuf[cn-1] == '\r' || contBuf[cn-1] == '\n') {
+					cn--
+				}
+				contBuf[cn] = 0
+				if curTotal < 500 {
+					lineBuf[curTotal] = '\n'
+					curTotal++
+					for k := word(0); k < cn && curTotal < 510; k++ {
+						lineBuf[curTotal] = contBuf[k]
+						curTotal++
+					}
+					lineBuf[curTotal] = 0
+				}
+			}
+		}
+
+		ExecuteScript(&lineBuf[0])
+	}
+
+	sys.Exit(lastStatus)
+}

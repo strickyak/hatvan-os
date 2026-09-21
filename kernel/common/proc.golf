@@ -147,7 +147,11 @@ func ProcAlloc(parentPID byte) (byte, *tables.Process) {
 			p.ParentPID = parentPID
 			p.TaskID = byte(i)
 			p.ExitStatus = 0
-			p.SavedSP = 0xFE00
+			if hal.ARCH == 'k' {
+				p.SavedSP = 0x0007FE00
+			} else {
+				p.SavedSP = 0xFE00
+			}
 			p.SavedPC = 0
 			p.SavedU = 0
 			p.LineMode = 0
@@ -459,7 +463,7 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
 	codeStart := word(0x0200)
 
 	if hal.ARCH == 'k' {
-		sp := word(0xFE00)
+		sp := word(0x0007FE00)
 		if paramStr != (*byte)(0) && paramLen > 0 {
 			sp -= (paramLen + 1)
 			sp &^= 1
@@ -613,9 +617,18 @@ func updateProcPath(dstPath *byte, pathStr *byte, drive byte) {
 		return
 	}
 
+	// Strip leading "./" and extra slashes
+	for {
+		if peekb(pStr) == '.' && peekb(pStr+1) == '/' {
+			pStr += 2
+		} else {
+			break
+		}
+	}
+
 	// Relative path
 	// Check for "."
-	if peekb(pStr) == '.' && peekb(pStr+1) == 0 {
+	if peekb(pStr) == 0 || (peekb(pStr) == '.' && peekb(pStr+1) == 0) {
 		return
 	}
 
@@ -646,11 +659,18 @@ func updateProcPath(dstPath *byte, pathStr *byte, drive byte) {
 		curLen = 4
 		pokeb(dPath+4, 0)
 	} else if peekb(dPath+curLen-1) != '/' {
-		pokeb(dPath+curLen, '/')
-		curLen++
-		pokeb(dPath+curLen, 0)
+		if curLen < 62 {
+			pokeb(dPath+curLen, '/')
+			curLen++
+			pokeb(dPath+curLen, 0)
+		}
 	}
-	klib.strcpy((*byte)(dPath+curLen), pathStr)
+	for peekb(pStr) != 0 && curLen < 63 {
+		pokeb(dPath+curLen, peekb(pStr))
+		curLen++
+		pStr++
+	}
+	pokeb(dPath+curLen, 0)
 }
 
 // SysChgDir changes the current working directory (cwd) or execution directory (cxd)

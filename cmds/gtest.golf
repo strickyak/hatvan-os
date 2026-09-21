@@ -1,0 +1,315 @@
+package main
+
+import "sys"
+
+const MAX_ARGS = 32
+const MAX_ARG_LEN = 64
+
+var args [MAX_ARGS * MAX_ARG_LEN]byte
+var numArgs word
+
+const RES_FALSE = 0
+const RES_TRUE = 1
+const RES_ERR = 2
+
+func strLen(s *byte) word {
+	p := word(s)
+	count := word(0)
+	for peekb(p+count) != 0 {
+		count++
+	}
+	return count
+}
+
+func strEq(a *byte, b *byte) bool {
+	pa := word(a)
+	pb := word(b)
+	for {
+		ca := peekb(pa)
+		cb := peekb(pb)
+		if ca != cb {
+			return false
+		}
+		if ca == 0 {
+			return true
+		}
+		pa++
+		pb++
+	}
+}
+
+func parseInt(s *byte) int {
+	p := word(s)
+	neg := false
+	if peekb(p) == '-' {
+		neg = true
+		p++
+	} else if peekb(p) == '+' {
+		p++
+	}
+	val := int(0)
+	for {
+		c := peekb(p)
+		if c >= '0' && c <= '9' {
+			val = val*10 + int(c-'0')
+			p++
+		} else {
+			break
+		}
+	}
+	if neg {
+		return -val
+	}
+	return val
+}
+
+func getArg(idx word) *byte {
+	return (*byte)(word(&args[0]) + idx*MAX_ARG_LEN)
+}
+
+func tokenizeArgs(cmdLine *byte) {
+	numArgs = 0
+	if cmdLine == (*byte)(0) {
+		return
+	}
+	p := word(cmdLine)
+	for {
+		for peekb(p) == ' ' || peekb(p) == '\t' {
+			p++
+		}
+		c := peekb(p)
+		if c == 0 || c == '\r' || c == '\n' {
+			break
+		}
+		if numArgs >= MAX_ARGS {
+			break
+		}
+		dst := word(&args[0]) + numArgs*MAX_ARG_LEN
+		dlen := word(0)
+		quote := byte(0)
+		for {
+			c = peekb(p)
+			if c == 0 || c == '\r' || c == '\n' {
+				break
+			}
+			if quote == 0 && (c == ' ' || c == '\t') {
+				break
+			}
+			if quote == 0 && (c == '\'' || c == '"') {
+				quote = c
+				p++
+				continue
+			}
+			if quote != 0 && c == quote {
+				quote = 0
+				p++
+				continue
+			}
+			if dlen < MAX_ARG_LEN-1 {
+				pokeb(dst+dlen, c)
+				dlen++
+			}
+			p++
+		}
+		pokeb(dst+dlen, 0)
+		numArgs++
+	}
+}
+
+func evalExpr(start word, end word) byte {
+	// 1. Check for -o (OR, lowest precedence)
+	for k := start; k < end; k++ {
+		if strEq(getArg(k), (*byte)("-o")) {
+			r1 := evalExpr(start, k)
+			if r1 == RES_ERR {
+				return RES_ERR
+			}
+			if r1 == RES_TRUE {
+				return RES_TRUE
+			}
+			return evalExpr(k+1, end)
+		}
+	}
+
+	// 2. Check for -a (AND)
+	for k := start; k < end; k++ {
+		if strEq(getArg(k), (*byte)("-a")) {
+			r1 := evalExpr(start, k)
+			if r1 == RES_ERR {
+				return RES_ERR
+			}
+			if r1 == RES_FALSE {
+				return RES_FALSE
+			}
+			return evalExpr(k+1, end)
+		}
+	}
+
+	// 3. Check for ! (NOT)
+	if start < end && strEq(getArg(start), (*byte)("!")) {
+		r := evalExpr(start+1, end)
+		if r == RES_TRUE {
+			return RES_FALSE
+		}
+		if r == RES_FALSE {
+			return RES_TRUE
+		}
+		return RES_ERR
+	}
+
+	// 4. Base cases based on remaining length
+	length := end - start
+	if length == 0 {
+		return RES_FALSE
+	}
+
+	if length == 1 {
+		if strLen(getArg(start)) > 0 {
+			return RES_TRUE
+		}
+		return RES_FALSE
+	}
+
+	if length == 2 {
+		op := getArg(start)
+		target := getArg(start + 1)
+
+		if strEq(op, (*byte)("-z")) {
+			if strLen(target) == 0 {
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("-n")) {
+			if strLen(target) > 0 {
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("-f")) {
+			fd := sys.Open(target, sys.MODE_READ)
+			if fd != 0xFF {
+				sys.Close(fd)
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("-d")) {
+			fd := sys.Open(target, sys.MODE_READ|sys.MODE_DIR)
+			if fd != 0xFF {
+				sys.Close(fd)
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("-r")) || strEq(op, (*byte)("-e")) {
+			fd := sys.Open(target, sys.MODE_READ)
+			if fd != 0xFF {
+				sys.Close(fd)
+				return RES_TRUE
+			}
+			fd = sys.Open(target, sys.MODE_READ|sys.MODE_DIR)
+			if fd != 0xFF {
+				sys.Close(fd)
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("-s")) {
+			fd := sys.Open(target, sys.MODE_READ)
+			if fd != 0xFF {
+				var b [2]byte
+				n := sys.Read(fd, &b[0], 1)
+				sys.Close(fd)
+				if n > 0 {
+					return RES_TRUE
+				}
+			}
+			return RES_FALSE
+		}
+		return RES_ERR
+	}
+
+	if length == 3 {
+		left := getArg(start)
+		op := getArg(start + 1)
+		right := getArg(start + 2)
+
+		if strEq(op, (*byte)("=")) || strEq(op, (*byte)("==")) {
+			if strEq(left, right) {
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("!=")) {
+			if !strEq(left, right) {
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("-eq")) {
+			if parseInt(left) == parseInt(right) {
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("-ne")) {
+			if parseInt(left) != parseInt(right) {
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("-lt")) {
+			if parseInt(left) < parseInt(right) {
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("-le")) {
+			if parseInt(left) <= parseInt(right) {
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("-gt")) {
+			if parseInt(left) > parseInt(right) {
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		if strEq(op, (*byte)("-ge")) {
+			if parseInt(left) >= parseInt(right) {
+				return RES_TRUE
+			}
+			return RES_FALSE
+		}
+		return RES_ERR
+	}
+
+	return RES_ERR
+}
+
+func main() {
+	tokenizeArgs(sys.Args())
+
+	start := word(0)
+	end := numArgs
+	if end > start && strEq(getArg(start), (*byte)("[")) {
+		start++
+	}
+	if end > start && strEq(getArg(end-1), (*byte)("]")) {
+		end--
+	}
+
+	res := evalExpr(start, end)
+	if res == RES_ERR {
+		sys.PrintErr((*byte)("gtest: syntax error"))
+		sys.Exit(2)
+		return
+	}
+	if res == RES_TRUE {
+		sys.Exit(0)
+		return
+	}
+	sys.Exit(1)
+}

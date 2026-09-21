@@ -346,7 +346,7 @@ func Dispatch(callNum byte) {
 
 		isLegalFirst := false
 		if (ascii0 >= 'A' && ascii0 <= 'Z') || (ascii0 >= 'a' && ascii0 <= 'z') ||
-			(ascii0 >= '0' && ascii0 <= '9') || ascii0 == '_' {
+			(ascii0 >= '0' && ascii0 <= '9') || ascii0 == '_' || ascii0 == '.' || ascii0 == '-' {
 			isLegalFirst = true
 		}
 
@@ -378,7 +378,7 @@ func Dispatch(callNum byte) {
 
 			isLegalNext := false
 			if (asciiNext >= 'A' && asciiNext <= 'Z') || (asciiNext >= 'a' && asciiNext <= 'z') ||
-				(asciiNext >= '0' && asciiNext <= '9') || asciiNext == '_' || asciiNext == '.' {
+				(asciiNext >= '0' && asciiNext <= '9') || asciiNext == '_' || asciiNext == '.' || asciiNext == '-' {
 				isLegalNext = true
 			}
 

@@ -30,7 +30,7 @@ PROCFS_68K  := $(BUILD_DIR)/procfs_68k.srec
 # Command Targets
 CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod $(BUILD_DIR)/sh.mod
 CMDS_68K    := $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb $(BUILD_DIR)/catk.decb $(BUILD_DIR)/shk.decb
-GOLF_CMDS   := gecho gcat gdir gdump
+GOLF_CMDS   := gecho gcat gdir gdump gsh gtest gexpr
 CMDS_GOLF_9 := $(patsubst %,$(REPO_DIR)/cmds/%.9.decb,$(GOLF_CMDS))
 CMDS_GOLF_K := $(patsubst %,$(REPO_DIR)/cmds/%.k.decb,$(GOLF_CMDS))
 
@@ -91,7 +91,7 @@ $(BUILD_DIR)/kernel_6809.decb: $(BUILD_DIR)/full_6809.asm | $(BUILD_DIR)
 	cp -f $(BUILD_DIR)/kernel_6809.decb.map $(BUILD_DIR)/kernel_6809.map 2>/dev/null || true
 
 # M6809 RBF Driver (Task 1)
-$(BUILD_DIR)/rbf_6809.asm: $(REPO_DIR)/drivers/rbf/main.golf $(REPO_DIR)/kernel/common/rbf.golf $(MINIGOLF) | $(BUILD_DIR)
+$(BUILD_DIR)/rbf_6809.asm: $(REPO_DIR)/drivers/rbf/main.golf $(COMMON_SRCS) $(MINIGOLF) | $(BUILD_DIR)
 	$(MINIGOLF) -m M6809 \
 		-global_var_offset 512 \
 		-I $(REPO_DIR)/kernel/m6809 \
@@ -109,7 +109,7 @@ $(BUILD_DIR)/rbf_6809.decb: $(BUILD_DIR)/full_rbf_6809.asm | $(BUILD_DIR)
 	cp -f $(BUILD_DIR)/rbf_6809.decb.map $(BUILD_DIR)/rbf_6809.map 2>/dev/null || true
 
 # M6809 PROCFS Driver (Task 2)
-$(BUILD_DIR)/procfs_6809.asm: $(REPO_DIR)/drivers/procfs/main.golf $(MINIGOLF) | $(BUILD_DIR)
+$(BUILD_DIR)/procfs_6809.asm: $(REPO_DIR)/drivers/procfs/main.golf $(COMMON_SRCS) $(MINIGOLF) | $(BUILD_DIR)
 	$(MINIGOLF) -m M6809 \
 		-global_var_offset 512 \
 		-I $(REPO_DIR)/kernel/m6809 \
@@ -142,7 +142,7 @@ $(BUILD_DIR)/kernel_68k.srec: $(BUILD_DIR)/full_68k.s $(ASM68K) | $(BUILD_DIR)
 	$(ASM68K) -l $@.list -o $@ $<
 
 # M68K RBF Driver (Task 1)
-$(BUILD_DIR)/rbf_68k.s: $(REPO_DIR)/drivers/rbf/main.golf $(REPO_DIR)/kernel/common/rbf.golf $(MINIGOLF) | $(BUILD_DIR)
+$(BUILD_DIR)/rbf_68k.s: $(REPO_DIR)/drivers/rbf/main.golf $(COMMON_SRCS) $(MINIGOLF) | $(BUILD_DIR)
 	$(MINIGOLF) -m=k \
 		-I $(REPO_DIR)/kernel/m68k \
 		-I $(REPO_DIR)/kernel/common \
@@ -157,7 +157,7 @@ $(BUILD_DIR)/rbf_68k.srec: $(BUILD_DIR)/full_rbf_68k.s $(ASM68K) | $(BUILD_DIR)
 	$(ASM68K) -l $@.list -o $@ $<
 
 # M68K PROCFS Driver (Task 2)
-$(BUILD_DIR)/procfs_68k.s: $(REPO_DIR)/drivers/procfs/main.golf $(MINIGOLF) | $(BUILD_DIR)
+$(BUILD_DIR)/procfs_68k.s: $(REPO_DIR)/drivers/procfs/main.golf $(COMMON_SRCS) $(MINIGOLF) | $(BUILD_DIR)
 	$(MINIGOLF) -m=k \
 		-I $(REPO_DIR)/kernel/m68k \
 		-I $(REPO_DIR)/kernel/common \
@@ -251,6 +251,9 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(REPO_DIR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gcat.9.decb $@,Cmds9/GCAT
 	$(OS9) copy -r $(REPO_DIR)/cmds/gdir.9.decb $@,Cmds9/GDIR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gdump.9.decb $@,Cmds9/GDUMP
+	$(OS9) copy -r $(REPO_DIR)/cmds/gsh.9.decb $@,Cmds9/GSH
+	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.9.decb $@,Cmds9/GTEST
+	$(OS9) copy -r $(REPO_DIR)/cmds/gexpr.9.decb $@,Cmds9/GEXPR
 	$(OS9) makdir $@,CmdsK
 	$(OS9) copy -r $(BUILD_DIR)/echok.decb $@,CmdsK/ECHO
 	$(OS9) copy -r $(BUILD_DIR)/dirk.decb $@,CmdsK/DIR
@@ -261,6 +264,10 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(REPO_DIR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gcat.k.decb $@,CmdsK/GCAT
 	$(OS9) copy -r $(REPO_DIR)/cmds/gdir.k.decb $@,CmdsK/GDIR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gdump.k.decb $@,CmdsK/GDUMP
+	$(OS9) copy -r $(REPO_DIR)/cmds/gsh.k.decb $@,CmdsK/GSH
+	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.k.decb $@,CmdsK/GTEST
+	$(OS9) copy -r $(REPO_DIR)/cmds/gexpr.k.decb $@,CmdsK/GEXPR
+	$(OS9) copy -r $(REPO_DIR)/testdata/test_expr.sh $@,test_expr.sh
 	cp -f $@ $(TEST_DISK)
 
 $(TEST_DISK): $(DISK_IMAGE)

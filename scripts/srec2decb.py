@@ -40,12 +40,44 @@ def srec2decb(srec_path, decb_path):
         base_addr = 0x200
 
     decb = bytearray()
-    decb.append(0x00)
-    decb.append((len(data) >> 8) & 0xFF)
-    decb.append(len(data) & 0xFF)
-    decb.append((base_addr >> 8) & 0xFF)
-    decb.append(base_addr & 0xFF)
-    decb.extend(data)
+    cur_addr = base_addr
+    offset = 0
+    current_high16 = 0
+
+    while offset < len(data):
+        high16 = (cur_addr >> 16) & 0xFFFF
+        if high16 != current_high16:
+            # Tag 254: SET_HIGH16_ADDR32
+            decb.append(0xFE)
+            decb.append(0x00)
+            decb.append(0x00)
+            decb.append((high16 >> 8) & 0xFF)
+            decb.append(high16 & 0xFF)
+            current_high16 = high16
+
+        # Chunk cannot cross 64KB boundary and max chunk length is 32768
+        space_in_bank = 0x10000 - (cur_addr & 0xFFFF)
+        chunk_len = min(len(data) - offset, space_in_bank, 32768)
+
+        addr_low16 = cur_addr & 0xFFFF
+        decb.append(0x00)
+        decb.append((chunk_len >> 8) & 0xFF)
+        decb.append(chunk_len & 0xFF)
+        decb.append((addr_low16 >> 8) & 0xFF)
+        decb.append(addr_low16 & 0xFF)
+        decb.extend(data[offset : offset + chunk_len])
+
+        cur_addr += chunk_len
+        offset += chunk_len
+
+    entry_high16 = (entry >> 16) & 0xFFFF
+    if entry_high16 != current_high16:
+        decb.append(0xFE)
+        decb.append(0x00)
+        decb.append(0x00)
+        decb.append((entry_high16 >> 8) & 0xFF)
+        decb.append(entry_high16 & 0xFF)
+        current_high16 = entry_high16
 
     decb.append(0xFF)
     decb.append(0x00)

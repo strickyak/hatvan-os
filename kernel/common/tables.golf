@@ -18,10 +18,10 @@ type Process struct {
 	Paths       [PROC_MAX_PATHS]byte
 	CwdDrive    byte
 	CwdFDLSN    word
-	CwdPath     [32]byte
+	CwdPath     [64]byte
 	CxdDrive    byte
 	CxdFDLSN    word
-	CxdPath     [32]byte
+	CxdPath     [64]byte
 	LineMode    byte // 0 = '\n' (Unix), 1 = '\r' (OS-9)
 	CodeStart   word
 	CodeSize    word

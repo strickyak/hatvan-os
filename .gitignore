@@ -17,3 +17,5 @@ RCS/
 *.decb
 !testdata/*.decb
 /build/
+*.list
+*.map

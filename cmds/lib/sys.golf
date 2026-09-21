@@ -7,6 +7,7 @@ const STDERR = 2
 const MODE_READ = 1
 const MODE_WRITE = 2
 const MODE_DIR = 0x80
+const MODE_EXEC = 0x40
 
 var ArgsPtr *byte
 var LastErr byte
@@ -28,6 +29,9 @@ func SysWrite(path byte, buf *byte, count word) word
 func SysWritLn(path byte, buf *byte, count word) word
 func SysClose(path byte) byte
 func SysExit(status byte)
+func SysFork(cmd *byte, params *byte, paramLen word) byte
+func SysWait() word
+func SysChgDir(path *byte, mode byte) byte
 
 func Open(path *byte, mode byte) byte {
 	return SysOpen(path, mode)
@@ -59,6 +63,37 @@ func Close(path byte) byte {
 
 func Exit(status byte) {
 	SysExit(status)
+}
+
+func Fork(cmd *byte, params *byte, paramLen word) byte {
+	return SysFork(cmd, params, paramLen)
+}
+
+func Wait() (byte, byte) {
+	w := SysWait()
+	return byte(w >> 8), byte(w)
+}
+
+func ChgDir(path *byte, mode byte) byte {
+	return SysChgDir(path, mode)
+}
+
+// Spawn executes an external command with arguments and waits for it to complete.
+// Returns the child exit status, or 127 if the command could not be spawned.
+func Spawn(cmd *byte, params *byte, paramLen word) byte {
+	cpid := Fork(cmd, params, paramLen)
+	if cpid == 0 {
+		return 127
+	}
+	for {
+		reaped, st := Wait()
+		if reaped == 0 {
+			return 1
+		}
+		if reaped == cpid {
+			return st
+		}
+	}
 }
 
 func StrLen(s *byte) word {

@@ -147,3 +147,54 @@ f_sys__SysExit:
     fcb $06 ; F$Exit
 .exit_loop:
     bra .exit_loop
+
+f_sys__SysFork:
+    pshs    u,y
+    ldx     6,s         ; cmd
+    ldu     8,s         ; params
+    ldy     10,s        ; paramLen
+    clra
+    clrb
+    swi2
+    fcb     $03         ; F$Fork
+    bcs     .fork_err
+    tfr     a,b
+    clra
+    tfr     d,x
+    puls    u,y,pc
+.fork_err:
+    stb     v_sys.LastErr
+    clra
+    clrb
+    tfr     d,x
+    puls    u,y,pc
+
+f_sys__SysWait:
+    swi2
+    fcb     $04         ; F$Wait
+    bcs     .wait_err
+    tfr     d,x
+    rts
+.wait_err:
+    stb     v_sys.LastErr
+    clra
+    clrb
+    tfr     d,x
+    rts
+
+f_sys__SysChgDir:
+    ldx     2,s
+    lda     4,s
+    swi2
+    fcb     $86         ; I$ChgDir
+    bcs     .chgdir_err
+    clra
+    clrb
+    tfr     d,x
+    rts
+.chgdir_err:
+    stb     v_sys.LastErr
+    clra
+    tfr     d,x
+    rts
+

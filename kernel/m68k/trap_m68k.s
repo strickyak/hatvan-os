@@ -236,6 +236,8 @@ trap_0:
     lsl.l   #2, d0
     move.l  0(a0, d0.w), sp
     movem.l (sp)+, d2-d7/a2-a6
+    move.l  (sp)+, a0
+    move.l  a0, usp
     rts
 
 .m68k_no_caller_waiting:
@@ -495,6 +497,17 @@ f_hal__LaunchProcess:
     move.l  4(sp), d0           ; d0 = PID
     move.l  8(sp), a0           ; a0 = paramAddr
     move.l  12(sp), d1          ; d1 = initial PC
+
+    ; Save parent's USP
+    move.l  usp, a2
+    move.l  a2, -(sp)
+
+    ; Also update user_context_table_m68k[parentPID].USP
+    moveq   #0, d2
+    move.b  v_proc.CurrentPID, d2
+    mulu    #72, d2
+    lea     user_context_table_m68k, a1
+    move.l  a2, 60(a1, d2.l)
 
     ; Save parent's callee-saved registers on kernel stack
     movem.l d2-d7/a2-a6, -(sp)

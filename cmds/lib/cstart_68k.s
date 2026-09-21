@@ -118,3 +118,47 @@ f_sys__SysExit:
     trap    #0
 .exit_loop_k:
     bra     .exit_loop_k
+
+f_sys__SysFork:
+    move.l  4(sp), a0
+    move.l  8(sp), a1
+    move.l  12(sp), d2
+    move.l  #$03, d0
+    trap    #0
+    bcs     .fork_err_k
+    move.b  d1, d0
+    and.l   #$FF, d0
+    rts
+.fork_err_k:
+    move.b  d1, v_sys.LastErr
+    moveq   #0, d0
+    rts
+
+f_sys__SysWait:
+    move.l  #$04, d0
+    trap    #0
+    bcs     .wait_err_k
+    and.l   #$FF, d1
+    lsl.w   #8, d1
+    and.l   #$FF, d0
+    or.w    d1, d0
+    rts
+.wait_err_k:
+    move.b  d0, v_sys.LastErr
+    moveq   #0, d0
+    rts
+
+f_sys__SysChgDir:
+    move.l  4(sp), a0
+    move.l  8(sp), d1
+    move.l  #$86, d0
+    trap    #0
+    bcs     .chgdir_err_k
+    moveq   #0, d0
+    rts
+.chgdir_err_k:
+    move.b  d1, v_sys.LastErr
+    move.b  d1, d0
+    and.l   #$FF, d0
+    rts
+

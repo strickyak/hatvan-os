@@ -1,0 +1,501 @@
+package main
+
+import "sys"
+
+const MAX_ARGS = 32
+const MAX_ARG_LEN = 64
+
+var args [MAX_ARGS * MAX_ARG_LEN]byte
+var numArgs word
+var tokPos word
+
+var hasError bool
+var errorMsg [64]byte
+
+func strLen(s *byte) word {
+	p := word(s)
+	count := word(0)
+	for peekb(p+count) != 0 {
+		count++
+	}
+	return count
+}
+
+func strEq(a *byte, b *byte) bool {
+	pa := word(a)
+	pb := word(b)
+	for {
+		ca := peekb(pa)
+		cb := peekb(pb)
+		if ca != cb {
+			return false
+		}
+		if ca == 0 {
+			return true
+		}
+		pa++
+		pb++
+	}
+}
+
+func strCmp(a *byte, b *byte) int {
+	pa := word(a)
+	pb := word(b)
+	for {
+		ca := peekb(pa)
+		cb := peekb(pb)
+		if ca != cb {
+			if ca < cb {
+				return -1
+			}
+			return 1
+		}
+		if ca == 0 {
+			return 0
+		}
+		pa++
+		pb++
+	}
+}
+
+func strCopy(dst *byte, src *byte, maxLen word) {
+	d := word(dst)
+	s := word(src)
+	cnt := word(0)
+	for cnt < maxLen-1 {
+		c := peekb(s + cnt)
+		if c == 0 {
+			break
+		}
+		pokeb(d+cnt, c)
+		cnt++
+	}
+	pokeb(d+cnt, 0)
+}
+
+func isInt(s *byte) bool {
+	p := word(s)
+	c := peekb(p)
+	if c == '-' || c == '+' {
+		p++
+		c = peekb(p)
+	}
+	if c == 0 {
+		return false
+	}
+	for {
+		c = peekb(p)
+		if c == 0 {
+			break
+		}
+		if c < '0' || c > '9' {
+			return false
+		}
+		p++
+	}
+	return true
+}
+
+func parseInt(s *byte) int {
+	p := word(s)
+	neg := false
+	if peekb(p) == '-' {
+		neg = true
+		p++
+	} else if peekb(p) == '+' {
+		p++
+	}
+	val := int(0)
+	for {
+		c := peekb(p)
+		if c >= '0' && c <= '9' {
+			val = val*10 + int(c-'0')
+			p++
+		} else {
+			break
+		}
+	}
+	if neg {
+		return -val
+	}
+	return val
+}
+
+func formatInt(buf *byte, v int) word {
+	if v == 0 {
+		pokeb(word(buf), '0')
+		pokeb(word(buf)+1, 0)
+		return 1
+	}
+	neg := false
+	if v < 0 {
+		neg = true
+		v = -v
+	}
+	var tmp [16]byte
+	tlen := word(0)
+	for v > 0 {
+		tmp[tlen] = byte('0' + (v % 10))
+		tlen++
+		v = v / 10
+	}
+	d := word(buf)
+	olen := word(0)
+	if neg {
+		pokeb(d+olen, '-')
+		olen++
+	}
+	for tlen > 0 {
+		tlen--
+		pokeb(d+olen, tmp[tlen])
+		olen++
+	}
+	pokeb(d+olen, 0)
+	return olen
+}
+
+func getArg(idx word) *byte {
+	return (*byte)(word(&args[0]) + idx*MAX_ARG_LEN)
+}
+
+func tokenizeArgs(cmdLine *byte) {
+	numArgs = 0
+	if cmdLine == (*byte)(0) {
+		return
+	}
+	p := word(cmdLine)
+	for {
+		for peekb(p) == ' ' || peekb(p) == '\t' {
+			p++
+		}
+		c := peekb(p)
+		if c == 0 || c == '\r' || c == '\n' {
+			break
+		}
+		if numArgs >= MAX_ARGS {
+			break
+		}
+		dst := word(&args[0]) + numArgs*MAX_ARG_LEN
+		dlen := word(0)
+		quote := byte(0)
+		for {
+			c = peekb(p)
+			if c == 0 || c == '\r' || c == '\n' {
+				break
+			}
+			if quote == 0 && (c == ' ' || c == '\t') {
+				break
+			}
+			if quote == 0 && (c == '\'' || c == '"') {
+				quote = c
+				p++
+				continue
+			}
+			if quote != 0 && c == quote {
+				quote = 0
+				p++
+				continue
+			}
+			if dlen < MAX_ARG_LEN-1 {
+				pokeb(dst+dlen, c)
+				dlen++
+			}
+			p++
+		}
+		pokeb(dst+dlen, 0)
+		numArgs++
+	}
+}
+
+func hasMore() bool {
+	return tokPos < numArgs
+}
+
+func currTok() *byte {
+	if tokPos < numArgs {
+		tok := getArg(tokPos)
+		if peekb(word(tok)) == '\\' && peekb(word(tok)+1) != 0 {
+			return (*byte)(word(tok) + 1)
+		}
+		return tok
+	}
+	return (*byte)("")
+}
+
+func advance() {
+	if tokPos < numArgs {
+		tokPos++
+	}
+}
+
+func setError(msg *byte) {
+	hasError = true
+	strCopy(&errorMsg[0], msg, 64)
+}
+
+func isZeroOrNull(s *byte) bool {
+	if strLen(s) == 0 {
+		return true
+	}
+	if strEq(s, (*byte)("0")) {
+		return true
+	}
+	return false
+}
+
+// ----------------------------------------------------------------------------
+// Parser
+// ----------------------------------------------------------------------------
+
+func parseAtom(out *byte) {
+	if !hasMore() {
+		setError((*byte)("gexpr: syntax error"))
+		return
+	}
+	tok := currTok()
+	if strEq(tok, (*byte)("(")) {
+		advance()
+		parseOr(out)
+		if hasError {
+			return
+		}
+		if !hasMore() || !strEq(currTok(), (*byte)(")")) {
+			setError((*byte)("gexpr: syntax error"))
+			return
+		}
+		advance()
+		return
+	}
+	if strEq(tok, (*byte)("length")) {
+		advance()
+		parseAtom(out)
+		if hasError {
+			return
+		}
+		l := int(strLen(out))
+		formatInt(out, l)
+		return
+	}
+	strCopy(out, tok, MAX_ARG_LEN)
+	advance()
+}
+
+func parseMulDiv(out *byte) {
+	parseAtom(out)
+	if hasError {
+		return
+	}
+	for hasMore() {
+		op := peekb(word(currTok()))
+		if (op == '*' || op == '/' || op == '%') && peekb(word(currTok())+1) == 0 {
+			advance()
+			var rhs [MAX_ARG_LEN]byte
+			parseAtom(&rhs[0])
+			if hasError {
+				return
+			}
+			if !isInt(out) || !isInt(&rhs[0]) {
+				setError((*byte)("gexpr: non-integer argument"))
+				return
+			}
+			v1 := parseInt(out)
+			v2 := parseInt(&rhs[0])
+			if (op == '/' || op == '%') && v2 == 0 {
+				setError((*byte)("gexpr: division by zero"))
+				return
+			}
+			res := int(0)
+			if op == '*' {
+				res = v1 * v2
+			} else if op == '/' {
+				res = v1 / v2
+			} else {
+				res = v1 % v2
+			}
+			formatInt(out, res)
+		} else {
+			break
+		}
+	}
+}
+
+func parseAddSub(out *byte) {
+	parseMulDiv(out)
+	if hasError {
+		return
+	}
+	for hasMore() {
+		op := peekb(word(currTok()))
+		if (op == '+' || op == '-') && peekb(word(currTok())+1) == 0 {
+			advance()
+			var rhs [MAX_ARG_LEN]byte
+			parseMulDiv(&rhs[0])
+			if hasError {
+				return
+			}
+			if !isInt(out) || !isInt(&rhs[0]) {
+				setError((*byte)("gexpr: non-integer argument"))
+				return
+			}
+			v1 := parseInt(out)
+			v2 := parseInt(&rhs[0])
+			res := int(0)
+			if op == '+' {
+				res = v1 + v2
+			} else {
+				res = v1 - v2
+			}
+			formatInt(out, res)
+		} else {
+			break
+		}
+	}
+}
+
+func parseCmp(out *byte) {
+	parseAddSub(out)
+	if hasError {
+		return
+	}
+	for hasMore() {
+		tok := currTok()
+		isEq := strEq(tok, (*byte)("=")) || strEq(tok, (*byte)("=="))
+		isNe := strEq(tok, (*byte)("!="))
+		isLt := strEq(tok, (*byte)("<"))
+		isLe := strEq(tok, (*byte)("<="))
+		isGt := strEq(tok, (*byte)(">"))
+		isGe := strEq(tok, (*byte)(">="))
+
+		if !isEq && !isNe && !isLt && !isLe && !isGt && !isGe {
+			break
+		}
+		advance()
+		var rhs [MAX_ARG_LEN]byte
+		parseAddSub(&rhs[0])
+		if hasError {
+			return
+		}
+		cond := false
+		if isInt(out) && isInt(&rhs[0]) {
+			v1 := parseInt(out)
+			v2 := parseInt(&rhs[0])
+			if isEq {
+				cond = (v1 == v2)
+			} else if isNe {
+				cond = (v1 != v2)
+			} else if isLt {
+				cond = (v1 < v2)
+			} else if isLe {
+				cond = (v1 <= v2)
+			} else if isGt {
+				cond = (v1 > v2)
+			} else if isGe {
+				cond = (v1 >= v2)
+			}
+		} else {
+			c := strCmp(out, &rhs[0])
+			if isEq {
+				cond = (c == 0)
+			} else if isNe {
+				cond = (c != 0)
+			} else if isLt {
+				cond = (c < 0)
+			} else if isLe {
+				cond = (c <= 0)
+			} else if isGt {
+				cond = (c > 0)
+			} else if isGe {
+				cond = (c >= 0)
+			}
+		}
+		if cond {
+			strCopy(out, (*byte)("1"), MAX_ARG_LEN)
+		} else {
+			strCopy(out, (*byte)("0"), MAX_ARG_LEN)
+		}
+	}
+}
+
+func parseAnd(out *byte) {
+	parseCmp(out)
+	if hasError {
+		return
+	}
+	for hasMore() {
+		tok := currTok()
+		if strEq(tok, (*byte)("&")) {
+			advance()
+			var rhs [MAX_ARG_LEN]byte
+			parseCmp(&rhs[0])
+			if hasError {
+				return
+			}
+			if isZeroOrNull(out) || isZeroOrNull(&rhs[0]) {
+				strCopy(out, (*byte)("0"), MAX_ARG_LEN)
+			}
+		} else {
+			break
+		}
+	}
+}
+
+func parseOr(out *byte) {
+	parseAnd(out)
+	if hasError {
+		return
+	}
+	for hasMore() {
+		tok := currTok()
+		if strEq(tok, (*byte)("|")) {
+			advance()
+			var rhs [MAX_ARG_LEN]byte
+			parseAnd(&rhs[0])
+			if hasError {
+				return
+			}
+			if isZeroOrNull(out) {
+				strCopy(out, &rhs[0], MAX_ARG_LEN)
+			}
+		} else {
+			break
+		}
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Main Entry Point
+// ----------------------------------------------------------------------------
+
+func main() {
+	tokenizeArgs(sys.Args())
+	if numArgs == 0 {
+		sys.PrintErr((*byte)("gexpr: missing expression"))
+		sys.Exit(2)
+		return
+	}
+
+	tokPos = 0
+	hasError = false
+
+	var result [MAX_ARG_LEN]byte
+	parseOr(&result[0])
+
+	if hasError {
+		sys.PrintErr(&errorMsg[0])
+		sys.Exit(2)
+		return
+	}
+
+	if hasMore() {
+		sys.PrintErr((*byte)("gexpr: syntax error"))
+		sys.Exit(2)
+		return
+	}
+
+	sys.Println(&result[0])
+	if isZeroOrNull(&result[0]) {
+		sys.Exit(1)
+		return
+	}
+	sys.Exit(0)
+}
