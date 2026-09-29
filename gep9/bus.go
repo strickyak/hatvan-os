@@ -907,8 +907,9 @@ func (b *Bus) pollStdinLocked() {
 }
 
 // LoadRawImage zeroes Task 0 memory and loads a 64KB raw image directly into Task 0.
-// For deep65280v2, it also zeroes PhysRam, resets MMU registers, and copies the 64KB image
-// to physical pages $38..$3F (0x70000..0x7FFFF).
+// For deep65280v2, it also zeroes PhysRam, resets MMU registers, copies the 64KB image
+// to physical pages $38..$3F (0x70000..0x7FFFF), and copies Slot 0 to physical page $00 (0x00000..0x01FFF).
+// Slot 0 MMU register ($FFA0/$FFA8) is initialized to block $00, matching the legacy Level 2 SysBlock requirement.
 func (b *Bus) LoadRawImage(data []byte) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -922,8 +923,13 @@ func (b *Bus) LoadRawImage(data []byte) error {
 		b.PhysRam[i] = 0
 	}
 	copy(b.PhysRam[0x70000:], data)
+	if len(data) >= 0x2000 {
+		copy(b.PhysRam[0x00000:], data[:0x2000])
+	}
 	b.MmuTask = 0
-	for i := 0; i < 8; i++ {
+	b.MmuRegs[0][0] = 0x00
+	b.MmuRegs[1][0] = 0x00
+	for i := 1; i < 8; i++ {
 		b.MmuRegs[0][i] = byte(0x38 + i)
 		b.MmuRegs[1][i] = byte(0x38 + i)
 	}
