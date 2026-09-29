@@ -1305,5 +1305,76 @@ func TestDeep65280v2MMUAndIO(t *testing.T) {
 	}
 }
 
+func TestDeep65280RamSizing(t *testing.T) {
+	// --- 1. Test 128KB (16 blocks, mask 0x1FFFF) ---
+	bus128 := NewBus()
+	bus128.Engine = EngineDeep65280v2
+	if err := bus128.SetRamSize(128 * 1024); err != nil {
+		t.Fatalf("SetRamSize(128K) error: %v", err)
+	}
+
+	// Slot 0 -> block $00, Slot 1 -> block $30
+	// Both $00 and $30 must alias to physical block 0!
+	bus128.WriteByte(0xFFA0, 0x00) // slot 0 = $00
+	bus128.WriteByte(0xFFA1, 0x30) // slot 1 = $30
+	bus128.WriteByte(0x0100, 0x5A) // write to slot 0 ($0100)
+	if val := bus128.ReadByte(0x2100); val != 0x5A {
+		t.Fatalf("128K alias test: expected ReadByte(0x2100) via $30 to be 0x5A, got 0x%02X", val)
+	}
+
+	// Slot 2 -> block $31, Slot 3 -> block $11
+	// Both $31 and $11 must alias to physical block 1!
+	bus128.WriteByte(0xFFA2, 0x31)
+	bus128.WriteByte(0xFFA3, 0x11)
+	bus128.WriteByte(0x4050, 0x7E) // write to slot 2
+	if val := bus128.ReadByte(0x6050); val != 0x7E {
+		t.Fatalf("128K alias test: expected ReadByte(0x6050) via $11 to be 0x7E, got 0x%02X", val)
+	}
+
+	// Test LoadRawImage in 128K:
+	rawImg := make([]byte, 65536)
+	rawImg[0x0500] = 0x12 // in Slot 0 ($00)
+	rawImg[0x2500] = 0x34 // in Slot 1 ($39 -> physical block 9)
+	rawImg[0xE500] = 0x78 // in Slot 7 ($3F -> physical block 15)
+	if err := bus128.LoadRawImage(rawImg); err != nil {
+		t.Fatalf("LoadRawImage error: %v", err)
+	}
+	if val := bus128.ReadByte(0x0500); val != 0x12 {
+		t.Fatalf("128K LoadRawImage: expected slot 0 = 0x12, got 0x%02X", val)
+	}
+	if val := bus128.ReadByte(0x2500); val != 0x34 {
+		t.Fatalf("128K LoadRawImage: expected slot 1 = 0x34, got 0x%02X", val)
+	}
+	if val := bus128.ReadByte(0xE500); val != 0x78 {
+		t.Fatalf("128K LoadRawImage: expected slot 7 = 0x78, got 0x%02X", val)
+	}
+
+	// --- 2. Test 2MB (256 blocks, mask 0x1FFFFF) ---
+	bus2M := NewBus()
+	bus2M.Engine = EngineDeep65280v2
+	if err := bus2M.SetRamSize(2048 * 1024); err != nil {
+		t.Fatalf("SetRamSize(2M) error: %v", err)
+	}
+
+	// Map slot 1 to block $FF (block 255 = phys 0x1FE000)
+	bus2M.WriteByte(0xFFA1, 0xFF)
+	bus2M.WriteByte(0x2200, 0xBE)
+	if bus2M.PhysRam[0xFF*8192+0x0200] != 0xBE {
+		t.Fatalf("2M: expected PhysRam[0x1FE200] = 0xBE, got 0x%02X", bus2M.PhysRam[0xFF*8192+0x0200])
+	}
+	if val := bus2M.ReadByte(0x2200); val != 0xBE {
+		t.Fatalf("2M: expected ReadByte(0x2200) = 0xBE, got 0x%02X", val)
+	}
+
+	// Block $40 and Block $00 must be distinct in 2M (no ghosting)
+	bus2M.WriteByte(0xFFA0, 0x00)
+	bus2M.WriteByte(0xFFA2, 0x40)
+	bus2M.WriteByte(0x0100, 0x11) // block 0
+	bus2M.WriteByte(0x4100, 0x22) // block $40
+	if bus2M.ReadByte(0x0100) != 0x11 || bus2M.ReadByte(0x4100) != 0x22 {
+		t.Fatalf("2M: block 0 and block $40 must not alias!")
+	}
+}
+
 
 

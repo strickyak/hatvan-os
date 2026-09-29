@@ -33,6 +33,7 @@ var (
 	traceTrapFlag     = flag.Bool("trace-trap", false, "print system call trap trace to stderr")
 	sharedCurtainFlag = flag.String("shared-curtain", "0xE000", "shared memory curtain address for tasks 0, 1, and 2")
 	engineFlag        = flag.String("engine", "hatvan", "emulation engine: \"hatvan\" (default), \"flat65280v2\", or \"deep65280v2\"")
+	ramFlag           = flag.String("ram", "512k", "RAM size for deep65280v2: \"128k\", \"512k\", or \"2m\"")
 )
 
 func main() {
@@ -72,6 +73,25 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "Error: unknown engine %q (must be \"hatvan\", \"flat65280v2\", or \"deep65280v2\")\n", *engineFlag)
 		os.Exit(1)
+	}
+
+	if bus.Engine == gep9.EngineDeep65280v2 {
+		var ramBytes int
+		switch strings.ToLower(*ramFlag) {
+		case "128k", "128kb":
+			ramBytes = 128 * 1024
+		case "512k", "512kb":
+			ramBytes = 512 * 1024
+		case "2m", "2mb", "2048k", "2048kb":
+			ramBytes = 2048 * 1024
+		default:
+			fmt.Fprintf(os.Stderr, "Error: invalid -ram %q (must be \"128k\", \"512k\", or \"2m\")\n", *ramFlag)
+			os.Exit(1)
+		}
+		if err := bus.SetRamSize(ramBytes); err != nil {
+			fmt.Fprintf(os.Stderr, "Error setting RAM size: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	if bus.Engine == gep9.EngineHatvan && *sharedCurtainFlag != "" {

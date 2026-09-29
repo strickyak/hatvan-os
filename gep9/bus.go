@@ -90,10 +90,11 @@ type Bus struct {
 	// flat65280v2 ACIA M6850 registers ($FF88..$FF89)
 	AciaCtrl byte // $FF88: Control register (Write)
 
-	// deep65280v2 512KB physical RAM and MMU
-	PhysRam [524288]byte // 64 8KB blocks (pages 0..63)
-	MmuRegs [2][8]byte   // Task 0 and Task 1 DAT registers ($FFA0..$FFAF)
-	MmuTask byte         // Active MMU Task (bit 0: $FF91)
+	// deep65280v2 physical RAM (up to 2MB) and MMU
+	PhysRam     [2097152]byte // Up to 256 8KB blocks (pages 0..255)
+	PhysRamMask uint32        // 0x1FFFF (128K), 0x7FFFF (512K), or 0x1FFFFF (2M)
+	MmuRegs     [2][8]byte    // Task 0 and Task 1 DAT registers ($FFA0..$FFAF)
+	MmuTask     byte          // Active MMU Task (bit 0: $FF91)
 
 	// Callback when IRQ line state changes
 	OnIRQChanged func(asserted bool)
@@ -117,6 +118,7 @@ func NewBus() *Bus {
 		CurrentTask:         0,
 		TaskFlagsTarget:     1,
 		SharedMemoryCurtain: curtain,
+		PhysRamMask:         0x7FFFF, // 512KB default
 		ConsoleOut:          os.Stdout,
 		LogOut:              os.Stderr,
 	}
@@ -125,6 +127,34 @@ func NewBus() *Bus {
 		b.MmuRegs[1][i] = byte(0x38 + i)
 	}
 	return b
+}
+
+// SetRamSize configures the physical RAM size for deep65280v2.
+func (b *Bus) SetRamSize(bytes int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	switch bytes {
+	case 128 * 1024:
+		b.PhysRamMask = 0x1FFFF
+	case 512 * 1024:
+		b.PhysRamMask = 0x7FFFF
+	case 2048 * 1024:
+		b.PhysRamMask = 0x1FFFFF
+	default:
+		return fmt.Errorf("unsupported RAM size: %d bytes (supported: 128k, 512k, 2m)", bytes)
+	}
+	return nil
+}
+
+// deepPhysAddr maps a 16-bit address to a 21-bit physical RAM address for deep65280v2.
+// It handles the locked $FExx page, MMU translation, and physical RAM mask mirroring.
+func (b *Bus) deepPhysAddr(addr uint16) uint32 {
+	if addr >= 0xFE00 {
+		return (0x70000 + uint32(addr)) & b.PhysRamMask
+	}
+	slot := addr >> 13
+	page := b.MmuRegs[b.MmuTask&1][slot]
+	return ((uint32(page) << 13) | uint32(addr&0x1FFF)) & b.PhysRamMask
 }
 
 // ReadByte reads an 8-bit value from the current task's memory space.
@@ -136,14 +166,7 @@ func (b *Bus) ReadByte(addr uint16) byte {
 		if addr >= 0xFF00 {
 			return b.readIODeep(addr)
 		}
-		if addr >= 0xFE00 {
-			// Locked $FExx page: always physical block $3F offset $1Exx
-			return b.PhysRam[0x70000+uint32(addr)]
-		}
-		slot := addr >> 13
-		page := b.MmuRegs[b.MmuTask&1][slot] & 0x3F
-		physAddr := (uint32(page) << 13) | uint32(addr&0x1FFF)
-		return b.PhysRam[physAddr]
+		return b.PhysRam[b.deepPhysAddr(addr)]
 	}
 
 	if b.Engine == EngineFlat65280v2 {
@@ -179,15 +202,7 @@ func (b *Bus) WriteByte(addr uint16, val byte) {
 			b.writeIODeep(addr, val)
 			return
 		}
-		if addr >= 0xFE00 {
-			// Locked $FExx page: always physical block $3F offset $1Exx
-			b.PhysRam[0x70000+uint32(addr)] = val
-			return
-		}
-		slot := addr >> 13
-		page := b.MmuRegs[b.MmuTask&1][slot] & 0x3F
-		physAddr := (uint32(page) << 13) | uint32(addr&0x1FFF)
-		b.PhysRam[physAddr] = val
+		b.PhysRam[b.deepPhysAddr(addr)] = val
 		return
 	}
 
@@ -500,7 +515,7 @@ func (b *Bus) writeIOFlat(addr uint16, val byte) {
 
 func (b *Bus) readIODeep(addr uint16) byte {
 	if addr >= 0xFFF0 {
-		return b.PhysRam[0x70000+uint32(addr)]
+		return b.PhysRam[b.deepPhysAddr(addr)]
 	}
 
 	switch {
@@ -533,7 +548,7 @@ func (b *Bus) readIODeep(addr uint16) byte {
 
 func (b *Bus) writeIODeep(addr uint16, val byte) {
 	if addr >= 0xFFF0 {
-		b.PhysRam[0x70000+uint32(addr)] = val
+		b.PhysRam[b.deepPhysAddr(addr)] = val
 		return
 	}
 
@@ -555,9 +570,9 @@ func (b *Bus) writeIODeep(addr uint16, val byte) {
 	case addr == 0xFF92 || addr == 0xFF93:
 		// GIME IrqEnR / Status - ignored
 	case addr >= 0xFFA0 && addr <= 0xFFA7:
-		b.MmuRegs[0][addr-0xFFA0] = val & 0x3F
+		b.MmuRegs[0][addr-0xFFA0] = val
 	case addr >= 0xFFA8 && addr <= 0xFFAF:
-		b.MmuRegs[1][addr-0xFFA8] = val & 0x3F
+		b.MmuRegs[1][addr-0xFFA8] = val
 	case addr == 0xFFD8 || addr == 0xFFDE:
 		// SAM speed / mode - ignored
 	default:
@@ -629,14 +644,7 @@ func (b *Bus) executeEmuDskCommand(cmd byte) {
 				return
 			}
 			if b.Engine == EngineDeep65280v2 {
-				if targetAddr >= 0xFE00 {
-					b.PhysRam[0x70000+uint32(targetAddr)] = disk[offset+i]
-				} else {
-					slot := targetAddr >> 13
-					page := b.MmuRegs[b.MmuTask&1][slot] & 0x3F
-					physAddr := (uint32(page) << 13) | uint32(targetAddr&0x1FFF)
-					b.PhysRam[physAddr] = disk[offset+i]
-				}
+				b.PhysRam[b.deepPhysAddr(targetAddr)] = disk[offset+i]
 			} else {
 				b.Memory[0][targetAddr] = disk[offset+i]
 			}
@@ -651,14 +659,7 @@ func (b *Bus) executeEmuDskCommand(cmd byte) {
 				return
 			}
 			if b.Engine == EngineDeep65280v2 {
-				if srcAddr >= 0xFE00 {
-					disk[offset+i] = b.PhysRam[0x70000+uint32(srcAddr)]
-				} else {
-					slot := srcAddr >> 13
-					page := b.MmuRegs[b.MmuTask&1][slot] & 0x3F
-					physAddr := (uint32(page) << 13) | uint32(srcAddr&0x1FFF)
-					disk[offset+i] = b.PhysRam[physAddr]
-				}
+				disk[offset+i] = b.PhysRam[b.deepPhysAddr(srcAddr)]
 			} else {
 				disk[offset+i] = b.Memory[0][srcAddr]
 			}
@@ -922,9 +923,16 @@ func (b *Bus) LoadRawImage(data []byte) error {
 	for i := range b.PhysRam {
 		b.PhysRam[i] = 0
 	}
-	copy(b.PhysRam[0x70000:], data)
+	destStart := 0x70000 & b.PhysRamMask
+	copy(b.PhysRam[destStart:], data)
 	if len(data) >= 0x2000 {
 		copy(b.PhysRam[0x00000:], data[:0x2000])
+	}
+	// In 128K (16 blocks), physical block 8 (0x10000..0x11FFF, page $38) is user RAM, ensure it remains clean.
+	if b.PhysRamMask == 0x1FFFF {
+		for i := 0x10000; i < 0x12000 && i < len(b.PhysRam); i++ {
+			b.PhysRam[i] = 0
+		}
 	}
 	b.MmuTask = 0
 	b.MmuRegs[0][0] = 0x00
