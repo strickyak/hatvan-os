@@ -1192,5 +1192,118 @@ func TestFlat65280v2ClockCPUExecution(t *testing.T) {
 	}
 }
 
+func TestDeep65280v2MMUAndIO(t *testing.T) {
+	bus := NewBus()
+	bus.Engine = EngineDeep65280v2
+
+	// Verify initial MMU mapping: Task 0 has pages $38..$3F
+	if bus.MmuTask != 0 {
+		t.Fatalf("expected initial MmuTask = 0, got %d", bus.MmuTask)
+	}
+	for i := 0; i < 8; i++ {
+		if bus.MmuRegs[0][i] != byte(0x38+i) {
+			t.Fatalf("expected MmuRegs[0][%d] = 0x%02X, got 0x%02X", i, 0x38+i, bus.MmuRegs[0][i])
+		}
+		if bus.MmuRegs[1][i] != byte(0x38+i) {
+			t.Fatalf("expected MmuRegs[1][%d] = 0x%02X, got 0x%02X", i, 0x38+i, bus.MmuRegs[1][i])
+		}
+	}
+
+	// Test write through slot 0 (mapped to block $38 = phys 0x70000)
+	bus.WriteByte(0x0100, 0x42)
+	if bus.PhysRam[0x70000+0x0100] != 0x42 {
+		t.Fatalf("expected PhysRam[0x70100] = 0x42, got 0x%02X", bus.PhysRam[0x70000+0x0100])
+	}
+	if bus.ReadByte(0x0100) != 0x42 {
+		t.Fatalf("expected ReadByte(0x0100) = 0x42, got 0x%02X", bus.ReadByte(0x0100))
+	}
+
+	// Change Task 0 slot 0 to point to block $05 (phys 0x0A000)
+	bus.WriteByte(0xFFA0, 0x05)
+	if bus.MmuRegs[0][0] != 0x05 {
+		t.Fatalf("expected MmuRegs[0][0] = 5, got %d", bus.MmuRegs[0][0])
+	}
+	// Slot 0 should now read from block $05
+	bus.PhysRam[0x05*8192+0x0100] = 0x99
+	if bus.ReadByte(0x0100) != 0x99 {
+		t.Fatalf("expected ReadByte(0x0100) = 0x99, got 0x%02X", bus.ReadByte(0x0100))
+	}
+
+	// Test Task switch via $FF91
+	bus.WriteByte(0xFF91, 0x01)
+	if bus.MmuTask != 1 {
+		t.Fatalf("expected MmuTask = 1, got %d", bus.MmuTask)
+	}
+	// Task 1 slot 0 is still block $38
+	if bus.ReadByte(0x0100) != 0x42 {
+		t.Fatalf("expected ReadByte(0x0100) in Task 1 = 0x42, got 0x%02X", bus.ReadByte(0x0100))
+	}
+
+	// Map Task 1 slot 0 to block $10 via $FFA8
+	bus.WriteByte(0xFFA8, 0x10)
+	bus.PhysRam[0x10*8192+0x0100] = 0x77
+	if bus.ReadByte(0x0100) != 0x77 {
+		t.Fatalf("expected ReadByte(0x0100) in Task 1 = 0x77, got 0x%02X", bus.ReadByte(0x0100))
+	}
+
+	// Switch back to Task 0
+	bus.WriteByte(0xFF91, 0x00)
+	if bus.ReadByte(0x0100) != 0x99 {
+		t.Fatalf("expected ReadByte(0x0100) back in Task 0 = 0x99, got 0x%02X", bus.ReadByte(0x0100))
+	}
+
+	// Test locked $FExx page:
+	// Slot 7 is $E000..$FFFF. Map slot 7 to block $02
+	bus.WriteByte(0xFFA7, 0x02)
+	bus.PhysRam[0x02*8192+0x0050] = 0x11 // $E050 -> block 2 offset $0050
+	bus.PhysRam[0x02*8192+0x1E50] = 0x22 // $FE50 in block 2
+	bus.PhysRam[0x3F*8192+0x1E50] = 0x33 // $FE50 in block $3F
+
+	// Reading $E050 should read block 2
+	if bus.ReadByte(0xE050) != 0x11 {
+		t.Fatalf("expected ReadByte(0xE050) = 0x11, got 0x%02X", bus.ReadByte(0xE050))
+	}
+	// Reading $FE50 MUST read from block $3F (locked page), NOT block 2!
+	if bus.ReadByte(0xFE50) != 0x33 {
+		t.Fatalf("expected ReadByte(0xFE50) = 0x33 (locked $FExx page), got 0x%02X", bus.ReadByte(0xFE50))
+	}
+	// Writing to $FE50 must write to block $3F
+	bus.WriteByte(0xFE50, 0xAA)
+	if bus.PhysRam[0x3F*8192+0x1E50] != 0xAA {
+		t.Fatalf("expected PhysRam[block $3F + $1E50] = 0xAA, got 0x%02X", bus.PhysRam[0x3F*8192+0x1E50])
+	}
+	if bus.PhysRam[0x02*8192+0x1E50] != 0x22 {
+		t.Fatalf("expected PhysRam[block 2 + $1E50] untouched (0x22), got 0x%02X", bus.PhysRam[0x02*8192+0x1E50])
+	}
+
+	// Test vectors $FFF0..$FFFF always map to block $3F
+	bus.WriteByte(0xFFFE, 0xC0)
+	bus.WriteByte(0xFFFF, 0xDE)
+	if bus.PhysRam[0x3F*8192+0x1FFE] != 0xC0 || bus.PhysRam[0x3F*8192+0x1FFF] != 0xDE {
+		t.Fatalf("expected vectors in PhysRam block $3F, got %02X%02X", bus.PhysRam[0x3F*8192+0x1FFE], bus.PhysRam[0x3F*8192+0x1FFF])
+	}
+	if bus.ReadByte(0xFFFE) != 0xC0 || bus.ReadByte(0xFFFF) != 0xDE {
+		t.Fatalf("expected ReadByte vectors = C0DE, got %02X%02X", bus.ReadByte(0xFFFE), bus.ReadByte(0xFFFF))
+	}
+
+	// Test LoadRawImage
+	rawImage := make([]byte, 65536)
+	rawImage[0x1000] = 0x55
+	rawImage[0xFE20] = 0x66
+	bus.LoadRawImage(rawImage)
+	if bus.MmuTask != 0 {
+		t.Fatalf("expected LoadRawImage to reset MmuTask to 0")
+	}
+	if bus.PhysRam[0x70000+0x1000] != 0x55 {
+		t.Fatalf("expected PhysRam to contain rawImage[0x1000]")
+	}
+	if bus.ReadByte(0x1000) != 0x55 {
+		t.Fatalf("expected ReadByte(0x1000) = 0x55 after LoadRawImage, got 0x%02X", bus.ReadByte(0x1000))
+	}
+	if bus.ReadByte(0xFE20) != 0x66 {
+		t.Fatalf("expected ReadByte(0xFE20) = 0x66 after LoadRawImage, got 0x%02X", bus.ReadByte(0xFE20))
+	}
+}
+
 
 

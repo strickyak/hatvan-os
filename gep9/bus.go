@@ -17,6 +17,7 @@ type EngineType string
 const (
 	EngineHatvan       EngineType = "hatvan"
 	EngineFlat65280v2 EngineType = "flat65280v2"
+	EngineDeep65280v2 EngineType = "deep65280v2"
 )
 
 var (
@@ -25,6 +26,8 @@ var (
 	ErrFlatStrayRead  = errors.New("flat65280v2: stray read in $FF00..$FFEE")
 	ErrFlatStrayWrite = errors.New("flat65280v2: stray write in $FF00..$FFFF")
 	ErrFlatClockCrash = errors.New("flat65280v2: crash and core dump requested via CLOCK_AND_STOP ($FE)")
+	ErrDeepStrayRead  = errors.New("deep65280v2: stray read in $FF00..$FFFF")
+	ErrDeepStrayWrite = errors.New("deep65280v2: stray write in $FF00..$FFFF")
 )
 
 // Bus manages memory across all 256 tasks, page protection, and I/O devices.
@@ -87,6 +90,11 @@ type Bus struct {
 	// flat65280v2 ACIA M6850 registers ($FF88..$FF89)
 	AciaCtrl byte // $FF88: Control register (Write)
 
+	// deep65280v2 512KB physical RAM and MMU
+	PhysRam [524288]byte // 64 8KB blocks (pages 0..63)
+	MmuRegs [2][8]byte   // Task 0 and Task 1 DAT registers ($FFA0..$FFAF)
+	MmuTask byte         // Active MMU Task (bit 0: $FF91)
+
 	// Callback when IRQ line state changes
 	OnIRQChanged func(asserted bool)
 
@@ -104,7 +112,7 @@ func NewBus() *Bus {
 			curtain = uint16(v)
 		}
 	}
-	return &Bus{
+	b := &Bus{
 		Engine:              EngineHatvan,
 		CurrentTask:         0,
 		TaskFlagsTarget:     1,
@@ -112,12 +120,31 @@ func NewBus() *Bus {
 		ConsoleOut:          os.Stdout,
 		LogOut:              os.Stderr,
 	}
+	for i := 0; i < 8; i++ {
+		b.MmuRegs[0][i] = byte(0x38 + i)
+		b.MmuRegs[1][i] = byte(0x38 + i)
+	}
+	return b
 }
 
 // ReadByte reads an 8-bit value from the current task's memory space.
 func (b *Bus) ReadByte(addr uint16) byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.Engine == EngineDeep65280v2 {
+		if addr >= 0xFF00 {
+			return b.readIODeep(addr)
+		}
+		if addr >= 0xFE00 {
+			// Locked $FExx page: always physical block $3F offset $1Exx
+			return b.PhysRam[0x70000+uint32(addr)]
+		}
+		slot := addr >> 13
+		page := b.MmuRegs[b.MmuTask&1][slot] & 0x3F
+		physAddr := (uint32(page) << 13) | uint32(addr&0x1FFF)
+		return b.PhysRam[physAddr]
+	}
 
 	if b.Engine == EngineFlat65280v2 {
 		if addr >= 0xFF00 {
@@ -146,6 +173,23 @@ func (b *Bus) ReadByte(addr uint16) byte {
 func (b *Bus) WriteByte(addr uint16, val byte) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.Engine == EngineDeep65280v2 {
+		if addr >= 0xFF00 {
+			b.writeIODeep(addr, val)
+			return
+		}
+		if addr >= 0xFE00 {
+			// Locked $FExx page: always physical block $3F offset $1Exx
+			b.PhysRam[0x70000+uint32(addr)] = val
+			return
+		}
+		slot := addr >> 13
+		page := b.MmuRegs[b.MmuTask&1][slot] & 0x3F
+		physAddr := (uint32(page) << 13) | uint32(addr&0x1FFF)
+		b.PhysRam[physAddr] = val
+		return
+	}
 
 	if b.Engine == EngineFlat65280v2 {
 		if addr >= 0xFF00 {
@@ -394,7 +438,7 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 
 func (b *Bus) evalIRQ() {
 	var asserted bool
-	if b.Engine == EngineFlat65280v2 {
+	if b.Engine == EngineFlat65280v2 || b.Engine == EngineDeep65280v2 {
 		rdrf := len(b.ConsoleIn) > 0
 		rie := (b.AciaCtrl & 0x80) != 0
 		aciaIRQ := rdrf && rie
@@ -410,8 +454,8 @@ func (b *Bus) evalIRQ() {
 
 // TimerTick signals a 60Hz timer tick.
 func (b *Bus) TimerTick() {
-	if b.Engine == EngineFlat65280v2 {
-		return // Handled via ClockTick in flat65280v2
+	if b.Engine == EngineFlat65280v2 || b.Engine == EngineDeep65280v2 {
+		return // Handled via ClockTick in flat65280v2 and deep65280v2
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -451,6 +495,73 @@ func (b *Bus) writeIOFlat(addr uint16, val byte) {
 		b.writeAciaData(val)
 	default:
 		panic(fmt.Errorf("%w: write at 0x%04X", ErrFlatStrayWrite, addr))
+	}
+}
+
+func (b *Bus) readIODeep(addr uint16) byte {
+	if addr >= 0xFFF0 {
+		return b.PhysRam[0x70000+uint32(addr)]
+	}
+
+	switch {
+	case addr >= 0xFF80 && addr <= 0xFF86:
+		return b.readEmuDsk(addr)
+	case addr == 0xFF87:
+		return b.readClockAndStop()
+	case addr == 0xFF88:
+		return b.readAciaStatus()
+	case addr == 0xFF89:
+		return b.readAciaData()
+	case addr >= 0xFF00 && addr <= 0xFF03:
+		return 0 // PIA0 dummy
+	case addr == 0xFF90:
+		return 0 // GIME Init0
+	case addr == 0xFF92 || addr == 0xFF93:
+		return 0 // GIME IrqEnR / Status
+	case addr == 0xFF91:
+		return b.MmuTask
+	case addr >= 0xFFA0 && addr <= 0xFFA7:
+		return b.MmuRegs[0][addr-0xFFA0]
+	case addr >= 0xFFA8 && addr <= 0xFFAF:
+		return b.MmuRegs[1][addr-0xFFA8]
+	case addr == 0xFFD8 || addr == 0xFFDE:
+		return 0 // SAM speed / mode
+	default:
+		panic(fmt.Errorf("%w: read at 0x%04X", ErrDeepStrayRead, addr))
+	}
+}
+
+func (b *Bus) writeIODeep(addr uint16, val byte) {
+	if addr >= 0xFFF0 {
+		b.PhysRam[0x70000+uint32(addr)] = val
+		return
+	}
+
+	switch {
+	case addr >= 0xFF00 && addr <= 0xFF03:
+		// PIA0 dummy - ignored
+	case addr >= 0xFF80 && addr <= 0xFF86:
+		b.writeEmuDsk(addr, val)
+	case addr == 0xFF87:
+		b.writeClockAndStop(val)
+	case addr == 0xFF88:
+		b.writeAciaCtrl(val)
+	case addr == 0xFF89:
+		b.writeAciaData(val)
+	case addr == 0xFF90:
+		// GIME Init0 - ignored in deep65280v2
+	case addr == 0xFF91:
+		b.MmuTask = val & 0x01
+	case addr == 0xFF92 || addr == 0xFF93:
+		// GIME IrqEnR / Status - ignored
+	case addr >= 0xFFA0 && addr <= 0xFFA7:
+		b.MmuRegs[0][addr-0xFFA0] = val & 0x3F
+	case addr >= 0xFFA8 && addr <= 0xFFAF:
+		b.MmuRegs[1][addr-0xFFA8] = val & 0x3F
+	case addr == 0xFFD8 || addr == 0xFFDE:
+		// SAM speed / mode - ignored
+	default:
+		panic(fmt.Errorf("%w: write at 0x%04X", ErrDeepStrayWrite, addr))
 	}
 }
 
@@ -517,7 +628,18 @@ func (b *Bus) executeEmuDskCommand(cmd byte) {
 				b.EmuDskStatus = 6 // Buffer cannot cross into I/O page
 				return
 			}
-			b.Memory[0][targetAddr] = disk[offset+i]
+			if b.Engine == EngineDeep65280v2 {
+				if targetAddr >= 0xFE00 {
+					b.PhysRam[0x70000+uint32(targetAddr)] = disk[offset+i]
+				} else {
+					slot := targetAddr >> 13
+					page := b.MmuRegs[b.MmuTask&1][slot] & 0x3F
+					physAddr := (uint32(page) << 13) | uint32(targetAddr&0x1FFF)
+					b.PhysRam[physAddr] = disk[offset+i]
+				}
+			} else {
+				b.Memory[0][targetAddr] = disk[offset+i]
+			}
 		}
 		b.EmuDskStatus = 0
 
@@ -528,7 +650,18 @@ func (b *Bus) executeEmuDskCommand(cmd byte) {
 				b.EmuDskStatus = 6
 				return
 			}
-			disk[offset+i] = b.Memory[0][srcAddr]
+			if b.Engine == EngineDeep65280v2 {
+				if srcAddr >= 0xFE00 {
+					disk[offset+i] = b.PhysRam[0x70000+uint32(srcAddr)]
+				} else {
+					slot := srcAddr >> 13
+					page := b.MmuRegs[b.MmuTask&1][slot] & 0x3F
+					physAddr := (uint32(page) << 13) | uint32(srcAddr&0x1FFF)
+					disk[offset+i] = b.PhysRam[physAddr]
+				}
+			} else {
+				disk[offset+i] = b.Memory[0][srcAddr]
+			}
 		}
 		b.EmuDskStatus = 0
 
@@ -774,6 +907,8 @@ func (b *Bus) pollStdinLocked() {
 }
 
 // LoadRawImage zeroes Task 0 memory and loads a 64KB raw image directly into Task 0.
+// For deep65280v2, it also zeroes PhysRam, resets MMU registers, and copies the 64KB image
+// to physical pages $38..$3F (0x70000..0x7FFFF).
 func (b *Bus) LoadRawImage(data []byte) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -782,6 +917,17 @@ func (b *Bus) LoadRawImage(data []byte) error {
 		b.Memory[0][i] = 0
 	}
 	copy(b.Memory[0][:], data)
+
+	for i := range b.PhysRam {
+		b.PhysRam[i] = 0
+	}
+	copy(b.PhysRam[0x70000:], data)
+	b.MmuTask = 0
+	for i := 0; i < 8; i++ {
+		b.MmuRegs[0][i] = byte(0x38 + i)
+		b.MmuRegs[1][i] = byte(0x38 + i)
+	}
+
 	return nil
 }
 

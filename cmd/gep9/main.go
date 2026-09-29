@@ -32,7 +32,7 @@ var (
 	curlyEscapeFlag   = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
 	traceTrapFlag     = flag.Bool("trace-trap", false, "print system call trap trace to stderr")
 	sharedCurtainFlag = flag.String("shared-curtain", "0xE000", "shared memory curtain address for tasks 0, 1, and 2")
-	engineFlag        = flag.String("engine", "hatvan", "emulation engine: \"hatvan\" (default) or \"flat65280v2\"")
+	engineFlag        = flag.String("engine", "hatvan", "emulation engine: \"hatvan\" (default), \"flat65280v2\", or \"deep65280v2\"")
 )
 
 func main() {
@@ -67,8 +67,10 @@ func main() {
 		bus.Engine = gep9.EngineHatvan
 	case "flat65280v2":
 		bus.Engine = gep9.EngineFlat65280v2
+	case "deep65280v2":
+		bus.Engine = gep9.EngineDeep65280v2
 	default:
-		fmt.Fprintf(os.Stderr, "Error: unknown engine %q (must be \"hatvan\" or \"flat65280v2\")\n", *engineFlag)
+		fmt.Fprintf(os.Stderr, "Error: unknown engine %q (must be \"hatvan\", \"flat65280v2\", or \"deep65280v2\")\n", *engineFlag)
 		os.Exit(1)
 	}
 
@@ -252,7 +254,7 @@ func main() {
 				cyclesSinceTick -= cyclesPerTick
 				bus.TimerTick()
 			}
-		} else if bus.Engine == gep9.EngineFlat65280v2 {
+		} else if bus.Engine == gep9.EngineFlat65280v2 || bus.Engine == gep9.EngineDeep65280v2 {
 			cyclesSinceTick += uint64(c)
 			cpt := bus.ClockCyclesPerTick(*cpuClockHz)
 			if cpt > 0 && cyclesSinceTick >= cpt {
