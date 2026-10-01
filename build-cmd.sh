@@ -86,8 +86,8 @@ for TARGET in $TARGETS; do
     if grep -q 'import "mem"\|import "smap"' "$SRC" 2>/dev/null || [ "$BASE" = "gsh2" ]; then
         MANAGED_FLAG_9="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=8000"
         MANAGED_FLAG_K="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=64000"
-        OPT_FLAGS_9="-no-slotsharing6809 -no-stackalloc -no-inline -no-leaf-opt6809"
-        OPT_FLAGS_K="-no-stackalloc -no-inline"
+        #yak# OPT_FLAGS_9="-no-slotsharing6809 -no-stackalloc -no-inline -no-leaf-opt6809"
+        #yak# OPT_FLAGS_K="-no-stackalloc -no-inline"
         GLOBAL_OFFSET=48128
     fi
 

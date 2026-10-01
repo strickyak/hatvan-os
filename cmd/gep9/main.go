@@ -230,12 +230,30 @@ func main() {
 		bus.StdinChan = stdinCh
 	}
 
+	flushDisks := func() {
+		diskPaths := []string{*disk0Flag, *disk1Flag, *disk2Flag, *disk3Flag}
+		for i, p := range diskPaths {
+			if p != "" && i < len(bus.Disks) && bus.Disks[i] != nil {
+				if err := os.WriteFile(p, bus.Disks[i], 0644); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to flush disk image %q: %v\n", p, err)
+				}
+			}
+		}
+	}
+	defer flushDisks()
+
+	bus.OnHalt = func(code int) {
+		flushDisks()
+		os.Exit(code)
+	}
+
 	// Catch SIGINT cleanly
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigCh
 		fmt.Fprintln(os.Stderr, "\n[gep9: interrupted by signal]")
+		flushDisks()
 		printRegisters(cpu)
 		os.Exit(0)
 	}()
@@ -311,9 +329,8 @@ func main() {
 	if *traceFlag || *printCyclesFlag || os.Getenv("HATVAN_PRINT_CYCLES") != "" {
 		fmt.Fprintf(os.Stderr, "[gep9 finished: %d total cycles executed]\n", cpu.Cycles)
 	}
-	if *traceFlag {
-		printRegisters(cpu)
-	}
+
+	flushDisks()
 
 	if cpu.Halted {
 		os.Exit(cpu.ExitCode)
