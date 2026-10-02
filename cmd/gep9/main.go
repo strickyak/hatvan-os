@@ -247,6 +247,12 @@ func main() {
 		os.Exit(code)
 	}
 
+	if *traceFlag {
+		bus.OnWrite = func(addr uint16, val byte) {
+			fmt.Fprintf(os.Stderr, "   %04X <- %02X\n", addr, val)
+		}
+	}
+
 	// Catch SIGINT cleanly
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)

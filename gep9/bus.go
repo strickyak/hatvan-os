@@ -103,6 +103,9 @@ type Bus struct {
 	ExitCode int
 	OnHalt   func(exitCode int)
 	OnCrash  func()
+
+	// Callback when memory write cycle occurs (for tracing)
+	OnWrite func(addr uint16, val byte)
 }
 
 // NewBus constructs an initialized Bus with all memory zeroed.
@@ -196,6 +199,10 @@ func (b *Bus) ReadByte(addr uint16) byte {
 func (b *Bus) WriteByte(addr uint16, val byte) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.OnWrite != nil {
+		b.OnWrite(addr, val)
+	}
 
 	if b.Engine == EngineDeep65280v2 {
 		if addr >= 0xFF00 {
