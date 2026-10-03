@@ -278,8 +278,26 @@ func main() {
 		maxDuration = time.Duration(*maxSecondsFlag * float64(time.Second))
 	}
 
+	var history [64]string
+	var hIdx int
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "=== PANIC CRASH TRACE (last %d instructions) ===\n", len(history))
+			for i := 0; i < len(history); i++ {
+				idx := (hIdx + i) % len(history)
+				if history[idx] != "" {
+					fmt.Fprintln(os.Stderr, history[idx])
+				}
+			}
+			panic(r)
+		}
+	}()
+
 	for !cpu.Halted {
 		pc := cpu.PC
+		history[hIdx] = fmt.Sprintf("PC=%04X op=%02X A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X",
+			pc, bus.ReadByte(pc), cpu.A, cpu.B, cpu.X, cpu.Y, cpu.U, cpu.S)
+		hIdx = (hIdx + 1) % len(history)
 
 		if *traceFlag {
 			src := lookupSource(pc, decb, listings)
