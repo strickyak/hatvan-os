@@ -278,15 +278,25 @@ func main() {
 		maxDuration = time.Duration(*maxSecondsFlag * float64(time.Second))
 	}
 
-	var history [64]string
+	type historyEntry struct {
+		pc         uint16
+		op         byte
+		a, b       byte
+		x, y, u, s uint16
+	}
+	var history [64]historyEntry
 	var hIdx int
+	formatEntry := func(e historyEntry) string {
+		return fmt.Sprintf("PC=%04X op=%02X A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X",
+			e.pc, e.op, e.a, e.b, e.x, e.y, e.u, e.s)
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "=== PANIC CRASH TRACE (last %d instructions) ===\n", len(history))
 			for i := 0; i < len(history); i++ {
 				idx := (hIdx + i) % len(history)
-				if history[idx] != "" {
-					fmt.Fprintln(os.Stderr, history[idx])
+				if history[idx].pc != 0 || history[idx].op != 0 {
+					fmt.Fprintln(os.Stderr, formatEntry(history[idx]))
 				}
 			}
 			panic(r)
@@ -295,8 +305,16 @@ func main() {
 
 	for !cpu.Halted {
 		pc := cpu.PC
-		history[hIdx] = fmt.Sprintf("PC=%04X op=%02X A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X",
-			pc, bus.ReadByte(pc), cpu.A, cpu.B, cpu.X, cpu.Y, cpu.U, cpu.S)
+		history[hIdx] = historyEntry{
+			pc: pc,
+			op: bus.ReadByte(pc),
+			a:  cpu.A,
+			b:  cpu.B,
+			x:  cpu.X,
+			y:  cpu.Y,
+			u:  cpu.U,
+			s:  cpu.S,
+		}
 		hIdx = (hIdx + 1) % len(history)
 
 		if *traceFlag {
@@ -326,11 +344,17 @@ func main() {
 		}
 
 		cyclesSinceInputCheck += uint64(c)
-		if cyclesSinceInputCheck >= 1024 {
+		if cyclesSinceInputCheck >= 32768 {
 			cyclesSinceInputCheck = 0
 			if maxDuration > 0 && time.Since(startTime) >= maxDuration {
 				fmt.Fprintf(os.Stderr, "\n[gep9: reached maximum realtime limit of %.1f seconds]\n", *maxSecondsFlag)
 				printRegisters(cpu)
+				for i := 0; i < len(history); i++ {
+					idx := (hIdx + i) % len(history)
+					if history[idx].pc != 0 || history[idx].op != 0 {
+						fmt.Fprintln(os.Stderr, formatEntry(history[idx]))
+					}
+				}
 				break
 			}
 			if initialInputPending {
