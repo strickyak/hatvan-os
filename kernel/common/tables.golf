@@ -67,9 +67,9 @@ func Init() {
 		panic("Shared memory curtain mismatch between kernel and VM")
 	}
 
-	if hal.ARCH == '9' {
+	if hal.ARCH == '9' || hal.ARCH == 'z' {
 		if Size > (0xFF00 - hal.SHARED_MEM_CURTAIN) {
-			panic("SharedTables exceeds shared memory curtain on M6809")
+			panic("SharedTables exceeds shared memory curtain on M6809/Z80")
 		}
 	} else {
 		if Size > (0x00FF0000 - hal.SHARED_MEM_CURTAIN) {

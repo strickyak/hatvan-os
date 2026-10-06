@@ -29,30 +29,26 @@ func GetPath(pathId byte) *tables.PathDesc {
 // PathInit initializes the global open path table in shared memory
 func PathInit() {
 	for i := word(0); i < MAX_PATHS; i++ {
-		p := &tables.Shared.PathTable[i]
-		p.RefCount = 0
-		p.DevType = dev.DEV_NONE
-		p.BufLSN = 0xFFFF
-		p.BufDirty = 0
+		pd := &tables.Shared.PathTable[i]
+		klib.memset((*byte)(pd), 0, sizeof[tables.PathDesc]())
+		pd.BufLSN = 0xFFFF
 	}
 }
 
+var AllocatedPathId byte
+
 // PathAlloc finds an available slot in PathTable
-func PathAlloc() (byte, *tables.PathDesc) {
+func PathAlloc() byte {
 	for i := word(0); i < MAX_PATHS; i++ {
-		if tables.Shared.PathTable[i].RefCount == 0 {
-			pd := &tables.Shared.PathTable[i]
+		pd := &tables.Shared.PathTable[i]
+		if pd.RefCount == 0 {
+			klib.memset((*byte)(pd), 0, sizeof[tables.PathDesc]())
 			pd.RefCount = 1
-			pd.DevType = dev.DEV_NONE
-			pd.FilePos = 0
-			pd.FileSize = 0
-			pd.FDLSN = 0
 			pd.BufLSN = 0xFFFF
-			pd.BufDirty = 0
-			return byte(i), pd
+			return byte(i)
 		}
 	}
-	return 0xFF, (*tables.PathDesc)(0)
+	return 0xFF
 }
 
 // PathFree decrements the reference count and frees the slot when zero
@@ -74,106 +70,119 @@ func PathFree(pathId byte) {
 	}
 }
 
-// SysOpen opens a file or device and returns (pathId, errCode)
-func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word, cxdLSN word) (byte, byte) {
-	devType, drive, remPath := dev.ParsePathDevice(pathStr, defaultDrive)
+func openDup(task byte, targetProcPath byte) byte {
+	if task >= tables.MAX_PROCS || tables.Shared.ProcTable[task].State == 0 {
+		return E_BPNUM
+	}
+	targetPathId := tables.Shared.ProcTable[task].Paths[targetProcPath]
+	if targetPathId == 0xFF || targetPathId >= MAX_PATHS {
+		return E_BPNUM
+	}
+	err := SysDup(targetPathId)
+	if err != 0 {
+		return err
+	}
+	AllocatedPathId = targetPathId
+	return 0
+}
 
-	// Numbered process path dup devices: /0 .. /3
+func openDisk(pathId byte, pd *tables.PathDesc, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word, cxdLSN word) byte {
+	isExec := byte(0)
+	if (mode & MODE_EXEC) != 0 {
+		isExec = 1
+	}
+
+	err := rbf_ipc.ResolvePath(pathStr, defaultDrive, cwdLSN, cxdLSN, isExec)
+	if err != 0 || rbf_ipc.ResDrive == 0xFF || rbf_ipc.ResFDLSN == 0 {
+		PathFree(pathId)
+		return E_PNNF
+	}
+
+	pd.Drive = rbf_ipc.ResDrive
+	pd.FDLSN = rbf_ipc.ResFDLSN
+
+	// If mode requests directory, verify FD has directory bit set ($80)
+	if (mode&MODE_DIR) != 0 && (rbf_ipc.ResAttr&0x80) == 0 {
+		PathFree(pathId)
+		return E_BMODE
+	}
+
+	pd.FileSize = rbf_ipc.ResFileSize
+	AllocatedPathId = pathId
+	return 0
+}
+
+// SysOpen opens a file or device and returns errCode (0 on success, sets AllocatedPathId)
+func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word, cxdLSN word) byte {
+	devType := dev.ParsePathDevice(pathStr, defaultDrive)
+	drive := dev.ParsedDrive
+
 	if devType == dev.DEV_DUP {
-		if task >= tables.MAX_PROCS || tables.Shared.ProcTable[task].State == 0 {
-			return 0xFF, E_BPNUM
-		}
-		targetProcPath := drive
-		targetPathId := tables.Shared.ProcTable[task].Paths[targetProcPath]
-		if targetPathId == 0xFF || targetPathId >= MAX_PATHS {
-			return 0xFF, E_BPNUM
-		}
-		err := SysDup(targetPathId)
-		if err != 0 {
-			return 0xFF, err
-		}
-		return targetPathId, 0
+		return openDup(task, drive)
 	}
 
-	pathId, pd := PathAlloc()
+	pathId := PathAlloc()
 	if pathId == 0xFF {
-		return 0xFF, E_PTHFUL
+		return E_PTHFUL
 	}
 
+	pd := &tables.Shared.PathTable[pathId]
 	pd.DevType = devType
 	pd.Drive = drive
 	pd.Mode = mode
 
 	// Terminal, Logger, and Null devices don't require filesystem traversal
 	if devType == dev.DEV_TERM || devType == dev.DEV_LOG || devType == dev.DEV_NULL {
-		return pathId, 0
+		AllocatedPathId = pathId
+		return 0
 	}
 	if devType == dev.DEV_PROC {
 		if (mode & MODE_WRITE) != 0 {
 			PathFree(pathId)
-			return 0xFF, E_BMODE
+			return E_BMODE
 		}
-		return pathId, 0
+		AllocatedPathId = pathId
+		return 0
 	}
 
-	// DEV_DISK: resolve path to File Descriptor LSN
-	isExec := byte(0)
-	if (mode & MODE_EXEC) != 0 {
-		isExec = 1
-	}
-
-	finalDrive, fdLSN, attr, fileSize, err := rbf_ipc.ResolvePath(pathStr, defaultDrive, cwdLSN, cxdLSN, isExec)
-	if err != 0 || finalDrive == 0xFF || fdLSN == 0 {
-		PathFree(pathId)
-		return 0xFF, E_PNNF
-	}
-
-	pd.Drive = finalDrive
-	pd.FDLSN = fdLSN
-
-	// If mode requests directory, verify FD has directory bit set ($80)
-	if (mode&MODE_DIR) != 0 && (attr&0x80) == 0 {
-		PathFree(pathId)
-		return 0xFF, E_BMODE
-	}
-
-	pd.FileSize = fileSize
-	return pathId, 0
+	return openDisk(pathId, pd, pathStr, mode, defaultDrive, cwdLSN, cxdLSN)
 }
 
-// SysCreate creates or opens a file for writing and returns (pathId, errCode)
-func SysCreate(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word, cxdLSN word) (byte, byte) {
+// SysCreate creates or opens a file for writing and returns errCode (0 on success, sets AllocatedPathId)
+func SysCreate(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word, cxdLSN word) byte {
 	// For devices (/term, /log, /null, /0../3), create is equivalent to open write
-	devType, _, _ := dev.ParsePathDevice(pathStr, defaultDrive)
+	devType := dev.ParsePathDevice(pathStr, defaultDrive)
 	if devType == dev.DEV_TERM || devType == dev.DEV_LOG || devType == dev.DEV_NULL || devType == dev.DEV_DUP {
 		return SysOpen(task, pathStr, mode|MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
 	}
 	if devType == dev.DEV_PROC {
-		return 0xFF, E_BMODE
+		return E_BMODE
 	}
 
-	finalDrive, fdLSN, attr, err := rbf_ipc.CreateFile(pathStr, defaultDrive, cwdLSN, cxdLSN, mode)
-	if err != 0 || finalDrive == 0xFF || fdLSN == 0 {
-		return 0xFF, err
+	err := rbf_ipc.CreateFile(pathStr, defaultDrive, cwdLSN, cxdLSN, mode)
+	if err != 0 || rbf_ipc.ResDrive == 0xFF || rbf_ipc.ResFDLSN == 0 {
+		return err
 	}
 
-	pathId, pd := PathAlloc()
+	pathId := PathAlloc()
 	if pathId == 0xFF {
-		return 0xFF, E_PTHFUL
+		return E_PTHFUL
 	}
 
+	pd := &tables.Shared.PathTable[pathId]
 	pd.DevType = dev.DEV_DISK
-	pd.Drive = finalDrive
+	pd.Drive = rbf_ipc.ResDrive
 	pd.Mode = mode | MODE_WRITE
-	pd.FDLSN = fdLSN
+	pd.FDLSN = rbf_ipc.ResFDLSN
 	pd.FileSize = 0
 	pd.FilePos = 0
-	return pathId, 0
+	AllocatedPathId = pathId
+	return 0
 }
 
 // SysDelete deletes a file from the disk filesystem
 func SysDelete(task byte, pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word) byte {
-	devType, _, _ := dev.ParsePathDevice(pathStr, defaultDrive)
+	devType := dev.ParsePathDevice(pathStr, defaultDrive)
 	if devType != dev.DEV_DISK {
 		return E_BMODE
 	}
@@ -198,93 +207,110 @@ func SysDup(pathId byte) byte {
 	return 0
 }
 
-// SysRead reads up to count bytes from pathId into ubuf in task space
-func SysRead(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
-	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
-		return 0, E_BPNUM
-	}
-	pd := &tables.Shared.PathTable[pathId]
-	if (pd.Mode&(MODE_READ|MODE_EXEC)) == 0 && pd.DevType != dev.DEV_TERM {
-		return 0, E_BMODE
-	}
-
-	if pd.DevType == dev.DEV_TERM {
-		n := dev.TermRead(task, word(ubuf), count)
-		return n, 0
-	}
-	if pd.DevType == dev.DEV_LOG || pd.DevType == dev.DEV_NULL {
-		return 0, 0 // EOF
-	}
-
-	if pd.DevType == dev.DEV_PROC {
-		if pd.FilePos >= pd.FileSize {
-			return 0, E_EOF
-		}
-		toRead := count
-		if pd.FilePos+toRead > pd.FileSize {
-			toRead = pd.FileSize - pd.FilePos
-		}
-		bytesRead, err := procfs_ipc.Read(pd.FilePos, task, word(ubuf), toRead)
-		if err != 0 {
-			return 0, err
-		}
-		pd.FilePos += bytesRead
-		return bytesRead, 0
-	}
-
-	// DEV_DISK file read
+func readProc(pd *tables.PathDesc, task byte, ubuf *byte, count word) byte {
 	if pd.FilePos >= pd.FileSize {
-		return 0, E_EOF
+		TransferredBytes = 0
+		return E_EOF
 	}
-
 	toRead := count
 	if pd.FilePos+toRead > pd.FileSize {
 		toRead = pd.FileSize - pd.FilePos
 	}
-
-	bytesRead, err := rbf_ipc.ReadFile(pd.Drive, pd.FDLSN, pd.FilePos, task, word(ubuf), toRead)
+	err := procfs_ipc.Read(pd.FilePos, task, word(ubuf), toRead)
 	if err != 0 {
-		return 0, err
+		TransferredBytes = 0
+		return err
 	}
-	pd.FilePos += bytesRead
-	return bytesRead, 0
+	pd.FilePos += procfs_ipc.TransferredBytes
+	TransferredBytes = procfs_ipc.TransferredBytes
+	return 0
 }
 
-// SysWrite writes count bytes from ubuf in task space to pathId
-func SysWrite(pathId byte, task byte, ubuf *byte, count word) (word, byte) {
+func readDisk(pd *tables.PathDesc, task byte, ubuf *byte, count word) byte {
+	if pd.FilePos >= pd.FileSize {
+		TransferredBytes = 0
+		return E_EOF
+	}
+	toRead := count
+	if pd.FilePos+toRead > pd.FileSize {
+		toRead = pd.FileSize - pd.FilePos
+	}
+	err := rbf_ipc.ReadFile(pd.Drive, pd.FDLSN, pd.FilePos, task, word(ubuf), toRead)
+	if err != 0 {
+		TransferredBytes = 0
+		return err
+	}
+	pd.FilePos += rbf_ipc.TransferredBytes
+	TransferredBytes = rbf_ipc.TransferredBytes
+	return 0
+}
+
+var TransferredBytes word
+
+// SysRead reads up to count bytes from pathId into ubuf in task space
+func SysRead(pathId byte, task byte, ubuf *byte, count word) byte {
+	TransferredBytes = 0
 	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
-		return 0, E_BPNUM
+		return E_BPNUM
 	}
 	pd := &tables.Shared.PathTable[pathId]
-	if (pd.Mode&MODE_WRITE) == 0 && pd.DevType != dev.DEV_TERM && pd.DevType != dev.DEV_LOG {
-		return 0, E_BMODE
+	if (pd.Mode&(MODE_READ|MODE_EXEC)) == 0 && pd.DevType != dev.DEV_TERM {
+		return E_BMODE
 	}
 
 	if pd.DevType == dev.DEV_TERM {
-		n := dev.TermWrite(task, word(ubuf), count)
-		return n, 0
+		TransferredBytes = dev.TermRead(task, word(ubuf), count)
+		return 0
+	}
+	if pd.DevType == dev.DEV_LOG || pd.DevType == dev.DEV_NULL {
+		return 0 // EOF
+	}
+
+	if pd.DevType == dev.DEV_PROC {
+		return readProc(pd, task, ubuf, count)
+	}
+	return readDisk(pd, task, ubuf, count)
+}
+
+func writeDisk(pd *tables.PathDesc, task byte, ubuf *byte, count word) byte {
+	err := rbf_ipc.WriteFile(pd.Drive, pd.FDLSN, pd.FilePos, task, word(ubuf), count)
+	if err != 0 {
+		TransferredBytes = 0
+		return err
+	}
+	pd.FilePos += rbf_ipc.TransferredBytes
+	if pd.FilePos > pd.FileSize {
+		pd.FileSize = pd.FilePos
+	}
+	TransferredBytes = rbf_ipc.TransferredBytes
+	return 0
+}
+
+// SysWrite writes count bytes from ubuf in task space to pathId
+func SysWrite(pathId byte, task byte, ubuf *byte, count word) byte {
+	TransferredBytes = 0
+	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
+		return E_BPNUM
+	}
+	pd := &tables.Shared.PathTable[pathId]
+	if (pd.Mode&MODE_WRITE) == 0 && pd.DevType != dev.DEV_TERM && pd.DevType != dev.DEV_LOG {
+		return E_BMODE
+	}
+
+	if pd.DevType == dev.DEV_TERM {
+		TransferredBytes = dev.TermWrite(task, word(ubuf), count)
+		return 0
 	}
 	if pd.DevType == dev.DEV_LOG {
-		n := dev.LogWrite(task, word(ubuf), count)
-		return n, 0
+		TransferredBytes = dev.LogWrite(task, word(ubuf), count)
+		return 0
 	}
 	if pd.DevType == dev.DEV_NULL {
-		return count, 0
+		TransferredBytes = count
+		return 0
 	}
 
-	if pd.DevType == dev.DEV_DISK {
-		bytesWritten, err := rbf_ipc.WriteFile(pd.Drive, pd.FDLSN, pd.FilePos, task, word(ubuf), count)
-		if err != 0 {
-			return 0, err
-		}
-		pd.FilePos += bytesWritten
-		if pd.FilePos > pd.FileSize {
-			pd.FileSize = pd.FilePos
-		}
-		return bytesWritten, 0
-	}
-
-	return 0, E_BMODE
+	return writeDisk(pd, task, ubuf, count)
 }
 
 // SysSeek sets the byte position of an open file
@@ -305,27 +331,30 @@ func SysSeek(pathId byte, offset word) byte {
 	return 0
 }
 
+var pathLineBuf [256]byte
+
 // SysReadLn reads a line of text, terminating on \r or \n
-func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (word, byte) {
+func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) byte {
+	TransferredBytes = 0
 	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
-		return 0, E_BPNUM
+		return E_BPNUM
 	}
 	pd := &tables.Shared.PathTable[pathId]
 
 	if pd.DevType == dev.DEV_TERM {
 		n := dev.TermReadLn(task, word(ubuf), maxLen, lineMode)
+		TransferredBytes = n
 		if n == 0 {
-			return 0, E_EOF
+			return E_EOF
 		}
-		return n, 0
+		return 0
 	}
 
 	// DEV_DISK or DEV_PROC file line read
 	if maxLen <= 1 {
-		return 0, 0
+		return 0
 	}
 
-	var lineBuf [256]byte
 	limit := maxLen
 	if limit > 256 {
 		limit = 256
@@ -335,12 +364,12 @@ func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (
 	var single byte
 
 	for count < limit-1 {
-		n, err := SysRead(pathId, 0, &single, 1)
-		if n == 0 || err != 0 {
+		err := SysRead(pathId, 0, &single, 1)
+		if TransferredBytes == 0 || err != 0 {
 			if count > 0 {
 				break
 			}
-			return 0, E_EOF
+			return E_EOF
 		}
 
 		// Check line terminator
@@ -349,38 +378,39 @@ func SysReadLn(pathId byte, task byte, ubuf *byte, maxLen word, lineMode byte) (
 			if lineMode == 1 {
 				endChar = '\r'
 			}
-			lineBuf[count] = endChar
+			pathLineBuf[count] = endChar
 			count++
 			break
 		}
 
-		lineBuf[count] = single
+		pathLineBuf[count] = single
 		count++
 	}
 
 	if count > 0 {
 		dstAddr := word(ubuf)
 		if task == 0 {
-			klib.memcpy((*byte)(dstAddr), &lineBuf[0], count)
+			klib.memcpy((*byte)(dstAddr), &pathLineBuf[0], count)
 		} else {
-			hal.DMACopy(0, word(&lineBuf[0]), task, dstAddr, count)
+			hal.DMACopy(0, word(&pathLineBuf[0]), task, dstAddr, count)
 		}
 	}
 
-	return count, 0
+	TransferredBytes = count
+	return 0
 }
 
 // SysWritLn writes a line from ubuf up to count bytes or until \r or \n
-func SysWritLn(pathId byte, task byte, ubuf *byte, count word, lineMode byte) (word, byte) {
+func SysWritLn(pathId byte, task byte, ubuf *byte, count word, lineMode byte) byte {
+	TransferredBytes = 0
 	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
-		return 0, E_BPNUM
+		return E_BPNUM
 	}
 	pd := &tables.Shared.PathTable[pathId]
 	if (pd.Mode&MODE_WRITE) == 0 && pd.DevType != dev.DEV_TERM && pd.DevType != dev.DEV_LOG {
-		return 0, E_BMODE
+		return E_BMODE
 	}
 
-	var lineBuf [256]byte
 	toCopy := count
 	if toCopy > 256 {
 		toCopy = 256
@@ -388,14 +418,14 @@ func SysWritLn(pathId byte, task byte, ubuf *byte, count word, lineMode byte) (w
 
 	uAddr := word(ubuf)
 	if task == 0 {
-		klib.memcpy(&lineBuf[0], (*byte)(uAddr), toCopy)
+		klib.memcpy(&pathLineBuf[0], (*byte)(uAddr), toCopy)
 	} else {
-		hal.DMACopy(task, uAddr, 0, word(&lineBuf[0]), toCopy)
+		hal.DMACopy(task, uAddr, 0, word(&pathLineBuf[0]), toCopy)
 	}
 
 	lineLen := word(0)
 	for lineLen < toCopy {
-		c := lineBuf[lineLen]
+		c := pathLineBuf[lineLen]
 		if c == 0 {
 			break
 		}
@@ -411,10 +441,6 @@ func SysWritLn(pathId byte, task byte, ubuf *byte, count word, lineMode byte) (w
 		}
 	}
 
-	n, err := SysWrite(pathId, 0, &lineBuf[0], lineLen)
-	if err != 0 {
-		return n, err
-	}
-
-	return n, 0
+	return SysWrite(pathId, 0, &pathLineBuf[0], lineLen)
 }
+

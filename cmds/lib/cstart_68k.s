@@ -228,3 +228,17 @@ f_sys__SysChgDir:
     and.l   #$FF, d0
     rts
 
+f_sys__SysSeek:
+    move.l  4(sp), d1
+    move.l  8(sp), a0
+    move.l  #$88, d0
+    trap    #0
+    bcs     .seek_err_k
+    moveq   #0, d0
+    rts
+.seek_err_k:
+    move.b  d1, v_sys.LastErr
+    move.b  d1, d0
+    and.l   #$FF, d0
+    rts
+

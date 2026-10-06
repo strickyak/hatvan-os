@@ -1,0 +1,65 @@
+package main
+
+import "sys"
+
+var readBuf [16]byte
+
+func main() {
+	filePath := (*byte)("/d0/triangle.sh")
+
+	// 1. Open existing file for reading
+	fd := sys.Open(filePath, 1) // read
+	if fd == 0xFF {
+		sys.Println((*byte)("SEEK:OPEN:FAIL"))
+		sys.Exit(1)
+	}
+
+	// 2. Seek to position 10 (line 3: "while true; do\n", starts with 'w')
+	serr := sys.Seek(fd, 10)
+	if serr != 0 {
+		sys.Println((*byte)("SEEK:SEEK10:FAIL"))
+		sys.Close(fd)
+		sys.Exit(2)
+	}
+
+	nr := sys.Read(fd, &readBuf[0], 5)
+	if nr != 5 || readBuf[0] != 'w' || readBuf[1] != 'h' || readBuf[2] != 'i' || readBuf[3] != 'l' || readBuf[4] != 'e' {
+		sys.Println((*byte)("SEEK:READ10:FAIL"))
+		sys.Close(fd)
+		sys.Exit(3)
+	}
+
+	// 3. Seek backwards to position 4 (line 2: "sum=0\n", starts with 's')
+	serr = sys.Seek(fd, 4)
+	if serr != 0 {
+		sys.Println((*byte)("SEEK:SEEK4:FAIL"))
+		sys.Close(fd)
+		sys.Exit(4)
+	}
+
+	nr = sys.Read(fd, &readBuf[0], 5)
+	if nr != 5 || readBuf[0] != 's' || readBuf[1] != 'u' || readBuf[2] != 'm' || readBuf[3] != '=' || readBuf[4] != '0' {
+		sys.Println((*byte)("SEEK:READ4:FAIL"))
+		sys.Close(fd)
+		sys.Exit(5)
+	}
+
+	// 4. Seek to position 0 (line 1: "i=1\n", starts with 'i')
+	serr = sys.Seek(fd, 0)
+	if serr != 0 {
+		sys.Println((*byte)("SEEK:SEEK0:FAIL"))
+		sys.Close(fd)
+		sys.Exit(6)
+	}
+
+	nr = sys.Read(fd, &readBuf[0], 3)
+	if nr != 3 || readBuf[0] != 'i' || readBuf[1] != '=' || readBuf[2] != '1' {
+		sys.Println((*byte)("SEEK:READ0:FAIL"))
+		sys.Close(fd)
+		sys.Exit(7)
+	}
+
+	sys.Close(fd)
+	sys.Println((*byte)("SEEK:ALL:OK"))
+	sys.Exit(0)
+}

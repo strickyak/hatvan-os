@@ -65,9 +65,15 @@ func Call() byte {
 	return mb[MB_STATUS]
 }
 
+var ResDrive byte
+var ResFDLSN word
+var ResAttr byte
+var ResFileSize word
+var TransferredBytes word
+
 // ResolvePath asks Task 1 to traverse directories and resolve pathStr.
-// Returns (finalDrive, fdLSN, attr, fileSize, errCode).
-func ResolvePath(pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isExec byte) (byte, word, byte, word, byte) {
+// Sets ResDrive, ResFDLSN, ResAttr, ResFileSize. Returns errCode (0 on success).
+func ResolvePath(pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isExec byte) byte {
 	for i := word(0); i < 64; i++ {
 		mb[i] = 0
 	}
@@ -89,24 +95,29 @@ func ResolvePath(pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isE
 
 	st := Call()
 	if st != 0 {
-		return 0xFF, 0, 0, 0, st
+		ResDrive = 0xFF
+		ResFDLSN = 0
+		ResAttr = 0
+		ResFileSize = 0
+		return st
 	}
 
-	finalDrive := mb[MB_DRIVE]
-	fdLSN := (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
-	attr := mb[MB_OUT_BYTE1]
+	ResDrive = mb[MB_DRIVE]
+	ResFDLSN = (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
+	ResAttr = mb[MB_OUT_BYTE1]
 	fileSize := (word(mb[MB_OUT_LONG1+2]) << 8) | word(mb[MB_OUT_LONG1+3])
 	if sizeof[word]() > 2 {
 		fileSize = (word(mb[MB_OUT_LONG1]) << 24) | (word(mb[MB_OUT_LONG1+1]) << 16) | fileSize
 	}
+	ResFileSize = fileSize
 
-	return finalDrive, fdLSN, attr, fileSize, 0
+	return 0
 }
 
 // ReadFile requests Task 1 to read up to count bytes from file (drive, fdLSN)
 // at filePos directly into targetTask at targetAddr.
-// Returns (bytesRead, errCode).
-func ReadFile(drive byte, fdLSN word, filePos word, targetTask byte, targetAddr word, count word) (word, byte) {
+// Sets TransferredBytes. Returns errCode.
+func ReadFile(drive byte, fdLSN word, filePos word, targetTask byte, targetAddr word, count word) byte {
 	for i := word(0); i < 64; i++ {
 		mb[i] = 0
 	}
@@ -119,8 +130,8 @@ func ReadFile(drive byte, fdLSN word, filePos word, targetTask byte, targetAddr 
 	writeW32(MB_FILE_POS, filePos)
 
 	st := Call()
-	bytesRead := (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
-	return bytesRead, st
+	TransferredBytes = (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
+	return st
 }
 
 // ReadSector requests Task 1 to read physical disk sector lsn into targetTask at targetAddr.
@@ -180,8 +191,8 @@ func ReadSuperblock(drive byte, targetTask byte, targetAddr word) byte {
 }
 
 // CreateFile asks Task 1 to create or truncate a file at pathStr.
-// Returns (finalDrive, fdLSN, attr, errCode).
-func CreateFile(pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word, mode byte) (byte, word, byte, byte) {
+// Sets ResDrive, ResFDLSN, ResAttr. Returns errCode.
+func CreateFile(pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word, mode byte) byte {
 	for i := word(0); i < 64; i++ {
 		mb[i] = 0
 	}
@@ -203,19 +214,22 @@ func CreateFile(pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word, mode
 
 	st := Call()
 	if st != 0 {
-		return 0xFF, 0, 0, st
+		ResDrive = 0xFF
+		ResFDLSN = 0
+		ResAttr = 0
+		return st
 	}
 
-	finalDrive := mb[MB_DRIVE]
-	fdLSN := (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
-	attr := mb[MB_OUT_BYTE1]
-	return finalDrive, fdLSN, attr, 0
+	ResDrive = mb[MB_DRIVE]
+	ResFDLSN = (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
+	ResAttr = mb[MB_OUT_BYTE1]
+	return 0
 }
 
 // WriteFile requests Task 1 to write count bytes from srcTask at srcAddr
 // into file (drive, fdLSN) at filePos.
-// Returns (bytesWritten, errCode).
-func WriteFile(drive byte, fdLSN word, filePos word, srcTask byte, srcAddr word, count word) (word, byte) {
+// Sets TransferredBytes. Returns errCode.
+func WriteFile(drive byte, fdLSN word, filePos word, srcTask byte, srcAddr word, count word) byte {
 	for i := word(0); i < 64; i++ {
 		mb[i] = 0
 	}
@@ -228,8 +242,8 @@ func WriteFile(drive byte, fdLSN word, filePos word, srcTask byte, srcAddr word,
 	writeW32(MB_FILE_POS, filePos)
 
 	st := Call()
-	bytesWritten := (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
-	return bytesWritten, st
+	TransferredBytes = (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
+	return st
 }
 
 // DeleteFile requests Task 1 to delete file at pathStr.

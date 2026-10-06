@@ -64,9 +64,12 @@ func Call() byte {
 	return mb[MB_STATUS]
 }
 
+var ResFileSize word
+var TransferredBytes word
+
 // Open asks Task 2 to resolve and format subpath (e.g. "p").
-// Returns (fileSize, errCode).
-func Open(subpath *byte, curPID byte) (word, byte) {
+// Sets ResFileSize. Returns errCode (0 on success).
+func Open(subpath *byte, curPID byte) byte {
 	for i := word(0); i < 64; i++ {
 		mb[i] = 0
 	}
@@ -89,16 +92,17 @@ func Open(subpath *byte, curPID byte) (word, byte) {
 
 	st := Call()
 	if st != 0 {
-		return 0, st
+		ResFileSize = 0
+		return st
 	}
 
-	fileSize := readW32(MB_OUT_SIZE)
-	return fileSize, 0
+	ResFileSize = readW32(MB_OUT_SIZE)
+	return 0
 }
 
 // Read requests Task 2 to read count bytes at filePos into targetTask at targetAddr.
-// Returns (bytesRead, errCode).
-func Read(filePos word, targetTask byte, targetAddr word, count word) (word, byte) {
+// Sets TransferredBytes. Returns errCode (0 on success).
+func Read(filePos word, targetTask byte, targetAddr word, count word) byte {
 	for i := word(0); i < 64; i++ {
 		mb[i] = 0
 	}
@@ -109,6 +113,6 @@ func Read(filePos word, targetTask byte, targetAddr word, count word) (word, byt
 	writeW16(MB_COUNT, count)
 
 	st := Call()
-	bytesRead := readW32(MB_OUT_SIZE)
-	return bytesRead, st
+	TransferredBytes = readW32(MB_OUT_SIZE)
+	return st
 }

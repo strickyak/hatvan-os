@@ -129,3 +129,19 @@ func InitProcfs(entryPC word)
 func InitUserContext(pid byte, sp word, pc word)
 func FreeUserContext(pid byte)
 
+var ChildCodeStart word
+
+func SetupChildTask(taskID byte, lineMode byte, entryPC word, binSize word, paramStr *byte, paramLen word) word {
+	sp := word(0x0007FE00)
+	if paramStr != (*byte)(0) && paramLen > 0 {
+		sp -= (paramLen + 1)
+		sp &^= 1
+		DMACopy(0, word(paramStr), taskID, sp, paramLen)
+		cr := byte('\r')
+		DMACopy(0, word(&cr), taskID, sp+paramLen, 1)
+	}
+	ChildCodeStart = 0x0200
+	return sp
+}
+
+

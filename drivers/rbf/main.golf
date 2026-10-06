@@ -97,7 +97,9 @@ func dispatch() {
 		cxdLSN := readW16(MB_AUX_LSN2)
 		path := (*byte)(MB_PATH_STR)
 
-		finalDrive, fdLSN := rbf.RBFResolvePath(path, drive, cwdLSN, cxdLSN, isExec)
+		rbf.RBFResolvePath(path, drive, cwdLSN, cxdLSN, isExec)
+		finalDrive := rbf.ResolvedDrive
+		fdLSN := rbf.ResolvedFDLSN
 		if finalDrive == 0xFF || fdLSN == 0 {
 			pokeb(MB_STATUS, 216) // E_PNNF
 			return
@@ -246,17 +248,21 @@ func dispatch() {
 		cwdLSN := readW16(MB_AUX_LSN1)
 		path := (*byte)(MB_PATH_STR)
 
-		pDrive, parentFDLSN, fileName := rbf.RBFResolveParent(path, drive, cwdLSN)
-		if pDrive == 0xFF || parentFDLSN == 0 {
+		rerr := rbf.RBFResolveParent(path, drive, cwdLSN)
+		pDrive := rbf.ParentDrive
+		parentFDLSN := rbf.ParentFDLSN
+		fileName := rbf.ParentFileName
+		if rerr != 0 || pDrive == 0xFF || parentFDLSN == 0 {
 			pokeb(MB_STATUS, 216) // E_PNNF
 			return
 		}
 
-		newFDLSN, err := rbf.RBFCreateFile(pDrive, parentFDLSN, fileName, mode)
+		err := rbf.RBFCreateFile(pDrive, parentFDLSN, fileName, mode)
 		if err != 0 {
 			pokeb(MB_STATUS, err)
 			return
 		}
+		newFDLSN := rbf.CreatedFDLSN
 
 		pokeb(MB_STATUS, 0)
 		pokeb(MB_DRIVE, pDrive)
@@ -278,7 +284,9 @@ func dispatch() {
 		count := readW16(MB_COUNT)
 		filePos := readW32(MB_FILE_POS)
 
-		bytesWritten, newSize, err := rbf.RBFWriteFile(drive, fdLSN, filePos, srcTask, srcAddr, count)
+		err := rbf.RBFWriteFile(drive, fdLSN, filePos, srcTask, srcAddr, count)
+		bytesWritten := rbf.WrittenBytes
+		newSize := rbf.WrittenNewSize
 		pokeb(MB_STATUS, err)
 		pokeb(MB_OUT_WORD1, byte(bytesWritten>>8))
 		pokeb(MB_OUT_WORD1+1, byte(bytesWritten))
@@ -298,8 +306,11 @@ func dispatch() {
 		cwdLSN := readW16(MB_AUX_LSN1)
 		path := (*byte)(MB_PATH_STR)
 
-		pDrive, parentFDLSN, fileName := rbf.RBFResolveParent(path, drive, cwdLSN)
-		if pDrive == 0xFF || parentFDLSN == 0 {
+		rerr2 := rbf.RBFResolveParent(path, drive, cwdLSN)
+		pDrive := rbf.ParentDrive
+		parentFDLSN := rbf.ParentFDLSN
+		fileName := rbf.ParentFileName
+		if rerr2 != 0 || pDrive == 0xFF || parentFDLSN == 0 {
 			pokeb(MB_STATUS, 216) // E_PNNF
 			return
 		}

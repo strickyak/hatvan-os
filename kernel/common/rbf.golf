@@ -292,12 +292,19 @@ func RBFFormatDirEntry(entryAddr word, name *byte, fdLSN word) {
 	pokeb(entryAddr+31, byte(fdLSN))
 }
 
-// RBFAllocClusters finds up to count contiguous free clusters in the allocation bitmap
-func RBFAllocClusters(drive byte, count word) (word, word) {
+var AllocStartLSN word
+var AllocClusterCnt word
+
+// RBFAllocClusters finds up to count contiguous free clusters in the allocation bitmap.
+// Returns startLSN (0 on disk full/error) and sets AllocClusterCnt.
+func RBFAllocClusters(drive byte, count word) word {
+	AllocStartLSN = 0
+	AllocClusterCnt = 0
+
 	var sb RBFSuperblock
 	st := RBFReadSuperblock(drive, &sb)
 	if st != 1 {
-		return 0, 0
+		return 0
 	}
 
 	totalClusters := sb.TotalSectors / sb.ClusterSize
@@ -308,7 +315,7 @@ func RBFAllocClusters(drive byte, count word) (word, word) {
 		mapLSN := word(1) + s
 		st = hal.DiskTransfer(drive, mapLSN, 1, mapBufAddr, 0)
 		if st != 1 {
-			return 0, 0
+			return 0
 		}
 
 		for b := word(0); b < 256; b++ {
@@ -323,7 +330,7 @@ func RBFAllocClusters(drive byte, count word) (word, word) {
 					if (val & mask) == 0 {
 						clusterNum := byteIdx*8 + bit
 						if clusterNum >= totalClusters {
-							return 0, 0
+							return 0
 						}
 
 						// Found start of free cluster run
@@ -353,17 +360,19 @@ func RBFAllocClusters(drive byte, count word) (word, word) {
 
 						st = hal.DiskTransfer(drive, mapLSN, 1, mapBufAddr, 1)
 						if st != 1 {
-							return 0, 0
+							return 0
 						}
 
 						startLSN := clusterNum * sb.ClusterSize
-						return startLSN, allocCnt
+						AllocStartLSN = startLSN
+						AllocClusterCnt = allocCnt
+						return startLSN
 					}
 				}
 			}
 		}
 	}
-	return 0, 0 // Disk full
+	return 0 // Disk full
 }
 
 // RBFFreeClusters marks count clusters starting at lsn as free in the bitmap
@@ -458,7 +467,8 @@ func RBFAddDirEntry(drive byte, dirFDLSN word, dirFD *RBFFileDescriptor, name *b
 		}
 	} else {
 		// Need new sector for directory
-		newLSN, newCnt := RBFAllocClusters(drive, 1)
+		newLSN := RBFAllocClusters(drive, 1)
+		newCnt := AllocClusterCnt
 		if newCnt == 0 {
 			return 246 // E_DFULL
 		}
@@ -494,23 +504,35 @@ func RBFAddDirEntry(drive byte, dirFDLSN word, dirFD *RBFFileDescriptor, name *b
 	return 0
 }
 
+var ParsedDrive byte
+var ParsedRemPath *byte
+
 // ParsePathDrive extracts optional "/d0".."/d3" prefix from path.
-// Returns (driveIndex, remainingPathPtr). If no drive prefix, driveIndex is 0xFF.
-func ParsePathDrive(path *byte) (byte, *byte) {
+// Sets ParsedDrive and ParsedRemPath. Returns ParsedDrive (0xFF if no drive prefix).
+func ParsePathDrive(path *byte) byte {
 	p := word(path)
 	if peekb(p) == '/' && peekb(p+1) == 'd' {
 		d := peekb(p + 2)
 		if d >= '0' && d <= '3' {
-			return d - '0', (*byte)(p + 3)
+			ParsedDrive = d - '0'
+			ParsedRemPath = (*byte)(p + 3)
+			return ParsedDrive
 		}
 	}
-	return 0xFF, path
+	ParsedDrive = 0xFF
+	ParsedRemPath = path
+	return 0xFF
 }
 
+var ResolvedDrive byte
+var ResolvedFDLSN word
+
 // RBFResolvePath resolves a full or relative path string to a (drive, fdLSN).
-// Returns (drive, fdLSN). If resolution fails, returns (0xFF, 0).
-func RBFResolvePath(path *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isExec byte) (byte, word) {
-	drive, remPath := ParsePathDrive(path)
+// Sets ResolvedDrive and ResolvedFDLSN. Returns ResolvedFDLSN (0 on failure).
+func RBFResolvePath(path *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isExec byte) word {
+	ParsePathDrive(path)
+	drive := ParsedDrive
+	remPath := ParsedRemPath
 	isAbs := false
 	if drive != 0xFF {
 		isAbs = true
@@ -530,7 +552,9 @@ func RBFResolvePath(path *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isE
 		var sb RBFSuperblock
 		st := RBFReadSuperblock(drive, &sb)
 		if st != 1 {
-			return 0xFF, 0
+			ResolvedDrive = 0xFF
+			ResolvedFDLSN = 0
+			return 0
 		}
 		currFDLSN = sb.RootDirLSN
 		for peekb(p) == '/' {
@@ -574,23 +598,36 @@ func RBFResolvePath(path *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isE
 		if idx > 0 {
 			st := RBFReadFD(drive, currFDLSN, &dirFD)
 			if st != 1 {
-				return 0xFF, 0
+				ResolvedDrive = 0xFF
+				ResolvedFDLSN = 0
+				return 0
 			}
 
 			nextLSN := RBFScanDirectory(drive, &dirFD, &compBuf[0])
 			if nextLSN == 0 {
-				return 0xFF, 0
+				ResolvedDrive = 0xFF
+				ResolvedFDLSN = 0
+				return 0
 			}
 			currFDLSN = nextLSN
 		}
 	}
 
-	return drive, currFDLSN
+	ResolvedDrive = drive
+	ResolvedFDLSN = currFDLSN
+	return currFDLSN
 }
 
+var ParentDrive byte
+var ParentFDLSN word
+var ParentFileName *byte
+
 // RBFResolveParent splits path into (drive, parentDirFDLSN, fileNamePtr).
-func RBFResolveParent(path *byte, defaultDrive byte, cwdLSN word) (byte, word, *byte) {
-	drive, remPath := ParsePathDrive(path)
+// Sets ParentDrive, ParentFDLSN, ParentFileName. Returns 0 on success, or 0xFF on error.
+func RBFResolveParent(path *byte, defaultDrive byte, cwdLSN word) byte {
+	ParsePathDrive(path)
+	drive := ParsedDrive
+	remPath := ParsedRemPath
 	if drive == 0xFF {
 		drive = defaultDrive
 	}
@@ -620,30 +657,52 @@ func RBFResolveParent(path *byte, defaultDrive byte, cwdLSN word) (byte, word, *
 				curDirLSN = sb.RootDirLSN
 			}
 		}
-		return drive, curDirLSN, remPath
+		ParentDrive = drive
+		ParentFDLSN = curDirLSN
+		ParentFileName = remPath
+		return 0
 	}
 
 	if lastSlash == p {
 		var sb RBFSuperblock
 		st := RBFReadSuperblock(drive, &sb)
 		if st != 1 {
-			return 0xFF, 0, remPath
+			ParentDrive = 0xFF
+			ParentFDLSN = 0
+			ParentFileName = remPath
+			return 0xFF
 		}
-		return drive, sb.RootDirLSN, (*byte)(lastSlash + 1)
+		ParentDrive = drive
+		ParentFDLSN = sb.RootDirLSN
+		ParentFileName = (*byte)(lastSlash + 1)
+		return 0
 	}
 
 	pokeb(lastSlash, 0)
-	pDrive, parentFDLSN := RBFResolvePath(path, defaultDrive, cwdLSN, 0, 0)
+	RBFResolvePath(path, defaultDrive, cwdLSN, 0, 0)
+	pDrive := ResolvedDrive
+	parentFDLSN := ResolvedFDLSN
 	pokeb(lastSlash, '/')
-	return pDrive, parentFDLSN, (*byte)(lastSlash + 1)
+
+	ParentDrive = pDrive
+	ParentFDLSN = parentFDLSN
+	ParentFileName = (*byte)(lastSlash + 1)
+	if pDrive == 0xFF || parentFDLSN == 0 {
+		return 0xFF
+	}
+	return 0
 }
 
-// RBFCreateFile creates or truncates a file in parent directory parentDirFDLSN
-func RBFCreateFile(drive byte, parentDirFDLSN word, fileName *byte, attr byte) (word, byte) {
+var CreatedFDLSN word
+
+// RBFCreateFile creates or truncates a file in parent directory parentDirFDLSN.
+// Sets CreatedFDLSN. Returns error byte (0 on success).
+func RBFCreateFile(drive byte, parentDirFDLSN word, fileName *byte, attr byte) byte {
+	CreatedFDLSN = 0
 	var dirFD RBFFileDescriptor
 	st := RBFReadFD(drive, parentDirFDLSN, &dirFD)
 	if st != 1 {
-		return 0, 216 // E_PNNF
+		return 216 // E_PNNF
 	}
 
 	existingFDLSN := RBFScanDirectory(drive, &dirFD, fileName)
@@ -657,13 +716,15 @@ func RBFCreateFile(drive byte, parentDirFDLSN word, fileName *byte, attr byte) (
 			existFD.FileSize = 0
 			existFD.SegCount = 0
 			RBFWriteFD(drive, existingFDLSN, &existFD)
-			return existingFDLSN, 0
+			CreatedFDLSN = existingFDLSN
+			return 0
 		}
 	}
 
-	newFDLSN, cnt := RBFAllocClusters(drive, 1)
+	newFDLSN := RBFAllocClusters(drive, 1)
+	cnt := AllocClusterCnt
 	if cnt == 0 {
-		return 0, 246 // E_DFULL
+		return 246 // E_DFULL
 	}
 
 	var newFD RBFFileDescriptor
@@ -673,28 +734,35 @@ func RBFCreateFile(drive byte, parentDirFDLSN word, fileName *byte, attr byte) (
 	st = RBFWriteFD(drive, newFDLSN, &newFD)
 	if st != 1 {
 		RBFFreeClusters(drive, newFDLSN, 1)
-		return 0, 245 // E_WRITE
+		return 245 // E_WRITE
 	}
 
 	err := RBFAddDirEntry(drive, parentDirFDLSN, &dirFD, fileName, newFDLSN)
 	if err != 0 {
 		RBFFreeClusters(drive, newFDLSN, 1)
-		return 0, err
+		return err
 	}
 
-	return newFDLSN, 0
+	CreatedFDLSN = newFDLSN
+	return 0
 }
 
-// RBFWriteFile writes count bytes from srcTask at srcAddr to file fdLSN at filePos
-func RBFWriteFile(drive byte, fdLSN word, filePos word, srcTask byte, srcAddr word, count word) (word, word, byte) {
+var WrittenBytes word
+var WrittenNewSize word
+
+// RBFWriteFile writes count bytes from srcTask at srcAddr to file fdLSN at filePos.
+// Sets WrittenBytes and WrittenNewSize. Returns error byte (0 on success).
+func RBFWriteFile(drive byte, fdLSN word, filePos word, srcTask byte, srcAddr word, count word) byte {
+	WrittenBytes = 0
+	WrittenNewSize = 0
 	if count == 0 {
-		return 0, 0, 0
+		return 0
 	}
 
 	var fd RBFFileDescriptor
 	st := RBFReadFD(drive, fdLSN, &fd)
 	if st != 1 {
-		return 0, 0, 244 // E_READ
+		return 244 // E_READ
 	}
 
 	allocSectors := word(0)
@@ -707,9 +775,11 @@ func RBFWriteFile(drive byte, fdLSN word, filePos word, srcTask byte, srcAddr wo
 
 	for allocSectors < neededSectors {
 		diff := neededSectors - allocSectors
-		newLSN, newCnt := RBFAllocClusters(drive, diff)
+		newLSN := RBFAllocClusters(drive, diff)
+		newCnt := AllocClusterCnt
 		if newCnt == 0 {
-			return 0, fd.FileSize, 246 // E_DFULL
+			WrittenNewSize = fd.FileSize
+			return 246 // E_DFULL
 		}
 
 		lastIdx := word(fd.SegCount) - 1
@@ -718,7 +788,8 @@ func RBFWriteFile(drive byte, fdLSN word, filePos word, srcTask byte, srcAddr wo
 		} else {
 			if fd.SegCount >= RBF_MAX_SEGMENTS {
 				RBFFreeClusters(drive, newLSN, newCnt)
-				return 0, fd.FileSize, 246
+				WrittenNewSize = fd.FileSize
+				return 246
 			}
 			fd.Segments[fd.SegCount].LSN = newLSN
 			fd.Segments[fd.SegCount].Count = newCnt
@@ -779,10 +850,14 @@ func RBFWriteFile(drive byte, fdLSN word, filePos word, srcTask byte, srcAddr wo
 
 	st = RBFWriteFD(drive, fdLSN, &fd)
 	if st != 1 {
-		return bytesDone, fd.FileSize, 245 // E_WRITE
+		WrittenBytes = bytesDone
+		WrittenNewSize = fd.FileSize
+		return 245 // E_WRITE
 	}
 
-	return bytesDone, fd.FileSize, 0
+	WrittenBytes = bytesDone
+	WrittenNewSize = fd.FileSize
+	return 0
 }
 
 // RBFDeleteFile deletes fileName from directory parentDirFDLSN

@@ -62,26 +62,9 @@ func IsAncestor(ancestor byte, pid byte) bool {
 func ProcInit() {
 	for i := word(0); i < MAX_PROCS; i++ {
 		p := &tables.Shared.ProcTable[i]
+		klib.memset((*byte)(p), 0, sizeof[tables.Process]())
 		p.PID = byte(i)
-		p.State = PROC_FREE
-		p.ParentPID = 0
 		p.TaskID = byte(i)
-		p.ExitStatus = 0
-		p.SavedSP = 0
-		p.SavedPC = 0
-		p.SavedU = 0
-		p.LineMode = 0
-		p.CwdDrive = 0
-		p.CwdFDLSN = 0
-		p.CwdPath[0] = 0
-		p.CxdDrive = 0
-		p.CxdFDLSN = 0
-		p.CxdPath[0] = 0
-		p.CodeStart = 0
-		p.CodeSize = 0
-		p.DataTop = 0
-		p.StackBottom = 0
-		p.CmdName[0] = 0
 		for k := word(0); k < PROC_MAX_PATHS; k++ {
 			p.Paths[k] = 0xFF
 		}
@@ -92,40 +75,20 @@ func ProcInit() {
 
 	// Process 0 is Task 0 (Kernel)
 	tables.Shared.ProcTable[0].State = PROC_RUNNING
-	if hal.ARCH == '9' {
+	if hal.ARCH == '9' || hal.ARCH == 'z' {
 		tables.Shared.ProcTable[0].SavedSP = 0x2000
 	}
 	klib.strcpy(&tables.Shared.ProcTable[0].CmdName[0], (*byte)("[hatvan-kernel]"))
 
-	// Process 1 is Task 1 ([RBF])
-	tables.Shared.ProcTable[1].State = PROC_WAITING
-	tables.Shared.ProcTable[1].ParentPID = 0
-	tables.Shared.ProcTable[1].TaskID = 1
-	if hal.ARCH == '9' {
-		tables.Shared.ProcTable[1].SavedSP = 0x3F00
-	} else {
-		tables.Shared.ProcTable[1].SavedSP = 0x0007FE00
-	}
-	klib.strcpy(&tables.Shared.ProcTable[1].CmdName[0], (*byte)("[RBF]"))
-	hal.SetTaskFlags(1, 1)
-	if hal.ARCH == '9' {
+	initDriverProc(1, (*byte)("[RBF]"))
+	if hal.ARCH == '9' || hal.ARCH == 'z' {
 		hal.InitRBF(0x4000)
 	} else {
 		hal.InitRBF(0x00001000)
 	}
 
-	// Process 2 is Task 2 ([PROCFS])
-	tables.Shared.ProcTable[2].State = PROC_WAITING
-	tables.Shared.ProcTable[2].ParentPID = 0
-	tables.Shared.ProcTable[2].TaskID = 2
-	if hal.ARCH == '9' {
-		tables.Shared.ProcTable[2].SavedSP = 0x3F00
-	} else {
-		tables.Shared.ProcTable[2].SavedSP = 0x0007FE00
-	}
-	klib.strcpy(&tables.Shared.ProcTable[2].CmdName[0], (*byte)("[PROCFS]"))
-	hal.SetTaskFlags(2, 1)
-	if hal.ARCH == '9' {
+	initDriverProc(2, (*byte)("[PROCFS]"))
+	if hal.ARCH == '9' || hal.ARCH == 'z' {
 		hal.InitProcfs(0x4000)
 	} else {
 		hal.InitProcfs(0x00001000)
@@ -137,64 +100,75 @@ func ProcInit() {
 	hal.FreeUserContext(0)
 }
 
+func initDriverProc(pid byte, name *byte) {
+	p := &tables.Shared.ProcTable[pid]
+	p.State = PROC_WAITING
+	p.ParentPID = 0
+	p.TaskID = pid
+	if hal.ARCH == '9' || hal.ARCH == 'z' {
+		p.SavedSP = 0x3F00
+	} else {
+		p.SavedSP = 0x0007FE00
+	}
+	klib.strcpy(&p.CmdName[0], name)
+	hal.SetTaskFlags(pid, 1)
+}
+
+func inheritParent(p *tables.Process, parent *tables.Process) {
+	p.CwdDrive = parent.CwdDrive
+	p.CwdFDLSN = parent.CwdFDLSN
+	klib.strcpy(&p.CwdPath[0], &parent.CwdPath[0])
+	p.CxdDrive = parent.CxdDrive
+	p.CxdFDLSN = parent.CxdFDLSN
+	klib.strcpy(&p.CxdPath[0], &parent.CxdPath[0])
+	p.LineMode = parent.LineMode
+
+	for sp := word(0); sp < 4; sp++ {
+		parentPathId := parent.Paths[sp]
+		if parentPathId != 0xFF && parentPathId < path.MAX_PATHS {
+			p.Paths[sp] = parentPathId
+			path.GetPath(parentPathId).RefCount++
+		}
+	}
+}
+
 // ProcAlloc finds a free process slot and initializes it,
 // inheriting cwd, cxd, lineMode, and standard paths 0, 1, 2, 3 (stdin, stdout, stderr, stdlog).
-func ProcAlloc(parentPID byte) (byte, *tables.Process) {
+func ProcAlloc(parentPID byte) byte {
 	for i := word(1); i < MAX_PROCS; i++ {
 		if tables.Shared.ProcTable[i].State == PROC_FREE {
 			p := &tables.Shared.ProcTable[i]
+			klib.memset((*byte)(p), 0, sizeof[tables.Process]())
+			p.PID = byte(i)
+			p.TaskID = byte(i)
 			p.State = PROC_READY
 			p.ParentPID = parentPID
-			p.TaskID = byte(i)
-			p.ExitStatus = 0
 			if hal.ARCH == 'k' {
 				p.SavedSP = 0x0007FE00
 			} else {
 				p.SavedSP = 0xFE00
 			}
-			p.SavedPC = 0
-			p.SavedU = 0
-			p.LineMode = 0
-			p.CwdDrive = 0
-			p.CwdFDLSN = 0
-			p.CwdPath[0] = 0
-			p.CxdDrive = 0
-			p.CxdFDLSN = 0
-			p.CxdPath[0] = 0
-			p.CodeStart = 0
-			p.CodeSize = 0
-			p.DataTop = 0
-			p.StackBottom = 0
-			p.CmdName[0] = 0
-
 			for k := word(0); k < PROC_MAX_PATHS; k++ {
 				p.Paths[k] = 0xFF
 			}
 
 			if parentPID < MAX_PROCS && tables.Shared.ProcTable[parentPID].State != PROC_FREE {
-				parent := &tables.Shared.ProcTable[parentPID]
-				p.CwdDrive = parent.CwdDrive
-				p.CwdFDLSN = parent.CwdFDLSN
-				klib.strcpy(&p.CwdPath[0], &parent.CwdPath[0])
-				p.CxdDrive = parent.CxdDrive
-				p.CxdFDLSN = parent.CxdFDLSN
-				klib.strcpy(&p.CxdPath[0], &parent.CxdPath[0])
-				p.LineMode = parent.LineMode
-
-				// Inherit standard paths 0, 1, 2, 3 (stdin, stdout, stderr, stdlog)
-				for sp := word(0); sp < 4; sp++ {
-					parentPathId := parent.Paths[sp]
-					if parentPathId != 0xFF && parentPathId < path.MAX_PATHS {
-						p.Paths[sp] = parentPathId
-						path.GetPath(parentPathId).RefCount++
-					}
-				}
+				inheritParent(p, &tables.Shared.ProcTable[parentPID])
 			}
-
-			return byte(i), p
+			return byte(i)
 		}
 	}
-	return 0xFF, (*tables.Process)(0)
+	return 0xFF
+}
+
+func closeAllProcPaths(p *tables.Process) {
+	for k := word(0); k < PROC_MAX_PATHS; k++ {
+		pathId := p.Paths[k]
+		if pathId != 0xFF {
+			path.SysClose(pathId)
+			p.Paths[k] = 0xFF
+		}
+	}
 }
 
 // ProcFree terminates a process slot and closes all associated paths
@@ -203,79 +177,73 @@ func ProcFree(pid byte) {
 		return
 	}
 	p := &tables.Shared.ProcTable[pid]
-	for k := word(0); k < PROC_MAX_PATHS; k++ {
-		pathId := p.Paths[k]
-		if pathId != 0xFF {
-			path.SysClose(pathId)
-			p.Paths[k] = 0xFF
-		}
-	}
+	closeAllProcPaths(p)
 	p.State = PROC_FREE
 	hal.PurgeTaskMem(p.TaskID)
 	hal.FreeUserContext(pid)
 }
 
-// ProcOpen opens a path for the given process and assigns a per-process path descriptor
-func ProcOpen(pid byte, pathStr *byte, mode byte) (byte, byte) {
-	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
-		return 0xFF, E_PROCUNDEF
-	}
-	p := &tables.Shared.ProcTable[pid]
+var AssignedSlot byte
 
-	// Find available per-process path slot
-	slot := byte(0xFF)
+func findFreePathSlot(p *tables.Process) byte {
 	for k := word(0); k < PROC_MAX_PATHS; k++ {
 		if p.Paths[k] == 0xFF {
-			slot = byte(k)
-			break
+			return byte(k)
 		}
 	}
+	return 0xFF
+}
+
+// ProcOpen opens a path for the given process and assigns a per-process path descriptor
+func ProcOpen(pid byte, pathStr *byte, mode byte) byte {
+	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
+		return E_PROCUNDEF
+	}
+	p := &tables.Shared.ProcTable[pid]
+	slot := findFreePathSlot(p)
 	if slot == 0xFF {
-		return 0xFF, E_PTHFUL
+		return E_PTHFUL
 	}
 
-	pathId, err := path.SysOpen(pid, pathStr, mode, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN)
+	err := path.SysOpen(pid, pathStr, mode, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN)
 	if err != 0 {
-		return 0xFF, err
+		return err
 	}
+	pathId := path.AllocatedPathId
 
 	if path.GetPath(pathId).DevType == dev.DEV_PROC {
 		perr := ProcfsOpen(pathId, pathStr)
 		if perr != 0 {
 			path.SysClose(pathId)
-			return 0xFF, perr
+			return perr
 		}
 	}
 
 	p.Paths[slot] = pathId
-	return slot, 0
+	AssignedSlot = slot
+	return 0
 }
 
 // ProcCreate creates or opens a path for writing for the given process
-func ProcCreate(pid byte, pathStr *byte, mode byte) (byte, byte) {
+func ProcCreate(pid byte, pathStr *byte, mode byte) byte {
 	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
-		return 0xFF, E_PROCUNDEF
+		return E_PROCUNDEF
 	}
 	p := &tables.Shared.ProcTable[pid]
-
-	slot := byte(0xFF)
-	for k := word(0); k < PROC_MAX_PATHS; k++ {
-		if p.Paths[k] == 0xFF {
-			slot = byte(k)
-			break
-		}
-	}
+	slot := findFreePathSlot(p)
 	if slot == 0xFF {
-		return 0xFF, E_PTHFUL
+		return E_PTHFUL
 	}
 
-	pathId, err := path.SysCreate(pid, pathStr, mode, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN)
+	err := path.SysCreate(pid, pathStr, mode, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN)
 	if err != 0 {
-		return 0xFF, err
+		return err
 	}
+	pathId := path.AllocatedPathId
 
 	p.Paths[slot] = pathId
-	return slot, 0
+	AssignedSlot = slot
+	return 0
 }
 
 // ProcDelete deletes a file for the given process
@@ -307,225 +275,127 @@ func ProcClose(pid byte, procPath byte) byte {
 }
 
 // ProcDup duplicates an open path, assigning the lowest available path slot
-func ProcDup(pid byte, procPath byte) (byte, byte) {
+func ProcDup(pid byte, procPath byte) byte {
 	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
-		return 0xFF, E_PROCUNDEF
+		return E_PROCUNDEF
 	}
 	if procPath >= PROC_MAX_PATHS {
-		return 0xFF, E_BPNUM
+		return E_BPNUM
 	}
 	p := &tables.Shared.ProcTable[pid]
 	pathId := p.Paths[procPath]
 	if pathId == 0xFF {
-		return 0xFF, E_BPNUM
+		return E_BPNUM
 	}
 
-	slot := byte(0xFF)
-	for k := word(0); k < PROC_MAX_PATHS; k++ {
-		if p.Paths[k] == 0xFF {
-			slot = byte(k)
-			break
-		}
-	}
+	slot := findFreePathSlot(p)
 	if slot == 0xFF {
-		return 0xFF, E_PTHFUL
+		return E_PTHFUL
 	}
 
 	err := path.SysDup(pathId)
 	if err != 0 {
-		return 0xFF, err
+		return err
 	}
 
 	p.Paths[slot] = pathId
-	return slot, 0
+	AssignedSlot = slot
+	return 0
 }
 
-// ProcRead reads from a per-process path into user buffer
-func ProcRead(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
-	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
-		return 0, E_PROCUNDEF
+// GetProcPath returns the pathId for a given process slot, or 0xFF if invalid
+func GetProcPath(pid byte, procPath byte) byte {
+	if pid < MAX_PROCS && tables.Shared.ProcTable[pid].State != PROC_FREE {
+		if procPath < PROC_MAX_PATHS {
+			return tables.Shared.ProcTable[pid].Paths[procPath]
+		}
 	}
-	if procPath >= PROC_MAX_PATHS {
-		return 0, E_BPNUM
-	}
-	pathId := tables.Shared.ProcTable[pid].Paths[procPath]
-	if pathId == 0xFF {
-		return 0, E_BPNUM
-	}
-	return path.SysRead(pathId, pid, ubuf, count)
-}
-
-// ProcWrite writes to a per-process path from user buffer
-func ProcWrite(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
-	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
-		return 0, E_PROCUNDEF
-	}
-	if procPath >= PROC_MAX_PATHS {
-		return 0, E_BPNUM
-	}
-	pathId := tables.Shared.ProcTable[pid].Paths[procPath]
-	if pathId == 0xFF {
-		return 0, E_BPNUM
-	}
-	return path.SysWrite(pathId, pid, ubuf, count)
-}
-
-// ProcReadLn reads a line of text using the process's lineMode setting
-func ProcReadLn(pid byte, procPath byte, ubuf *byte, maxLen word) (word, byte) {
-	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
-		return 0, E_PROCUNDEF
-	}
-	if procPath >= PROC_MAX_PATHS {
-		return 0, E_BPNUM
-	}
-	p := &tables.Shared.ProcTable[pid]
-	pathId := p.Paths[procPath]
-	if pathId == 0xFF {
-		return 0, E_BPNUM
-	}
-	return path.SysReadLn(pathId, pid, ubuf, maxLen, p.LineMode)
-}
-
-// ProcWritLn writes a line of text using the process's lineMode setting
-func ProcWritLn(pid byte, procPath byte, ubuf *byte, count word) (word, byte) {
-	if pid >= MAX_PROCS || tables.Shared.ProcTable[pid].State == PROC_FREE {
-		return 0, E_PROCUNDEF
-	}
-	if procPath >= PROC_MAX_PATHS {
-		return 0, E_BPNUM
-	}
-	p := &tables.Shared.ProcTable[pid]
-	pathId := p.Paths[procPath]
-	if pathId == 0xFF {
-		return 0, E_BPNUM
-	}
-	return path.SysWritLn(pathId, pid, ubuf, count, p.LineMode)
+	return 0xFF
 }
 
 // extractCmdName copies the basename of cmdPath (without directory prefix) into dst (up to 15 chars)
 func extractCmdName(src *byte, dst *byte) {
-	p := word(src)
-	lastSlash := p
-	hasSlash := false
+	s := word(src)
+	start := s
 	for {
-		c := peekb(p)
+		c := peekb(s)
 		if c == 0 || c == ' ' || c == '\r' || c == '\n' {
 			break
 		}
 		if c == '/' {
-			hasSlash = true
-			lastSlash = p + 1
+			start = s + 1
 		}
-		p++
+		s++
 	}
-	start := word(src)
-	if hasSlash {
-		start = lastSlash
-	}
-	d := word(dst)
 	idx := word(0)
 	for idx < 15 {
 		c := peekb(start + idx)
 		if c == 0 || c == ' ' || c == '\r' || c == '\n' || c == '/' {
 			break
 		}
-		pokeb(d+idx, c)
+		pokeb(word(dst)+idx, c)
 		idx++
 	}
-	pokeb(d+idx, 0)
+	pokeb(word(dst)+idx, 0)
+}
+
+var ForkedChildPID byte
+
+func finishChildSetup(childProc *tables.Process, entryPC word, binSize word, paramStr *byte, paramLen word) {
+	childProc.LineMode = loader.LastLoadedIsOS9
+	childProc.SavedSP = hal.SetupChildTask(childProc.TaskID, childProc.LineMode, entryPC, binSize, paramStr, paramLen)
+	childProc.CodeStart = hal.ChildCodeStart
+	childProc.SavedPC = entryPC
+	childProc.CodeSize = binSize
+	childProc.State = PROC_READY
+	hal.InitUserContext(childProc.PID, childProc.SavedSP, entryPC)
 }
 
 // SysFork spawns a child process, loads the binary executable from cmdPath,
 // marshalls command parameters onto the child stack, and prepares it for execution.
-func SysFork(cmdPath *byte, paramStr *byte, paramLen word) (byte, byte) {
-	childPID, childProc := ProcAlloc(CurrentPID)
+func SysFork(cmdPath *byte, paramStr *byte, paramLen word) byte {
+	childPID := ProcAlloc(CurrentPID)
 	if childPID == 0xFF {
-		return 0xFF, E_PROCFUL
+		ForkedChildPID = 0xFF
+		return E_PROCFUL
 	}
+	childProc := &tables.Shared.ProcTable[childPID]
 	extractCmdName(cmdPath, &childProc.CmdName[0])
 
 	// Open binary from cxd (execution directory) or absolute path
-	binPathId, err := path.SysOpen(CurrentPID, cmdPath, path.MODE_READ|path.MODE_EXEC, childProc.CxdDrive, childProc.CwdFDLSN, childProc.CxdFDLSN)
+	err := path.SysOpen(CurrentPID, cmdPath, path.MODE_READ|path.MODE_EXEC, childProc.CxdDrive, childProc.CwdFDLSN, childProc.CxdFDLSN)
 	if err != 0 {
+		if err == 216 {
+			dev.KLog((*byte)("FORK:OPEN:FAIL:PNNF"))
+		} else if err == 214 {
+			dev.KLog((*byte)("FORK:OPEN:FAIL:BMODE"))
+		} else if err == 208 {
+			dev.KLog((*byte)("FORK:OPEN:FAIL:PTHFUL"))
+		} else {
+			dev.KLog((*byte)("FORK:OPEN:FAIL:OTHER"))
+		}
 		ProcFree(childPID)
-		return 0xFF, err
+		ForkedChildPID = 0xFF
+		return err
 	}
+	binPathId := path.AllocatedPathId
 
 	// Load binary into child task space
-	entryPC, binSize, lerr := loader.LoadBinary(binPathId, childProc.TaskID, 0x0200)
+	lerr := loader.LoadBinary(binPathId, childProc.TaskID, 0x0200)
 	path.SysClose(binPathId)
 	if lerr != 0 {
+		dev.KLog((*byte)("FORK:LOAD:FAIL"))
 		ProcFree(childPID)
-		return 0xFF, lerr
+		ForkedChildPID = 0xFF
+		return lerr
 	}
+	entryPC := loader.LoadedEntryPC
+	binSize := loader.LoadedSize
 
-	childProc.LineMode = loader.LastLoadedIsOS9
-	codeStart := word(0x0200)
+	finishChildSetup(childProc, entryPC, binSize, paramStr, paramLen)
 
-	if hal.ARCH == 'k' {
-		sp := word(0x0007FE00)
-		if paramStr != (*byte)(0) && paramLen > 0 {
-			sp -= (paramLen + 1)
-			sp &^= 1
-			hal.DMACopy(0, word(paramStr), childProc.TaskID, sp, paramLen)
-			cr := byte('\r')
-			hal.DMACopy(0, word(&cr), childProc.TaskID, sp+paramLen, 1)
-		}
-		childProc.SavedSP = sp
-		childProc.CodeStart = 0x0200
-	} else if hal.ARCH == '9' {
-		dpVal := byte(0)
-		uVal := word(0)
-		paramEnd := word(0xFE00)
-
-		if childProc.LineMode == 1 {
-			codeStart = 0xFF00 - binSize
-			paramEnd = codeStart & 0xFF00
-			dpVal = 0
-			uVal = 0
-		}
-
-		sp := paramEnd
-		paramAddr := paramEnd
-		paramLenVal := word(0)
-		if paramStr != (*byte)(0) && paramLen > 0 {
-			sp -= (paramLen + 1)
-			sp &^= 1
-			hal.DMACopy(0, word(paramStr), childProc.TaskID, sp, paramLen)
-			cr := byte('\r')
-			hal.DMACopy(0, word(&cr), childProc.TaskID, sp+paramLen, 1)
-			paramAddr = sp
-			paramLenVal = paramLen
-		}
-
-		frameAddr := sp - 12
-		var initFrame [12]byte
-		initFrame[0] = 0x80                   // CC: FlagE (Entire frame)
-		initFrame[1] = byte(paramLenVal >> 8) // A (D MSB: paramLenVal)
-		initFrame[2] = byte(paramLenVal)      // B (D LSB: paramLenVal)
-		initFrame[3] = dpVal                  // DP (0x00)
-		initFrame[4] = byte(paramAddr >> 8)   // X MSB (parameter pointer)
-		initFrame[5] = byte(paramAddr)        // X LSB
-		initFrame[6] = byte(paramEnd >> 8)    // Y MSB (paramEnd: top of user memory)
-		initFrame[7] = byte(paramEnd)         // Y LSB
-		initFrame[8] = byte(uVal >> 8)        // U MSB (0x0000: process data area)
-		initFrame[9] = byte(uVal)             // U LSB
-		initFrame[10] = byte(entryPC >> 8)    // PC MSB
-		initFrame[11] = byte(entryPC)         // PC LSB
-
-		hal.DMACopy(0, word(&initFrame[0]), childProc.TaskID, frameAddr, 12)
-		childProc.SavedSP = frameAddr
-		childProc.CodeStart = codeStart
-	} else {
-		panic("?ARCH")
-	}
-
-	childProc.SavedPC = entryPC
-	childProc.CodeSize = binSize
-	childProc.State = PROC_READY
-	hal.InitUserContext(childPID, childProc.SavedSP, entryPC)
-
-	return childPID, 0
+	ForkedChildPID = childPID
+	return 0
 }
 
 // SysExit terminates the current process and records its exit status
@@ -536,16 +406,7 @@ func SysExit(status byte) {
 	}
 
 	p := &tables.Shared.ProcTable[CurrentPID]
-
-	// Close all open paths
-	for k := word(0); k < PROC_MAX_PATHS; k++ {
-		pathId := p.Paths[k]
-		if pathId != 0xFF {
-			path.SysClose(pathId)
-			p.Paths[k] = 0xFF
-		}
-	}
-
+	closeAllProcPaths(p)
 	p.ExitStatus = status
 	SetProcState(CurrentPID, PROC_ZOMBIE)
 	hal.PurgeTaskMem(p.TaskID)
@@ -556,8 +417,19 @@ func SysExit(status byte) {
 	}
 }
 
-// SysWait waits for any child process to terminate and returns (childPID, status, errCode)
-func SysWait() (byte, byte, byte) {
+var WaitChildPID byte
+var WaitStatus byte
+
+func reapChild(p *tables.Process, cpid byte) byte {
+	WaitChildPID = cpid
+	WaitStatus = p.ExitStatus
+	ProcFree(cpid)
+	SetProcState(CurrentPID, PROC_RUNNING)
+	return 0
+}
+
+// SysWait waits for any child process to terminate and returns errCode (0 on success)
+func SysWait() byte {
 	for {
 		hasChildren := false
 
@@ -566,21 +438,13 @@ func SysWait() (byte, byte, byte) {
 			if p.ParentPID == CurrentPID && p.State != PROC_FREE {
 				hasChildren = true
 				if p.State == PROC_ZOMBIE {
-					cpid := byte(i)
-					st := p.ExitStatus
-					ProcFree(cpid)
-					SetProcState(CurrentPID, PROC_RUNNING)
-					return cpid, st, 0
+					return reapChild(p, byte(i))
 				}
 				if p.State == PROC_READY || p.State == PROC_RUNNING {
 					SetProcState(CurrentPID, PROC_WAITING)
 					hal.LaunchProcess(byte(i), p.SavedSP, p.SavedPC)
 					if p.State == PROC_ZOMBIE {
-						cpid := byte(i)
-						st := p.ExitStatus
-						ProcFree(cpid)
-						SetProcState(CurrentPID, PROC_RUNNING)
-						return cpid, st, 0
+						return reapChild(p, byte(i))
 					}
 				}
 			}
@@ -588,7 +452,7 @@ func SysWait() (byte, byte, byte) {
 
 		if !hasChildren {
 			SetProcState(CurrentPID, PROC_RUNNING)
-			return 0, 0, E_NOCHILD
+			return E_NOCHILD
 		}
 
 		// If children exist but none is ready/zombie, let any ready/running process run
@@ -597,73 +461,24 @@ func SysWait() (byte, byte, byte) {
 }
 
 func updateProcPath(dstPath *byte, pathStr *byte, drive byte) {
-	pStr := word(pathStr)
 	dPath := word(dstPath)
-
-	// If pathStr starts with '/'
+	pStr := word(pathStr)
 	if peekb(pStr) == '/' {
-		// If it starts with "/d" and a digit '0'..'3'
 		if peekb(pStr+1) == 'd' && peekb(pStr+2) >= '0' && peekb(pStr+2) <= '3' {
-			// Copy pathStr directly
 			klib.strcpy(dstPath, pathStr)
 			return
 		}
-
-		// Starts with '/', but not "/d0".."/d3": prepend "/d<drive>"
 		pokeb(dPath, '/')
 		pokeb(dPath+1, 'd')
-		pokeb(dPath+2, '0' + drive)
+		pokeb(dPath+2, '0'+drive)
 		klib.strcpy((*byte)(dPath+3), pathStr)
 		return
 	}
-
-	// Strip leading "./" and extra slashes
-	for {
-		if peekb(pStr) == '.' && peekb(pStr+1) == '/' {
-			pStr += 2
-		} else {
-			break
-		}
-	}
-
-	// Relative path
-	// Check for "."
-	if peekb(pStr) == 0 || (peekb(pStr) == '.' && peekb(pStr+1) == 0) {
-		return
-	}
-
-	// Check for ".."
-	if peekb(pStr) == '.' && peekb(pStr+1) == '.' && peekb(pStr+2) == 0 {
-		curLen := klib.strlen(dstPath)
-		lastSlash := word(0)
-		for i := word(0); i < curLen; i++ {
-			if peekb(dPath+i) == '/' {
-				lastSlash = i
-			}
-		}
-		if lastSlash <= 2 {
-			pokeb(dPath+3, 0)
-		} else {
-			pokeb(dPath+lastSlash, 0)
-		}
-		return
-	}
-
-	// Normal relative component
 	curLen := klib.strlen(dstPath)
-	if curLen == 0 {
-		pokeb(dPath, '/')
-		pokeb(dPath+1, 'd')
-		pokeb(dPath+2, '0' + drive)
-		pokeb(dPath+3, '/')
-		curLen = 4
-		pokeb(dPath+4, 0)
-	} else if peekb(dPath+curLen-1) != '/' {
-		if curLen < 62 {
-			pokeb(dPath+curLen, '/')
-			curLen++
-			pokeb(dPath+curLen, 0)
-		}
+	if curLen > 0 && peekb(dPath+curLen-1) != '/' && curLen < 62 {
+		pokeb(dPath+curLen, '/')
+		curLen++
+		pokeb(dPath+curLen, 0)
 	}
 	for peekb(pStr) != 0 && curLen < 63 {
 		pokeb(dPath+curLen, peekb(pStr))
@@ -676,7 +491,7 @@ func updateProcPath(dstPath *byte, pathStr *byte, drive byte) {
 // SysChgDir changes the current working directory (cwd) or execution directory (cxd)
 func SysChgDir(pathStr *byte, mode byte) byte {
 	p := &tables.Shared.ProcTable[CurrentPID]
-	devType, _, _ := dev.ParsePathDevice(pathStr, p.CwdDrive)
+	devType := dev.ParsePathDevice(pathStr, p.CwdDrive)
 	if devType != dev.DEV_DISK {
 		return path.E_BMODE
 	}
@@ -686,23 +501,29 @@ func SysChgDir(pathStr *byte, mode byte) byte {
 		isExec = 1
 	}
 
-	finalDrive, fdLSN, attr, fileSize, err := rbf_ipc.ResolvePath(pathStr, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN, isExec)
-	if err != 0 || finalDrive == 0xFF || fdLSN == 0 {
+	err := rbf_ipc.ResolvePath(pathStr, p.CwdDrive, p.CwdFDLSN, p.CxdFDLSN, isExec)
+	if err != 0 {
+		dev.KLog((*byte)("CHGDIR:RBF_ERR"))
+		return path.E_PNNF
+	}
+	if rbf_ipc.ResDrive == 0xFF || rbf_ipc.ResFDLSN == 0 {
+		dev.KLog((*byte)("CHGDIR:RES_NULL"))
 		return path.E_PNNF
 	}
 
-	if (attr & 0x80) == 0 {
+	if (rbf_ipc.ResAttr & 0x80) == 0 {
+		dev.KLog((*byte)("CHGDIR:NOT_DIR"))
 		return path.E_BMODE
 	}
 
 	if isExec != 0 {
-		p.CxdDrive = finalDrive
-		p.CxdFDLSN = fdLSN
-		updateProcPath(&p.CxdPath[0], pathStr, finalDrive)
+		p.CxdDrive = rbf_ipc.ResDrive
+		p.CxdFDLSN = rbf_ipc.ResFDLSN
+		updateProcPath(&p.CxdPath[0], pathStr, rbf_ipc.ResDrive)
 	} else {
-		p.CwdDrive = finalDrive
-		p.CwdFDLSN = fdLSN
-		updateProcPath(&p.CwdPath[0], pathStr, finalDrive)
+		p.CwdDrive = rbf_ipc.ResDrive
+		p.CwdFDLSN = rbf_ipc.ResFDLSN
+		updateProcPath(&p.CwdPath[0], pathStr, rbf_ipc.ResDrive)
 	}
 
 	return 0
@@ -712,7 +533,8 @@ func SysChgDir(pathStr *byte, mode byte) byte {
 
 // ProcfsOpen dispatches /proc subpaths via Task 2 IPC
 func ProcfsOpen(pathId byte, pathStr *byte) byte {
-	devType, _, remPath := dev.ParsePathDevice(pathStr, 0)
+	devType := dev.ParsePathDevice(pathStr, 0)
+	remPath := dev.ParsedRemPath
 	if devType != dev.DEV_PROC {
 		return path.E_PNNF
 	}
@@ -734,13 +556,13 @@ func ProcfsOpen(pathId byte, pathStr *byte) byte {
 	}
 	comp[idx] = 0
 
-	fileSize, err := procfs_ipc.Open(&comp[0], CurrentPID)
+	err := procfs_ipc.Open(&comp[0], CurrentPID)
 	if err != 0 {
 		return err
 	}
 
 	pd := path.GetPath(pathId)
-	pd.FileSize = fileSize
+	pd.FileSize = procfs_ipc.ResFileSize
 	pd.FilePos = 0
 	return 0
 }
@@ -750,11 +572,11 @@ func ScheduleNext() byte {
 	start := CurrentPID
 	for offset := word(1); offset <= MAX_PROCS; offset++ {
 		next := byte((word(start) + offset) % MAX_PROCS)
-		if next <= 3 {
+		if next <= 2 {
 			continue
 		}
 		if tables.Shared.ProcTable[next].State == PROC_READY || tables.Shared.ProcTable[next].State == PROC_RUNNING {
-			if start > 3 && tables.Shared.ProcTable[start].State == PROC_RUNNING {
+			if start >= 3 && tables.Shared.ProcTable[start].State == PROC_RUNNING {
 				SetProcState(start, PROC_READY)
 			}
 			SetProcState(next, PROC_RUNNING)

@@ -45,6 +45,18 @@ if [ ! -x "$ASM68K" ]; then
     fi
 fi
 
+# 4. Ensure asmz80 assembler is built
+ASMZ80="$BUILD_DIR/asmz80"
+if [ ! -x "$ASMZ80" ]; then
+    echo "==> Building asmz80..."
+    if [ -n "$MINIGOLF_DIR" ] && [ -d "$MINIGOLF_DIR/cmd/asmz80" ]; then
+        (cd "$MINIGOLF_DIR" && go build -o "$ASMZ80" ./cmd/asmz80)
+    else
+        echo "Error: Cannot locate asmz80 source in $MINIGOLF_DIR/cmd/asmz80" >&2
+        exit 1
+    fi
+fi
+
 SREC2DECB="$REPO_DIR/scripts/srec2decb.py"
 
 TARGETS="$@"
@@ -80,12 +92,15 @@ for TARGET in $TARGETS; do
 
     MANAGED_FLAG_9=""
     MANAGED_FLAG_K=""
+    MANAGED_FLAG_Z=""
     OPT_FLAGS_9=""
     OPT_FLAGS_K=""
+    OPT_FLAGS_Z=""
     GLOBAL_OFFSET=45056
     if grep -q 'import "mem"\|import "smap"' "$SRC" 2>/dev/null || [ "$BASE" = "gsh2" ]; then
         MANAGED_FLAG_9="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=8000"
         MANAGED_FLAG_K="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=64000"
+        MANAGED_FLAG_Z="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=8000"
         #yak# OPT_FLAGS_9="-no-slotsharing6809 -no-stackalloc -no-inline -no-leaf-opt6809"
         #yak# OPT_FLAGS_K="-no-stackalloc -no-inline"
         GLOBAL_OFFSET=48128
@@ -127,9 +142,26 @@ for TARGET in $TARGETS; do
     python3 "$SREC2DECB" "$BUILD_DIR/$BASE.k.srec" "$BUILD_DIR/$BASE.k.decb"
     cp -f "$BUILD_DIR/$BASE.k.decb" "$DIR/$BASE.k.decb"
 
+    # --- Zilog Z80 Target (*.z.decb) ---
+    echo "  [Z80]  Compiling with MiniGolf..."
+    "$MINIGOLF" -m=z80 \
+        $MANAGED_FLAG_Z $OPT_FLAGS_Z \
+        -I "$CMDS_DIR/lib" \
+        -I "$REPO_DIR/kernel/common" \
+        -o "$BUILD_DIR/$BASE.z.asm" \
+        "$SRC"
+
+    cat "$CMDS_DIR/lib/cstart_z80.asm" "$BUILD_DIR/$BASE.z.asm" > "$BUILD_DIR/full_$BASE.z.asm"
+    echo "    end start" >> "$BUILD_DIR/full_$BASE.z.asm"
+
+    echo "  [Z80]  Assembling with asmz80..."
+    "$ASMZ80" -l "$BUILD_DIR/$BASE.z.list" -o "$BUILD_DIR/$BASE.z.decb" "$BUILD_DIR/full_$BASE.z.asm"
+    cp -f "$BUILD_DIR/$BASE.z.decb" "$DIR/$BASE.z.decb"
+
     SIZE_9=$(wc -c < "$DIR/$BASE.9.decb" | tr -d ' ')
     SIZE_K=$(wc -c < "$DIR/$BASE.k.decb" | tr -d ' ')
-    echo "  -> Created $DIR/$BASE.9.decb ($SIZE_9 bytes) and $DIR/$BASE.k.decb ($SIZE_K bytes)"
+    SIZE_Z=$(wc -c < "$DIR/$BASE.z.decb" | tr -d ' ')
+    echo "  -> Created $DIR/$BASE.9.decb ($SIZE_9 bytes), $DIR/$BASE.k.decb ($SIZE_K bytes), and $DIR/$BASE.z.decb ($SIZE_Z bytes)"
 done
 
 echo "Done."

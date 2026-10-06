@@ -34,6 +34,7 @@ func SysExit(status byte)
 func SysFork(cmd *byte, params *byte, paramLen word) byte
 func SysWait() word
 func SysChgDir(path *byte, mode byte) byte
+func SysSeek(path byte, pos word) byte
 
 func Open(path *byte, mode byte) byte {
 	return SysOpen(path, mode)
@@ -49,6 +50,10 @@ func Dup(path byte) byte {
 
 func Delete(path *byte) byte {
 	return SysDelete(path)
+}
+
+func Seek(path byte, pos word) byte {
+	return SysSeek(path, pos)
 }
 
 func Read(path byte, buf *byte, maxLen word) word {

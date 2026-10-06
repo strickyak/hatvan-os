@@ -57,68 +57,96 @@ func TermReadChar() byte {
 }
 
 
+func isPathTerm(c byte) bool {
+	return c == 0 || c == '/' || c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ','
+}
+
+func matchDeviceWord(p word, s *byte) word {
+	i := word(0)
+	sp := word(s)
+	for {
+		c := peekb(sp + i)
+		if c == 0 {
+			if isPathTerm(peekb(p + i)) {
+				return i
+			}
+			return 0
+		}
+		if peekb(p + i) != c {
+			return 0
+		}
+		i++
+	}
+}
+
+var ParsedDrive byte
+var ParsedRemPath *byte
+
 // ParsePathDevice examines path for device prefixes:
 // "/term", "/log", "/null", "/proc", "/d0".."/d3".
-// Returns (devType, driveNum, remainingPathPtr).
-func ParsePathDevice(path *byte, defaultDrive byte) (byte, byte, *byte) {
+// Returns devType, and sets ParsedDrive and ParsedRemPath.
+func ParsePathDevice(path *byte, defaultDrive byte) byte {
 	p := word(path)
+	ParsedDrive = defaultDrive
+	ParsedRemPath = path
 
 	// Check for leading slash
 	if peekb(p) == '/' {
-		// Check /0 .. /3 (numbered path dup devices)
 		c1 := peekb(p + 1)
+		// Check /0 .. /3 (numbered path dup devices)
 		if c1 >= '0' && c1 <= '3' {
 			c2 := peekb(p + 2)
-			if c2 == 0 || c2 == '/' || c2 == ' ' || c2 == '\t' || c2 == '\r' || c2 == '\n' || c2 == ',' {
+			if isPathTerm(c2) {
 				rem := p + 2
 				if c2 == '/' {
 					rem++
 				}
-				return DEV_DUP, c1 - '0', (*byte)(rem)
+				ParsedDrive = c1 - '0'
+				ParsedRemPath = (*byte)(rem)
+				return DEV_DUP
 			}
-		}
-
-		// Check /term
-		if peekb(p+1) == 't' && peekb(p+2) == 'e' && peekb(p+3) == 'r' && peekb(p+4) == 'm' {
-			c := peekb(p + 5)
-			if c == 0 || c == '/' || c == ' ' || c == '\r' || c == '\n' {
-				return DEV_TERM, 0, (*byte)(p + 5)
-			}
-		}
-		// Check /log
-		if peekb(p+1) == 'l' && peekb(p+2) == 'o' && peekb(p+3) == 'g' {
-			c := peekb(p + 4)
-			if c == 0 || c == '/' || c == ' ' || c == '\r' || c == '\n' {
-				return DEV_LOG, 0, (*byte)(p + 4)
-			}
-		}
-		// Check /null
-		if peekb(p+1) == 'n' && peekb(p+2) == 'u' && peekb(p+3) == 'l' && peekb(p+4) == 'l' {
-			c := peekb(p + 5)
-			if c == 0 || c == '/' || c == ' ' || c == '\r' || c == '\n' {
-				return DEV_NULL, 0, (*byte)(p + 5)
-			}
-		}
-		// Check /proc
-		if peekb(p+1) == 'p' && peekb(p+2) == 'r' && peekb(p+3) == 'o' && peekb(p+4) == 'c' {
-			c := peekb(p + 5)
-			if c == 0 || c == '/' || c == ' ' || c == '\r' || c == '\n' {
-				return DEV_PROC, 0, (*byte)(p + 5)
-			}
-		}
-		// Check /d0 .. /d3
-		if peekb(p+1) == 'd' {
+		} else if c1 == 'd' {
 			d := peekb(p + 2)
 			if d >= '0' && d <= '3' {
-				return DEV_DISK, d - '0', (*byte)(p + 3)
+				ParsedDrive = d - '0'
+				ParsedRemPath = (*byte)(p + 3)
+				return DEV_DISK
+			}
+		} else if c1 == 't' {
+			n := matchDeviceWord(p+1, (*byte)("term"))
+			if n > 0 {
+				ParsedDrive = 0
+				ParsedRemPath = (*byte)(p + 1 + n)
+				return DEV_TERM
+			}
+		} else if c1 == 'p' {
+			n := matchDeviceWord(p+1, (*byte)("proc"))
+			if n > 0 {
+				ParsedDrive = 0
+				ParsedRemPath = (*byte)(p + 1 + n)
+				return DEV_PROC
+			}
+		} else if c1 == 'l' {
+			n := matchDeviceWord(p+1, (*byte)("log"))
+			if n > 0 {
+				ParsedDrive = 0
+				ParsedRemPath = (*byte)(p + 1 + n)
+				return DEV_LOG
+			}
+		} else if c1 == 'n' {
+			n := matchDeviceWord(p+1, (*byte)("null"))
+			if n > 0 {
+				ParsedDrive = 0
+				ParsedRemPath = (*byte)(p + 1 + n)
+				return DEV_NULL
 			}
 		}
 		// Absolute path without /d prefix defaults to defaultDrive root
-		return DEV_DISK, defaultDrive, path
+		return DEV_DISK
 	}
 
 	// Relative path defaults to DEV_DISK on defaultDrive
-	return DEV_DISK, defaultDrive, path
+	return DEV_DISK
 }
 
 // TermRead reads raw binary bytes from the console
@@ -153,10 +181,11 @@ func TermWrite(task byte, srcAddr word, count word) word {
 
 
 
+var termLineBuf [256]byte
+
 // TermReadLn reads a cooked line of text from console into user buffer.
 // Returns number of bytes read including line terminator.
 func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
-	var lineBuf [256]byte
 	limit := maxLen - 1
 	if limit > 254 {
 		limit = 254
@@ -172,14 +201,14 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 				endChar = '\r'
 			}
 
-			lineBuf[count] = endChar
+			termLineBuf[count] = endChar
 			count++
-			lineBuf[count] = 0
+			termLineBuf[count] = 0
 
 			if task == 0 {
-				klib.memcpy((*byte)(dstAddr), &lineBuf[0], count+1)
+				klib.memcpy((*byte)(dstAddr), &termLineBuf[0], count+1)
 			} else {
-				hal.DMACopy(0, word(&lineBuf[0]), task, dstAddr, count+1)
+				hal.DMACopy(0, word(&termLineBuf[0]), task, dstAddr, count+1)
 			}
 			return count
 		}
@@ -194,14 +223,14 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 				endChar = '\r'
 			}
 
-			lineBuf[count] = endChar
+			termLineBuf[count] = endChar
 			count++
-			lineBuf[count] = 0
+			termLineBuf[count] = 0
 
 			if task == 0 {
-				klib.memcpy((*byte)(dstAddr), &lineBuf[0], count+1)
+				klib.memcpy((*byte)(dstAddr), &termLineBuf[0], count+1)
 			} else {
-				hal.DMACopy(0, word(&lineBuf[0]), task, dstAddr, count+1)
+				hal.DMACopy(0, word(&termLineBuf[0]), task, dstAddr, count+1)
 			}
 			return count
 		}
@@ -209,7 +238,7 @@ func TermReadLn(task byte, dstAddr word, maxLen word, lineMode byte) word {
 		// Regular characters (input from cooked tty)
 		if (c >= 32 && c <= 126) || c == '\t' {
 			if count < limit {
-				lineBuf[count] = c
+				termLineBuf[count] = c
 				count++
 			}
 		}

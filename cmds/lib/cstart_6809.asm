@@ -263,3 +263,19 @@ f_sys__SysChgDir:
     tfr     d,x
     rts
 
+f_sys__SysSeek:
+    lda     2,s
+    ldu     3,s
+    swi2
+    fcb     $88         ; I$Seek
+    bcs     .seek_err
+    clra
+    clrb
+    tfr     d,x
+    rts
+.seek_err:
+    stb     v_sys.LastErr
+    clra
+    tfr     d,x
+    rts
+

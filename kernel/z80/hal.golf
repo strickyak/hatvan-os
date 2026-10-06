@@ -1,9 +1,9 @@
 package hal
 
-const ARCH = '9'
+const ARCH = 'z'
 const SHARED_MEM_CURTAIN = 0xE000
 
-// Hardware ports for M6809 Hatvan VM ($FF00 page in Task 0)
+// Hardware ports for Z80 Hatvan VM ($FF00 page in Task 0)
 const PORT_TERMOUT = 0xFF00
 const PORT_TERMIN = 0xFF01
 const PORT_REGSTAT = 0xFF02
@@ -67,10 +67,11 @@ func Exit(code byte) {
 func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte {
 	vpokeb(PORT_DISKDRV, drive)
 	vpokeb(PORT_DISKSEC0, 0)
-	vpokeb(PORT_DISKSEC1, byte(lsn>>8))
+	vpokeb(PORT_DISKSEC1, byte(lsn >> 8))
 	vpokeb(PORT_DISKSEC2, byte(lsn))
 	vpokeb(PORT_DISKTASK, task)
-	vpokew(PORT_DISKADDR, addr)
+	vpokeb(PORT_DISKADDR, byte(addr >> 8))
+	vpokeb(PORT_DISKADDR + 1, byte(addr))
 
 	cmd := byte(1) // 1 = Read
 	if isWrite != 0 {
@@ -95,9 +96,11 @@ func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word)
 		}
 
 		vpokeb(PORT_DMASRCTASK, srcTask)
-		vpokew(PORT_DMASRCADDR, srcAddr)
+		vpokeb(PORT_DMASRCADDR, byte(srcAddr >> 8))
+		vpokeb(PORT_DMASRCADDR + 1, byte(srcAddr))
 		vpokeb(PORT_DMADSTTASK, dstTask)
-		vpokew(PORT_DMADSTADDR, dstAddr)
+		vpokeb(PORT_DMADSTADDR, byte(dstAddr >> 8))
+		vpokeb(PORT_DMADSTADDR + 1, byte(dstAddr))
 
 		cntByte := byte(chunk)
 		if chunk == 256 {
@@ -147,49 +150,22 @@ func FreeUserContext(pid byte)
 var ChildCodeStart word
 
 func SetupChildTask(taskID byte, lineMode byte, entryPC word, binSize word, paramStr *byte, paramLen word) word {
-	codeStart := word(0x0200)
-	dpVal := byte(0)
-	uVal := word(0)
 	paramEnd := word(0xFE00)
-
-	if lineMode == 1 {
-		codeStart = 0xFF00 - binSize
-		paramEnd = codeStart & 0xFF00
-		dpVal = 0
-		uVal = 0
-	}
-
 	sp := paramEnd
-	paramAddr := paramEnd
-	paramLenVal := word(0)
 	if paramStr != (*byte)(0) && paramLen > 0 {
 		sp -= (paramLen + 1)
 		sp &^= 1
 		DMACopy(0, word(paramStr), taskID, sp, paramLen)
 		cr := byte('\r')
 		DMACopy(0, word(&cr), taskID, sp+paramLen, 1)
-		paramAddr = sp
-		paramLenVal = paramLen
 	}
 
-	frameAddr := sp - 12
-	var initFrame [12]byte
-	initFrame[0] = 0x80                   // CC: FlagE (Entire frame)
-	initFrame[1] = byte(paramLenVal >> 8) // A (D MSB: paramLenVal)
-	initFrame[2] = byte(paramLenVal)      // B (D LSB: paramLenVal)
-	initFrame[3] = dpVal                  // DP (0x00)
-	initFrame[4] = byte(paramAddr >> 8)   // X MSB (parameter pointer)
-	initFrame[5] = byte(paramAddr)        // X LSB
-	initFrame[6] = byte(paramEnd >> 8)    // Y MSB (paramEnd: top of user memory)
-	initFrame[7] = byte(paramEnd)         // Y LSB
-	initFrame[8] = byte(uVal >> 8)        // U MSB (0x0000: process data area)
-	initFrame[9] = byte(uVal)             // U LSB
-	initFrame[10] = byte(entryPC >> 8)    // PC MSB
-	initFrame[11] = byte(entryPC)         // PC LSB
+	userSP := sp - 2
+	var initPC [2]byte
+	initPC[0] = byte(entryPC)
+	initPC[1] = byte(entryPC >> 8)
+	DMACopy(0, word(&initPC[0]), taskID, userSP, 2)
 
-	DMACopy(0, word(&initFrame[0]), taskID, frameAddr, 12)
-	ChildCodeStart = codeStart
-	return frameAddr
+	ChildCodeStart = 0x0200
+	return userSP
 }
-
-

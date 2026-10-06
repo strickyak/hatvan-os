@@ -7,21 +7,23 @@ import "path"
 const E_FORMAT = 213 // Bad module format error
 
 var LastLoadedIsOS9 byte
+var LoadedEntryPC word
+var LoadedSize word
 
 // LoadOS9Module reads an OS-9 machine language module from open pathId
 // and loads it into targetTask starting at baseAddr.
 // On 6809, the module is placed high in memory so its end abuts the redpage $FF00.
-// Returns (entryPC, totalSize, errCode).
-func LoadOS9Module(pathId byte, targetTask byte, baseAddr word) (word, word, byte) {
+// Returns errCode.
+func LoadOS9Module(pathId byte, targetTask byte, baseAddr word) byte {
 	var hdr [13]byte
-	n, err := path.SysRead(pathId, 0, &hdr[0], 13)
-	if n < 13 || err != 0 {
-		return 0, 0, path.E_READ
+	err := path.SysRead(pathId, 0, &hdr[0], 13)
+	if path.TransferredBytes < 13 || err != 0 {
+		return path.E_READ
 	}
 
 	// Verify OS-9 magic ID: $87 $CD
 	if hdr[0] != 0x87 || hdr[1] != 0xCD {
-		return 0, 0, E_FORMAT
+		return E_FORMAT
 	}
 
 	// Header parity check: XOR of all header bytes 0..8 must equal $FF
@@ -30,17 +32,17 @@ func LoadOS9Module(pathId byte, targetTask byte, baseAddr word) (word, word, byt
 		xorVal ^= hdr[i]
 	}
 	if xorVal != 0xFF {
-		return 0, 0, E_FORMAT
+		return E_FORMAT
 	}
 
 	modSize := (word(hdr[2]) << 8) | word(hdr[3])
 	if modSize < 13 {
-		return 0, 0, E_FORMAT
+		return E_FORMAT
 	}
 	execOff := (word(hdr[9]) << 8) | word(hdr[10])
 
 	loadAddr := baseAddr
-	if hal.ARCH == '9' {
+	if hal.ARCH == '9' || hal.ARCH == 'z' {
 		loadAddr = 0xFF00 - modSize
 	}
 
@@ -50,42 +52,47 @@ func LoadOS9Module(pathId byte, targetTask byte, baseAddr word) (word, word, byt
 	// Stream remainder of module into targetTask starting at loadAddr + 13
 	rem := modSize - 13
 	if rem > 0 {
-		rn, rerr := path.SysRead(pathId, targetTask, (*byte)(loadAddr+13), rem)
-		if rn != rem || rerr != 0 {
-			return 0, 0, path.E_READ
+		rerr := path.SysRead(pathId, targetTask, (*byte)(loadAddr+13), rem)
+		if path.TransferredBytes != rem || rerr != 0 {
+			return path.E_READ
 		}
 	}
 
-	entryPC := loadAddr + execOff
-	return entryPC, modSize, 0
+	LoadedEntryPC = loadAddr + execOff
+	LoadedSize = modSize
+	return 0
 }
+
+var decbHdr [5]byte
 
 // LoadDECB reads a segmented DECB binary from open pathId
 // and loads its chunks directly into targetTask RAM.
-// Returns (entryPC, totalLoadedBytes, errCode).
-func LoadDECB(pathId byte, targetTask byte) (word, word, byte) {
-	var hdr [5]byte
+// Returns errCode.
+func LoadDECB(pathId byte, targetTask byte) byte {
 	entryPC := word(0)
 	totalLoaded := word(0)
 	high16 := word(0)
 
 	for {
-		n, err := path.SysRead(pathId, 0, &hdr[0], 5)
-		if n < 5 || err != 0 {
-			return 0, 0, path.E_READ
+		err := path.SysRead(pathId, 0, &decbHdr[0], 5)
+		if path.TransferredBytes < 5 || err != 0 {
+			return path.E_READ
 		}
 
-		tag := hdr[0]
-		chunkLen := (word(hdr[1]) << 8) | word(hdr[2])
-		addr := (word(hdr[3]) << 8) | word(hdr[4])
+		tag := decbHdr[0]
+		chunkLen := (word(decbHdr[1]) << 8) | word(decbHdr[2])
+		addr := (word(decbHdr[3]) << 8) | word(decbHdr[4])
 
 		if tag == 0 {
 			// DECB_DATA chunk: load chunkLen bytes into targetTask at fullAddr
-			fullAddr := (high16 << 16) | addr
+			fullAddr := addr
+			if sizeof[word]() > 2 {
+				fullAddr = (high16 << 16) | addr
+			}
 			if chunkLen > 0 {
-				rn, rerr := path.SysRead(pathId, targetTask, (*byte)(fullAddr), chunkLen)
-				if rn != chunkLen || rerr != 0 {
-					return 0, 0, path.E_READ
+				rerr := path.SysRead(pathId, targetTask, (*byte)(fullAddr), chunkLen)
+				if path.TransferredBytes != chunkLen || rerr != 0 {
+					return path.E_READ
 				}
 				totalLoaded += chunkLen
 			}
@@ -94,7 +101,10 @@ func LoadDECB(pathId byte, targetTask byte) (word, word, byte) {
 			high16 = addr
 		} else if tag == 255 {
 			// DECB_EXEC postamble: chunkLen is 0, addr is execution entry PC
-			entryPC = (high16 << 16) | addr
+			entryPC = addr
+			if sizeof[word]() > 2 {
+				entryPC = (high16 << 16) | addr
+			}
 			break
 		} else {
 			// Unrecognized or extended debug chunks (source lines, symbols): skip payload
@@ -105,33 +115,36 @@ func LoadDECB(pathId byte, targetTask byte) (word, word, byte) {
 		}
 	}
 
-	return entryPC, totalLoaded, 0
+	LoadedEntryPC = entryPC
+	LoadedSize = totalLoaded
+	return 0
 }
 
 // LoadBinary automatically detects the binary format (OS-9 module or DECB)
 // and loads it into targetTask.
-// Returns (entryPC, binarySize, errCode).
-func LoadBinary(pathId byte, targetTask byte, baseAddr word) (word, word, byte) {
-	var magic [2]byte
-	n, err := path.SysRead(pathId, 0, &magic[0], 2)
-	if n < 2 || err != 0 {
-		return 0, 0, path.E_READ
+// Returns errCode.
+func LoadBinary(pathId byte, targetTask byte, baseAddr word) byte {
+	err := path.SysRead(pathId, 0, &decbHdr[0], 2)
+	if path.TransferredBytes < 2 || err != 0 {
+		return path.E_READ
 	}
 
 	// Rewind file position back to 0
 	path.SysSeek(pathId, 0)
 
-	// Format 1: OS-9 module ($87 $CD)
-	if magic[0] == 0x87 && magic[1] == 0xCD {
-		LastLoadedIsOS9 = 1
-		return LoadOS9Module(pathId, targetTask, baseAddr)
+	// Format 1: OS-9 module ($87 $CD) on 6809
+	if hal.ARCH == '9' {
+		if decbHdr[0] == 0x87 && decbHdr[1] == 0xCD {
+			LastLoadedIsOS9 = 1
+			return LoadOS9Module(pathId, targetTask, baseAddr)
+		}
 	}
 
 	// Format 2: DECB segmented binary ($00 or $FE)
-	if magic[0] == 0x00 || magic[0] == 254 {
+	if decbHdr[0] == 0x00 || decbHdr[0] == 254 {
 		LastLoadedIsOS9 = 0
 		return LoadDECB(pathId, targetTask)
 	}
 
-	return 0, 0, E_FORMAT
+	return E_FORMAT
 }

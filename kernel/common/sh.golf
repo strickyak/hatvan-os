@@ -249,7 +249,8 @@ func RunCommand(line *byte) byte {
 	}
 
 	// 5. External executable binary execution from cxd
-	cpid, err := proc.SysFork(&cmdName[0], &argBuf[0], argLen)
+	err := proc.SysFork(&cmdName[0], &argBuf[0], argLen)
+	cpid := proc.ForkedChildPID
 	if err != 0 {
 		printStr(&cmdName[0])
 		printStr((*byte)(": not found\n"))

@@ -284,7 +284,7 @@ func main() {
 		a, b       byte
 		x, y, u, s uint16
 	}
-	var history [64]historyEntry
+	var history [512]historyEntry
 	var hIdx int
 	formatEntry := func(e historyEntry) string {
 		return fmt.Sprintf("PC=%04X op=%02X A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X",

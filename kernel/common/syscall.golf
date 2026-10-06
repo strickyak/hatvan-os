@@ -52,10 +52,10 @@ type SyscallFrame struct {
 var UserFrame SyscallFrame
 var pathBuf [128]byte
 var paramBuf [128]byte
-
-func SyscallInit() {
-	Dispatch(0xFF)
-}
+var timeBuf [6]byte
+var perrMsg [16]byte
+var userChar byte
+var devBuf [8]byte
 
 // CopyUserString copies a string from user task space into kernel buffer.
 // Skips leading spaces and commas. Stops at NUL, CR, LF, space, comma, or high-bit terminated character.
@@ -63,8 +63,8 @@ func SyscallInit() {
 func CopyUserString(task byte, userAddr word, dst *byte, maxLen word) word {
 	uAddr := userAddr
 	for (uAddr - userAddr) < maxLen {
-		c := byte(0)
-		hal.DMACopy(task, uAddr, 0, word(&c), 1)
+		hal.DMACopy(task, uAddr, 0, word(&userChar), 1)
+		c := userChar
 		if c != ' ' && c != ',' {
 			break
 		}
@@ -73,8 +73,8 @@ func CopyUserString(task byte, userAddr word, dst *byte, maxLen word) word {
 	count := word(0)
 	dstAddr := word(dst)
 	for count < maxLen-1 {
-		c := byte(0)
-		hal.DMACopy(task, uAddr+count, 0, word(&c), 1)
+		hal.DMACopy(task, uAddr+count, 0, word(&userChar), 1)
+		c := userChar
 		if c == 0 || c == '\r' || c == '\n' || c == ' ' || c == ',' {
 			break
 		}
@@ -107,130 +107,182 @@ func CopyUserParams(task byte, userAddr word, dst *byte, count word) word {
 
 // Dispatch executes a system call requested by the current user task.
 // Updates UserFrame registers and CC (clearing carry on success, setting carry on error).
-func Dispatch(callNum byte) {
-	curPID := proc.CurrentPID
+func getDevNm(pd *tables.PathDesc, curPID byte) {
+	dlen := word(0)
+	if pd.DevType == dev.DEV_DISK {
+		devBuf[0] = 'd'
+		devBuf[1] = ('0' + pd.Drive) | 0x80
+		dlen = 2
+	} else if pd.DevType == dev.DEV_TERM {
+		devBuf[0] = 't'
+		devBuf[1] = 'e'
+		devBuf[2] = 'r'
+		devBuf[3] = 'm' | 0x80
+		dlen = 4
+	} else if pd.DevType == dev.DEV_PROC {
+		devBuf[0] = 'p'
+		devBuf[1] = 'r'
+		devBuf[2] = 'o'
+		devBuf[3] = 'c' | 0x80
+		dlen = 4
+	} else {
+		devBuf[0] = 'n'
+		devBuf[1] = 'u'
+		devBuf[2] = 'l'
+		devBuf[3] = 'l' | 0x80
+		dlen = 4
+	}
+	hal.DMACopy(0, word(&devBuf[0]), curPID, UserFrame.X, dlen)
+	UserFrame.CC &^= 1
+}
 
-	if callNum == I_OPEN {
-		count := CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
-		slot, err := proc.ProcOpen(curPID, &pathBuf[0], UserFrame.A)
-		if err == 0 {
-			UserFrame.A = slot
-			UserFrame.X += count
-			UserFrame.CC &^= 1 // clear CC.C
+func getFDInf(pd *tables.PathDesc, curPID byte) {
+	fdLSN := UserFrame.U
+	if sizeof[word]() > 2 {
+		fdLSN = (word(UserFrame.Y>>8) << 16) | UserFrame.U
+	}
+	cnt := UserFrame.Y & 0xFF
+	if cnt > 256 {
+		cnt = 256
+	}
+	returnStatus(rbf_ipc.GetFDInf(pd.Drive, fdLSN, curPID, UserFrame.X, cnt))
+}
+
+func dispatchGetStt(curPID byte) {
+	pathSlot := UserFrame.A
+	if pathSlot >= proc.PROC_MAX_PATHS {
+		UserFrame.B = proc.E_BPNUM
+		UserFrame.CC |= 1
+		return
+	}
+	pathId := proc.GetProc(curPID).Paths[pathSlot]
+	if pathId == 0xFF || pathId >= path.MAX_PATHS {
+		UserFrame.B = proc.E_BPNUM
+		UserFrame.CC |= 1
+		return
+	}
+	pd := path.GetPath(pathId)
+
+	code := UserFrame.B
+	if code == 0x26 { // SS.ScSiz (screen size)
+		UserFrame.X = 80
+		UserFrame.CC &^= 1
+		return
+	}
+
+	if code == 0x06 { // SS.EOF (check EOF)
+		if pd.FilePos >= pd.FileSize {
+			UserFrame.B = path.E_EOF
+			UserFrame.CC |= 1
 		} else {
-			UserFrame.B = err
-			UserFrame.CC |= 1 // set CC.C
+			UserFrame.CC &^= 1
 		}
 		return
+	}
+
+	if code == 0x0E { // SS.DevNm (return device name)
+		getDevNm(pd, curPID)
+		return
+	}
+
+	if code == 0x20 { // SS.FDInf (file descriptor sector info)
+		getFDInf(pd, curPID)
+		return
+	}
+
+	UserFrame.B = path.E_BMODE
+	UserFrame.CC |= 1
+}
+
+func returnStatus(err byte) bool {
+	if err == 0 {
+		UserFrame.CC &^= 1
+	} else {
+		UserFrame.B = err
+		UserFrame.CC |= 1
+	}
+	return true
+}
+
+func dispatchRW(curPID byte, callNum byte) bool {
+	if callNum != I_READ && callNum != I_WRITE && callNum != I_READLN && callNum != I_WRITLN {
+		return false
+	}
+
+	pathId := proc.GetProcPath(curPID, UserFrame.A)
+	if pathId == 0xFF {
+		return returnStatus(proc.E_BPNUM)
+	}
+
+	buf := (*byte)(UserFrame.X)
+	count := UserFrame.Y
+	err := byte(0)
+
+	if callNum == I_READ {
+		err = path.SysRead(pathId, curPID, buf, count)
+	} else if callNum == I_WRITE {
+		err = path.SysWrite(pathId, curPID, buf, count)
+	} else if callNum == I_READLN {
+		err = path.SysReadLn(pathId, curPID, buf, count, proc.GetProc(curPID).LineMode)
+	} else if callNum == I_WRITLN {
+		err = path.SysWritLn(pathId, curPID, buf, count, proc.GetProc(curPID).LineMode)
+	}
+	UserFrame.Y = path.TransferredBytes
+	return returnStatus(err)
+}
+
+func dispatchSeek(curPID byte) bool {
+	if UserFrame.A < proc.PROC_MAX_PATHS {
+		pathId := proc.GetProc(curPID).Paths[UserFrame.A]
+		if pathId != 0xFF {
+			seekPos := UserFrame.U
+			if hal.ARCH == 'k' {
+				seekPos = UserFrame.X
+			}
+			return returnStatus(path.SysSeek(pathId, seekPos))
+		}
+	}
+	return returnStatus(proc.E_BPNUM)
+}
+
+func dispatchIO(curPID byte, callNum byte) bool {
+	if callNum == I_SEEK {
+		return dispatchSeek(curPID)
+	}
+	return dispatchRW(curPID, callNum)
+}
+
+func dispatchPath(curPID byte, callNum byte) bool {
+	if callNum == I_OPEN {
+		count := CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
+		err := proc.ProcOpen(curPID, &pathBuf[0], UserFrame.A)
+		if err == 0 {
+			UserFrame.A = proc.AssignedSlot
+			UserFrame.X += count
+		}
+		return returnStatus(err)
 	}
 
 	if callNum == I_CREATE {
 		count := CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
-		slot, err := proc.ProcCreate(curPID, &pathBuf[0], UserFrame.A)
+		err := proc.ProcCreate(curPID, &pathBuf[0], UserFrame.A)
 		if err == 0 {
-			UserFrame.A = slot
+			UserFrame.A = proc.AssignedSlot
 			UserFrame.X += count
-			UserFrame.CC &^= 1
-		} else {
-			UserFrame.B = err
-			UserFrame.CC |= 1
 		}
-		return
+		return returnStatus(err)
 	}
 
 	if callNum == I_CLOSE {
-		err := proc.ProcClose(curPID, UserFrame.A)
-		if err == 0 {
-			UserFrame.CC &^= 1
-		} else {
-			UserFrame.B = err
-			UserFrame.CC |= 1
-		}
-		return
+		return returnStatus(proc.ProcClose(curPID, UserFrame.A))
 	}
 
 	if callNum == I_DUP {
-		newSlot, err := proc.ProcDup(curPID, UserFrame.A)
+		err := proc.ProcDup(curPID, UserFrame.A)
 		if err == 0 {
-			UserFrame.A = newSlot
-			UserFrame.CC &^= 1
-		} else {
-			UserFrame.B = err
-			UserFrame.CC |= 1
+			UserFrame.A = proc.AssignedSlot
 		}
-		return
-	}
-
-	if callNum == I_READ {
-		n, err := proc.ProcRead(curPID, UserFrame.A, (*byte)(UserFrame.X), UserFrame.Y)
-		UserFrame.Y = n
-		if err == 0 {
-			UserFrame.CC &^= 1
-		} else {
-			UserFrame.B = err
-			UserFrame.CC |= 1
-		}
-		return
-	}
-
-	if callNum == I_WRITE {
-		n, err := proc.ProcWrite(curPID, UserFrame.A, (*byte)(UserFrame.X), UserFrame.Y)
-		UserFrame.Y = n
-		if err == 0 {
-			UserFrame.CC &^= 1
-		} else {
-			UserFrame.B = err
-			UserFrame.CC |= 1
-		}
-		return
-	}
-
-	if callNum == I_READLN {
-		n, err := proc.ProcReadLn(curPID, UserFrame.A, (*byte)(UserFrame.X), UserFrame.Y)
-		UserFrame.Y = n
-		if err == 0 {
-			UserFrame.CC &^= 1
-		} else {
-			UserFrame.B = err
-			UserFrame.CC |= 1
-		}
-		return
-	}
-
-	if callNum == I_WRITLN {
-		n, err := proc.ProcWritLn(curPID, UserFrame.A, (*byte)(UserFrame.X), UserFrame.Y)
-		UserFrame.Y = n
-		if err == 0 {
-			UserFrame.CC &^= 1
-		} else {
-			UserFrame.B = err
-			UserFrame.CC |= 1
-		}
-		return
-	}
-
-	if callNum == I_SEEK {
-		if UserFrame.A < proc.PROC_MAX_PATHS {
-			p := proc.GetProc(curPID)
-			pathId := p.Paths[UserFrame.A]
-			if pathId != 0xFF {
-				seekPos := UserFrame.U
-				if hal.ARCH == 'k' {
-					seekPos = UserFrame.X
-				}
-				err := path.SysSeek(pathId, seekPos)
-				if err == 0 {
-					UserFrame.CC &^= 1
-					return
-				}
-				UserFrame.B = err
-				UserFrame.CC |= 1
-				return
-			}
-		}
-		UserFrame.B = proc.E_BPNUM
-		UserFrame.CC |= 1
-		return
+		return returnStatus(err)
 	}
 
 	if callNum == I_CHGDIR {
@@ -238,12 +290,8 @@ func Dispatch(callNum byte) {
 		err := proc.SysChgDir(&pathBuf[0], UserFrame.A)
 		if err == 0 {
 			UserFrame.X += count
-			UserFrame.CC &^= 1
-		} else {
-			UserFrame.B = err
-			UserFrame.CC |= 1
 		}
-		return
+		return returnStatus(err)
 	}
 
 	if callNum == I_DELETE {
@@ -251,301 +299,252 @@ func Dispatch(callNum byte) {
 		err := proc.ProcDelete(curPID, &pathBuf[0])
 		if err == 0 {
 			UserFrame.X += count
-			UserFrame.CC &^= 1
-		} else {
-			UserFrame.B = err
-			UserFrame.CC |= 1
 		}
-		return
+		return returnStatus(err)
 	}
 
-	if callNum == F_LINK {
-		// Module linking: not currently in RAM, return E$MNF (218) to fallback to disk
-		UserFrame.B = 218
+	if callNum == I_GETSTT {
+		dispatchGetStt(curPID)
+		return true
+	}
+
+	if callNum == I_SETSTT {
+		UserFrame.CC &^= 1
+		return true
+	}
+
+	return false
+}
+
+func dispatchI(curPID byte, callNum byte) bool {
+	if dispatchIO(curPID, callNum) {
+		return true
+	}
+	return dispatchPath(curPID, callNum)
+}
+
+func dispatchFork(curPID byte) bool {
+	count := CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
+	plen := CopyUserParams(curPID, UserFrame.U, &paramBuf[0], UserFrame.Y)
+	err := proc.SysFork(&pathBuf[0], &paramBuf[0], plen)
+	if err == 0 {
+		UserFrame.A = proc.ForkedChildPID
+		UserFrame.X += count
+		UserFrame.CC &^= 1
+	} else {
+		UserFrame.B = err
 		UserFrame.CC |= 1
-		return
 	}
+	return true
+}
 
-	if callNum == F_LOAD {
-		// F$Load: for shell fork preparation, point U to modbuf where header was read ($5E past U)
-		UserFrame.U += 0x5E
-		UserFrame.CC &^= 1
-		return
-	}
-
-	if callNum == F_UNLINK {
-		UserFrame.CC &^= 1
-		return
-	}
-
-	if callNum == F_PERR {
-		val := UserFrame.B
-		var msg [16]byte
-		msg[0] = 'E'
-		msg[1] = 'R'
-		msg[2] = 'R'
-		msg[3] = 'O'
-		msg[4] = 'R'
-		msg[5] = ' '
-		msg[6] = '#'
-		msg[7] = '0' + (val / 100)
-		msg[8] = '0' + ((val / 10) % 10)
-		msg[9] = '0' + (val % 10)
-		cr := byte('\r')
-		if curPID < proc.MAX_PROCS {
-			p := proc.GetProc(curPID)
-			if p.LineMode == 0 {
-				cr = '\n'
-			}
-		}
-		msg[10] = cr
-
-		pathId := byte(0xFF)
-		if curPID < proc.MAX_PROCS {
-			p := proc.GetProc(curPID)
-			if p.State != proc.PROC_FREE {
-				pathId = p.Paths[2]
-				if pathId == 0xFF {
-					pathId = p.Paths[1]
-				}
-				if pathId == 0xFF {
-					pathId = p.Paths[0]
-				}
-			}
-		}
-
-		if pathId != 0xFF {
-			_, err := path.SysWrite(pathId, 0, &msg[0], 11)
-			if err != 0 {
-				UserFrame.CC |= 1
-				UserFrame.B = err
-				return
-			}
-		} else {
-			dev.TermWrite(0, word(&msg[0]), 11)
-		}
-
-		UserFrame.CC &^= 1
-		return
-	}
-
-	if callNum == F_PRSNAM {
-		uAddr := UserFrame.X
-		firstChar := byte(0)
-		hal.DMACopy(curPID, uAddr, 0, word(&firstChar), 1)
-		if firstChar == '/' {
-			uAddr++
-		}
-		startX := uAddr
-		yAddr := uAddr
-
-		c0 := byte(0)
-		hal.DMACopy(curPID, yAddr, 0, word(&c0), 1)
-		raw0 := c0
-		ascii0 := raw0 & 0x7F
-
-		isLegalFirst := false
-		if (ascii0 >= 'A' && ascii0 <= 'Z') || (ascii0 >= 'a' && ascii0 <= 'z') ||
-			(ascii0 >= '0' && ascii0 <= '9') || ascii0 == '_' || ascii0 == '.' || ascii0 == '-' {
-			isLegalFirst = true
-		}
-
-		if !isLegalFirst {
-			for raw0 == ' ' || raw0 == ',' {
-				yAddr++
-				hal.DMACopy(curPID, yAddr, 0, word(&raw0), 1)
-			}
-			UserFrame.Y = yAddr
-			UserFrame.B = 215 // E_BPNAM
-			UserFrame.CC |= 1
-			return
-		}
-
-		nameLen := byte(0)
-		delim := byte(0)
-		for {
-			nameLen++
-			yAddr++
-			if (raw0 & 0x80) != 0 {
-				delim = raw0
-				break
-			}
-
-			cNext := byte(0)
-			hal.DMACopy(curPID, yAddr, 0, word(&cNext), 1)
-			raw0 = cNext
-			asciiNext := raw0 & 0x7F
-
-			isLegalNext := false
-			if (asciiNext >= 'A' && asciiNext <= 'Z') || (asciiNext >= 'a' && asciiNext <= 'z') ||
-				(asciiNext >= '0' && asciiNext <= '9') || asciiNext == '_' || asciiNext == '.' || asciiNext == '-' {
-				isLegalNext = true
-			}
-
-			if !isLegalNext {
-				delim = raw0
-				break
-			}
-		}
-
-		UserFrame.X = startX
-		UserFrame.Y = yAddr
-		UserFrame.A = delim
-		UserFrame.B = nameLen
-		UserFrame.CC &^= 1
-		return
-	}
-
+func dispatchProc(curPID byte, callNum byte) bool {
 	if callNum == F_FORK {
-		count := CopyUserString(curPID, UserFrame.X, &pathBuf[0], 128)
-		plen := CopyUserParams(curPID, UserFrame.U, &paramBuf[0], UserFrame.Y)
-		childPID, err := proc.SysFork(&pathBuf[0], &paramBuf[0], plen)
-		if err == 0 {
-			UserFrame.A = childPID
-			UserFrame.X += count
-			UserFrame.CC &^= 1
-		} else {
-			UserFrame.B = err
-			UserFrame.CC |= 1
-		}
-		return
+		return dispatchFork(curPID)
 	}
 
 	if callNum == F_WAIT {
-		cpid, st, err := proc.SysWait()
+		err := proc.SysWait()
 		if err == 0 {
-			UserFrame.A = cpid
-			UserFrame.B = st
+			UserFrame.A = proc.WaitChildPID
+			UserFrame.B = proc.WaitStatus
 			UserFrame.CC &^= 1
 		} else {
 			UserFrame.B = err
 			UserFrame.CC |= 1
 		}
-		return
+		return true
 	}
 
 	if callNum == F_EXIT {
 		proc.SysExit(UserFrame.B)
-		return
+		return true
 	}
 
 	if callNum == F_ID {
 		UserFrame.A = curPID
 		UserFrame.CC &^= 1
-		return
+		return true
 	}
 
 	if callNum == F_SLEEP {
 		UserFrame.CC &^= 1
-		return
+		return true
 	}
 
-	if callNum == F_TIME {
-		var timeBuf [6]byte
-		timeBuf[0] = 1 // Year 1901
-		timeBuf[1] = 1 // Month 1
-		timeBuf[2] = 1 // Day 1
-		timeBuf[3] = 1 // Hour 1
-		timeBuf[4] = 1 // Minute 1
-		timeBuf[5] = 1 // Second 1
-		hal.DMACopy(0, word(&timeBuf[0]), curPID, UserFrame.X, 6)
-		UserFrame.CC &^= 1
-		return
-	}
-
-	if callNum == I_GETSTT {
-		pathSlot := UserFrame.A
-		if pathSlot >= proc.PROC_MAX_PATHS {
-			UserFrame.B = proc.E_BPNUM
-			UserFrame.CC |= 1
-			return
-		}
-		pathId := proc.GetProc(curPID).Paths[pathSlot]
-		if pathId == 0xFF || pathId >= path.MAX_PATHS {
-			UserFrame.B = proc.E_BPNUM
-			UserFrame.CC |= 1
-			return
-		}
-		pd := path.GetPath(pathId)
-
-		code := UserFrame.B
-		if code == 0x26 { // SS.ScSiz (screen size)
-			UserFrame.X = 80
-			UserFrame.CC &^= 1
-			return
-		}
-
-		if code == 0x06 { // SS.EOF (check EOF)
-			if pd.FilePos >= pd.FileSize {
-				UserFrame.B = path.E_EOF
-				UserFrame.CC |= 1
-			} else {
-				UserFrame.CC &^= 1
-			}
-			return
-		}
-
-		if code == 0x0E { // SS.DevNm (return device name)
-			var devBuf [8]byte
-			dlen := word(0)
-			if pd.DevType == dev.DEV_DISK {
-				devBuf[0] = 'd'
-				devBuf[1] = ('0' + pd.Drive) | 0x80
-				dlen = 2
-			} else if pd.DevType == dev.DEV_TERM {
-				devBuf[0] = 't'
-				devBuf[1] = 'e'
-				devBuf[2] = 'r'
-				devBuf[3] = 'm' | 0x80
-				dlen = 4
-			} else if pd.DevType == dev.DEV_PROC {
-				devBuf[0] = 'p'
-				devBuf[1] = 'r'
-				devBuf[2] = 'o'
-				devBuf[3] = 'c' | 0x80
-				dlen = 4
-			} else {
-				devBuf[0] = 'n'
-				devBuf[1] = 'u'
-				devBuf[2] = 'l'
-				devBuf[3] = 'l' | 0x80
-				dlen = 4
-			}
-			hal.DMACopy(0, word(&devBuf[0]), curPID, UserFrame.X, dlen)
-			UserFrame.CC &^= 1
-			return
-		}
-
-		if code == 0x20 { // SS.FDInf (file descriptor sector info)
-			fdLSN := UserFrame.U
-			if sizeof[word]() > 2 {
-				fdLSN = (word(UserFrame.Y>>8) << 16) | UserFrame.U
-			}
-			cnt := UserFrame.Y & 0xFF
-			if cnt > 256 {
-				cnt = 256
-			}
-			err := rbf_ipc.GetFDInf(pd.Drive, fdLSN, curPID, UserFrame.X, cnt)
-			if err == 0 {
-				UserFrame.CC &^= 1
-			} else {
-				UserFrame.B = err
-				UserFrame.CC |= 1
-			}
-			return
-		}
-
-		UserFrame.B = path.E_BMODE
+	if callNum == F_LINK {
+		UserFrame.B = 218 // E$MNF
 		UserFrame.CC |= 1
-		return
+		return true
 	}
 
-	if callNum == I_SETSTT {
+	if callNum == F_LOAD {
+		UserFrame.U += 0x5E
 		UserFrame.CC &^= 1
-		return
+		return true
+	}
+
+	if callNum == F_UNLINK {
+		UserFrame.CC &^= 1
+		return true
+	}
+
+	return false
+}
+
+func isNameChar(ch byte) bool {
+	ascii := ch & 0x7F
+	if (ascii >= 'A' && ascii <= 'Z') || (ascii >= 'a' && ascii <= 'z') ||
+		(ascii >= '0' && ascii <= '9') || ascii == '_' || ascii == '.' || ascii == '-' {
+		return true
+	}
+	return false
+}
+
+func dispatchTime(curPID byte) bool {
+	timeBuf[0] = 1 // Year 1901
+	timeBuf[1] = 1 // Month 1
+	timeBuf[2] = 1 // Day 1
+	timeBuf[3] = 1 // Hour 1
+	timeBuf[4] = 1 // Minute 1
+	timeBuf[5] = 1 // Second 1
+	hal.DMACopy(0, word(&timeBuf[0]), curPID, UserFrame.X, 6)
+	UserFrame.CC &^= 1
+	return true
+}
+
+func dispatchPerr(curPID byte) bool {
+	val := UserFrame.B
+	v := val
+	perrMsg[9] = '0' + (v % 10)
+	v /= 10
+	perrMsg[8] = '0' + (v % 10)
+	v /= 10
+	perrMsg[7] = '0' + (v % 10)
+
+	cr := byte('\r')
+	if curPID < proc.MAX_PROCS && proc.GetProc(curPID).LineMode == 0 {
+		cr = '\n'
+	}
+	perrMsg[10] = cr
+
+	pathId := proc.GetProcPath(curPID, 2)
+	if pathId == 0xFF {
+		pathId = proc.GetProcPath(curPID, 1)
+	}
+	if pathId == 0xFF {
+		pathId = proc.GetProcPath(curPID, 0)
+	}
+
+	if pathId != 0xFF {
+		err := path.SysWrite(pathId, 0, &perrMsg[0], 11)
+		if err != 0 {
+			UserFrame.CC |= 1
+			UserFrame.B = err
+			return true
+		}
+	} else {
+		dev.TermWrite(0, word(&perrMsg[0]), 11)
+	}
+
+	UserFrame.CC &^= 1
+	return true
+}
+
+func dispatchPrsnam(curPID byte) bool {
+	uAddr := UserFrame.X
+	hal.DMACopy(curPID, uAddr, 0, word(&userChar), 1)
+	if userChar == '/' {
+		uAddr++
+	}
+	startX := uAddr
+	yAddr := uAddr
+
+	hal.DMACopy(curPID, yAddr, 0, word(&userChar), 1)
+	raw0 := userChar
+
+	if !isNameChar(raw0) {
+		for raw0 == ' ' || raw0 == ',' {
+			yAddr++
+			hal.DMACopy(curPID, yAddr, 0, word(&userChar), 1)
+			raw0 = userChar
+		}
+		UserFrame.Y = yAddr
+		UserFrame.B = 215 // E_BPNAM
+		UserFrame.CC |= 1
+		return true
+	}
+
+	nameLen := byte(0)
+	delim := byte(0)
+	for {
+		nameLen++
+		yAddr++
+		if (raw0 & 0x80) != 0 {
+			delim = raw0
+			break
+		}
+
+		hal.DMACopy(curPID, yAddr, 0, word(&userChar), 1)
+		raw0 = userChar
+
+		if !isNameChar(raw0) {
+			delim = raw0
+			break
+		}
+	}
+
+	UserFrame.X = startX
+	UserFrame.Y = yAddr
+	UserFrame.A = delim
+	UserFrame.B = nameLen
+	UserFrame.CC &^= 1
+	return true
+}
+
+func dispatchMisc(curPID byte, callNum byte) bool {
+	if callNum == F_TIME {
+		return dispatchTime(curPID)
+	}
+	if callNum == F_PERR {
+		return dispatchPerr(curPID)
+	}
+	if callNum == F_PRSNAM {
+		return dispatchPrsnam(curPID)
+	}
+	return false
+}
+
+// Dispatch executes a system call requested by the current user task.
+// Updates UserFrame registers and CC (clearing carry on success, setting carry on error).
+func Dispatch(callNum byte) {
+	curPID := proc.CurrentPID
+
+	if callNum >= 0x80 {
+		if dispatchI(curPID, callNum) {
+			return
+		}
+	} else {
+		if dispatchProc(curPID, callNum) {
+			return
+		}
+		if dispatchMisc(curPID, callNum) {
+			return
+		}
 	}
 
 	// Unknown syscall: set error 214 (E_BMODE)
 	UserFrame.B = 214
 	UserFrame.CC |= 1
 }
+
+func SyscallInit() {
+	klib.memcpy(&perrMsg[0], (*byte)("ERROR #000\n"), 11)
+	if peekb(0) == 255 {
+		Dispatch(0)
+		Dispatch(1)
+	}
+}
+
+
+
