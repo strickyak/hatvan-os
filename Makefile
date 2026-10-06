@@ -52,7 +52,7 @@ M6809_SRCS  := $(wildcard $(REPO_DIR)/kernel/m6809/*.golf) $(REPO_DIR)/kernel/m6
 M68K_SRCS   := $(wildcard $(REPO_DIR)/kernel/m68k/*.golf) $(REPO_DIR)/kernel/m68k/trap_m68k.s
 Z80_SRCS    := $(wildcard $(REPO_DIR)/kernel/z80/*.golf) $(REPO_DIR)/kernel/z80/cstart_z80.asm $(REPO_DIR)/kernel/z80/trap_z80.asm
 
-.PHONY: all vms kernels cmds disk test test-interactive clean
+.PHONY: all vms kernels cmds disk test test-interactive test-z80 test-quick clean
 
 all: $(BUILD_DIR) vms kernels cmds disk
 
@@ -391,6 +391,14 @@ test-interactive: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nECHO redirection works on 6809 > /d0/redir9.txt\nCAT /d0/redir9.txt\nGECHO hello from gecho 6809\nGCAT /d0/redir9.txt\nGDIR\nGDUMP /Cmds9/ECHO\nGSEEKTEST\nSH\nhelp\nECHO nested shell 6809\nCAT /nonexistent\nECHO background 6809 &\nCAT /proc/p\nexit\nCAT /nonexistent\nexit\n" $(KERNEL_6809)
 	$(VM_68K) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHO hello from 68k userspace\nECHO redirection works on 68k > /d0/redirk.txt\nCAT /d0/redirk.txt\nGECHO hello from gecho 68k\nGCAT /d0/redirk.txt\nGDIR\nGDUMP /CmdsK/ECHO\nGSEEKTEST\nSH\nhelp\nECHO nested shell 68k\nCAT /nonexistent\nECHO background 68k &\nCAT /proc/p\nexit\nCAT /nonexistent\nexit\n" $(KERNEL_68K)
 	$(VM_Z80) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHO hello from z80 userspace\nECHO redirection works on z80 > /d0/redirz.txt\nCAT /d0/redirz.txt\nGECHO hello from gecho z80\nGCAT /d0/redirz.txt\nGDIR\nGDUMP /CmdsZ/ECHO\nGSEEKTEST\nSH\nhelp\nECHO nested shell z80\nCAT /nonexistent\nECHO background z80 &\nCAT /proc/p\nexit\nCAT /nonexistent\nexit\n" $(KERNEL_Z80)
+
+test-z80: $(BUILD_DIR) vms kernels cmds disk
+	(cd $(MINIGOLF_DIR) && $(GO) test -count=1 -run ".*z80.*|.*Z80.*" . && $(GO) test -count=1 ./cmd/asmz80)
+	$(VM_Z80) -disk0=$(DISK_IMAGE) -input="exit\n" $(KERNEL_Z80)
+	$(VM_Z80) -disk0=$(DISK_IMAGE) -input="help\npwd\npwx\nECHO hello from z80 userspace\nECHO redirection works on z80 > /d0/redirz.txt\nCAT /d0/redirz.txt\nGECHO hello from gecho z80\nGCAT /d0/redirz.txt\nGDIR\nGDUMP /CmdsZ/ECHO\nGSEEKTEST\nSH\nhelp\nECHO nested shell z80\nCAT /nonexistent\nECHO background z80 &\nCAT /proc/p\nexit\nCAT /nonexistent\nexit\n" $(KERNEL_Z80)
+
+test-quick:
+	@$(REPO_DIR)/scripts/test-quick.sh
 
 # --- Clean ---
 clean:
