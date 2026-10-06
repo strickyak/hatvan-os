@@ -350,7 +350,37 @@ In the CPU step loop, if `b.TrapPending` is true at instruction boundary, the CP
 
 ---
 
-## 7. Implementation Roadmap & Milestones
+## 7. Binary Formats & Architecture Identification
+
+### 7.1 Extended DECB Format (`.decb`)
+Hatvan OS/Z standardizes on the segmented Extended DECB format for executable binaries:
+* Fixed 5-byte chunk header format:
+  ```
+  [Tag: uint8] [Length: uint16 BE] [Address/Arg: uint16 BE] [Payload: Length bytes]
+  ```
+* **Data Chunks (`Tag = 0x00`)**: Loads `Length` bytes into memory at `Address`.
+* **Execution Postamble (`Tag = 0xFF`)**: `Length` is 0; `Address` is execution start address (`entryPC`).
+
+### 7.2 Architecture Magic Marker (`Tag = 0xFD` / 253)
+To prevent cross-architecture execution errors and guarantee binary integrity, all Hatvan executables begin with a 5-byte magic tag:
+```
+[Tag: 253 ($FD)] [Length: 0 ($0000)] [Address: Byte 0 = $78 ('x'), Byte 1 = 'z']
+```
+* **Tag**: `0xFD` (253).
+* **Length**: `0x0000` (payload length is 0 and ignored).
+* **Address Slot**:
+  * Byte 0: `0x78` (`'x'`), denoting an executable file.
+  * Byte 1: Architecture identification byte:
+    * `'9'`: Motorola 6809 / Hitachi 6309
+    * `'k'`: Motorola 68000
+    * `'z'`: Zilog Z80
+* **Kernel Enforcement**:
+  * In `LoadBinary` / `SysFork`, Hatvan OS validates that the magic tag is present and matches `hal.ARCH` (`'z'` on Z80).
+  * Untagged DECB files or binaries targeted for other architectures are rejected with `E_FORMAT` (error 213).
+
+---
+
+## 8. Implementation Roadmap & Milestones
 
 The integration of the Z80 architecture into Hatvan OS proceeds across five structured phases:
 

@@ -99,10 +99,8 @@ $(BUILD_DIR)/kernel_6809.asm: $(COMMON_SRCS) $(KLIB_SRCS) $(wildcard $(REPO_DIR)
 $(BUILD_DIR)/full_6809.asm: $(REPO_DIR)/kernel/m6809/cstart_m6809.asm $(BUILD_DIR)/kernel_6809.asm $(REPO_DIR)/kernel/m6809/trap_m6809.asm $(REPO_DIR)/kernel/m6809/vectors_m6809.asm | $(BUILD_DIR)
 	cat $(REPO_DIR)/kernel/m6809/cstart_m6809.asm $(BUILD_DIR)/kernel_6809.asm $(REPO_DIR)/kernel/m6809/trap_m6809.asm $(REPO_DIR)/kernel/m6809/vectors_m6809.asm > $@
 
-$(BUILD_DIR)/kernel_6809.decb: $(BUILD_DIR)/full_6809.asm | $(BUILD_DIR)
-	cd $(BUILD_DIR) && $(LWASM) --decb --list=kernel_6809.list --map=kernel_6809.map -o kernel_6809.decb full_6809.asm
-	cp -f $(BUILD_DIR)/kernel_6809.decb.list $(BUILD_DIR)/kernel_6809.list 2>/dev/null || true
-	cp -f $(BUILD_DIR)/kernel_6809.decb.map $(BUILD_DIR)/kernel_6809.map 2>/dev/null || true
+$(BUILD_DIR)/kernel_6809.decb: $(BUILD_DIR)/full_6809.asm $(ASM6809) | $(BUILD_DIR)
+	$(ASM6809) -decb -l $(BUILD_DIR)/kernel_6809.list -o $@ $<
 
 # M6809 RBF Driver (Task 1)
 $(BUILD_DIR)/rbf_6809.asm: $(REPO_DIR)/drivers/rbf/main.golf $(COMMON_SRCS) $(MINIGOLF) | $(BUILD_DIR)
@@ -117,10 +115,8 @@ $(BUILD_DIR)/rbf_6809.asm: $(REPO_DIR)/drivers/rbf/main.golf $(COMMON_SRCS) $(MI
 $(BUILD_DIR)/full_rbf_6809.asm: $(REPO_DIR)/drivers/rbf/cstart_rbf_m6809.asm $(BUILD_DIR)/rbf_6809.asm | $(BUILD_DIR)
 	cat $(REPO_DIR)/drivers/rbf/cstart_rbf_m6809.asm $(BUILD_DIR)/rbf_6809.asm > $@
 
-$(BUILD_DIR)/rbf_6809.decb: $(BUILD_DIR)/full_rbf_6809.asm | $(BUILD_DIR)
-	cd $(BUILD_DIR) && $(LWASM) --decb --list=rbf_6809.list --map=rbf_6809.map -o rbf_6809.decb full_rbf_6809.asm
-	cp -f $(BUILD_DIR)/rbf_6809.decb.list $(BUILD_DIR)/rbf_6809.list 2>/dev/null || true
-	cp -f $(BUILD_DIR)/rbf_6809.decb.map $(BUILD_DIR)/rbf_6809.map 2>/dev/null || true
+$(BUILD_DIR)/rbf_6809.decb: $(BUILD_DIR)/full_rbf_6809.asm $(ASM6809) | $(BUILD_DIR)
+	$(ASM6809) -decb -l $(BUILD_DIR)/rbf_6809.list -o $@ $<
 
 # M6809 PROCFS Driver (Task 2)
 $(BUILD_DIR)/procfs_6809.asm: $(REPO_DIR)/drivers/procfs/main.golf $(COMMON_SRCS) $(MINIGOLF) | $(BUILD_DIR)
@@ -135,10 +131,8 @@ $(BUILD_DIR)/procfs_6809.asm: $(REPO_DIR)/drivers/procfs/main.golf $(COMMON_SRCS
 $(BUILD_DIR)/full_procfs_6809.asm: $(REPO_DIR)/drivers/procfs/cstart_procfs_m6809.asm $(BUILD_DIR)/procfs_6809.asm | $(BUILD_DIR)
 	cat $(REPO_DIR)/drivers/procfs/cstart_procfs_m6809.asm $(BUILD_DIR)/procfs_6809.asm > $@
 
-$(BUILD_DIR)/procfs_6809.decb: $(BUILD_DIR)/full_procfs_6809.asm | $(BUILD_DIR)
-	cd $(BUILD_DIR) && $(LWASM) --decb --list=procfs_6809.list --map=procfs_6809.map -o procfs_6809.decb full_procfs_6809.asm
-	cp -f $(BUILD_DIR)/procfs_6809.decb.list $(BUILD_DIR)/procfs_6809.list 2>/dev/null || true
-	cp -f $(BUILD_DIR)/procfs_6809.decb.map $(BUILD_DIR)/procfs_6809.map 2>/dev/null || true
+$(BUILD_DIR)/procfs_6809.decb: $(BUILD_DIR)/full_procfs_6809.asm $(ASM6809) | $(BUILD_DIR)
+	$(ASM6809) -decb -l $(BUILD_DIR)/procfs_6809.list -o $@ $<
 
 # M68K Kernel
 $(BUILD_DIR)/kernel_68k.s: $(COMMON_SRCS) $(KLIB_SRCS) $(wildcard $(REPO_DIR)/kernel/m68k/*.golf) $(MINIGOLF) | $(BUILD_DIR)
@@ -181,6 +175,9 @@ $(BUILD_DIR)/procfs_68k.s: $(REPO_DIR)/drivers/procfs/main.golf $(COMMON_SRCS) $
 
 $(BUILD_DIR)/full_procfs_68k.s: $(REPO_DIR)/drivers/procfs/cstart_procfs_m68k.s $(BUILD_DIR)/procfs_68k.s | $(BUILD_DIR)
 	cat $(REPO_DIR)/drivers/procfs/cstart_procfs_m68k.s $(BUILD_DIR)/procfs_68k.s > $@
+
+$(BUILD_DIR)/procfs_68k.srec: $(BUILD_DIR)/full_procfs_68k.s $(ASM68K) | $(BUILD_DIR)
+	$(ASM68K) -l $@.list -o $@ $<
 
 # Z80 Kernel
 $(BUILD_DIR)/kernel_z80.asm: $(COMMON_SRCS) $(KLIB_SRCS) $(wildcard $(REPO_DIR)/kernel/z80/*.golf) $(MINIGOLF) | $(BUILD_DIR)
@@ -247,10 +244,8 @@ $(BUILD_DIR)/testcmd.mod: $(REPO_DIR)/cmds/testcmd.asm | $(BUILD_DIR)
 	cp -f $(BUILD_DIR)/testcmd.mod.list $(BUILD_DIR)/testcmd.list 2>/dev/null || true
 	cp -f $(BUILD_DIR)/testcmd.mod.map $(BUILD_DIR)/testcmd.map 2>/dev/null || true
 
-$(BUILD_DIR)/testdecb.decb: $(REPO_DIR)/cmds/testdecb.asm | $(BUILD_DIR)
-	cd $(BUILD_DIR) && $(LWASM) --decb --list=testdecb.list --map=testdecb.map -o testdecb.decb $<
-	cp -f $(BUILD_DIR)/testdecb.decb.list $(BUILD_DIR)/testdecb.list 2>/dev/null || true
-	cp -f $(BUILD_DIR)/testdecb.decb.map $(BUILD_DIR)/testdecb.map 2>/dev/null || true
+$(BUILD_DIR)/testdecb.decb: $(REPO_DIR)/cmds/testdecb.asm $(ASM6809) | $(BUILD_DIR)
+	$(ASM6809) -decb -l $(BUILD_DIR)/testdecb.list -o $@ $<
 
 $(BUILD_DIR)/echok.srec: $(REPO_DIR)/cmds/echok.s $(ASM68K) | $(BUILD_DIR)
 	$(ASM68K) -l $@.list -o $@ $<

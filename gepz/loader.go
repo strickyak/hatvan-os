@@ -102,7 +102,7 @@ func (b *Bus) LoadFileIntoTask(task uint8, path string) (*LoadedBinary, error) {
 		return nil, err
 	}
 
-	if header[0] == 0x00 { // DECB
+	if header[0] == 0x00 || header[0] == 0xFD { // DECB
 		return b.LoadDECBIntoTask(task, f)
 	}
 	return b.LoadRawBinary(f, 0x0000)

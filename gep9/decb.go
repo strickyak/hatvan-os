@@ -16,6 +16,7 @@ const (
 	ChunkSymAbs  = 0x04 // Extended: Absolute symbol
 	ChunkSymRel  = 0x05 // Extended: OS-9 module-relative symbol
 	ChunkSrcFile = 0x06 // Extended: Source file name declaration
+	ChunkMagic   = 0xFD // Extended: Hatvan executable magic marker ('x', <arch>)
 	ChunkExec    = 0xFF // Standard execution address trailer
 )
 

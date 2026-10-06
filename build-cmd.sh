@@ -121,8 +121,8 @@ for TARGET in $TARGETS; do
     cat "$CMDS_DIR/lib/cstart_6809.asm" "$BUILD_DIR/$BASE.9.asm" > "$BUILD_DIR/full_$BASE.9.asm"
     echo "    end start" >> "$BUILD_DIR/full_$BASE.9.asm"
 
-    echo "  [6809] Assembling with lwasm..."
-    lwasm --decb --list="$BUILD_DIR/$BASE.9.list" -o "$BUILD_DIR/$BASE.9.decb" "$BUILD_DIR/full_$BASE.9.asm"
+    echo "  [6809] Assembling with asm6809..."
+    "$ASM6809" -decb -l "$BUILD_DIR/$BASE.9.list" -o "$BUILD_DIR/$BASE.9.decb" "$BUILD_DIR/full_$BASE.9.asm"
     cp -f "$BUILD_DIR/$BASE.9.decb" "$DIR/$BASE.9.decb"
 
     # --- Motorola 68000 Target (*.k.decb) ---

@@ -40,6 +40,8 @@ def srec2decb(srec_path, decb_path):
         base_addr = 0x200
 
     decb = bytearray()
+    # Tag 253 (0xFD): Hatvan Executable Magic header ('x', 'k')
+    decb.extend([0xFD, 0x00, 0x00, ord('x'), ord('k')])
     cur_addr = base_addr
     offset = 0
     current_high16 = 0

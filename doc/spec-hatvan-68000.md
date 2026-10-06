@@ -334,6 +334,25 @@ gepk [options] <kernel.img|program.s37> [listing.list ...]
   * **Persistence**: Spilling into the next page **does not change** the remembered `High16` value. Subsequent headers continue to use the active `High16` prefix until another `SET_HIGH16_ADDR32` header explicitly changes it.
 * Any parser that does not recognize type 254 safely skips it (since `Length` is 0). This preserves uniform 5-byte headers across both 6809 and 68000 toolchains while supporting arbitrary 32-bit addresses.
 
+### 4. Extended DECB Magic Header (`MAGIC_ARCH = 253` / `$FD`)
+* Keeps headers strictly **5 bytes long**:
+  ```
+  [Tag: 253 ($FD)] [Length: 0 ($0000)] [Address: Byte 0 = $78 ('x'), Byte 1 = Arch ('9', 'k', or 'z')]
+  ```
+* **Semantics**:
+  * Placed as the very first chunk in an Extended DECB executable stream.
+  * `Tag`: `253` (`$FD`).
+  * `Length`: `0` (`$0000` — payload is ignored).
+  * `Address Slot`:
+    * Byte 0 (`$78` = ASCII `'x'`): Identifies file as an executable program.
+    * Byte 1: Architecture code:
+      * `'9'` (`$39`): Motorola 6809 / Hitachi 6309
+      * `'k'` (`$6B`): Motorola 68000
+      * `'z'` (`$7A`): Zilog Z80
+* **Kernel Enforcement**:
+  * Hatvan OS verifies this magic header on DECB binaries by default before launching processes in `SysFork` / `LoadBinary`.
+  * If a binary is un-magic-numbered or built for a different architecture, the kernel immediately rejects execution with `E_FORMAT` (error code 213).
+
 ---
 
 ## 9. Hatvan OS/K Kernel Services

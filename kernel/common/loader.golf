@@ -96,6 +96,16 @@ func LoadDECB(pathId byte, targetTask byte) byte {
 				}
 				totalLoaded += chunkLen
 			}
+		} else if tag == 253 {
+			// Tag 253 ($FD): Hatvan Executable Magic header: 'x', <arch>
+			// Byte 3 must be 'x' (executable) and Byte 4 must match hal.ARCH
+			if decbHdr[3] != 'x' || decbHdr[4] != hal.ARCH {
+				return E_FORMAT
+			}
+			if chunkLen > 0 {
+				curPos := path.GetPath(pathId).FilePos
+				path.SysSeek(pathId, curPos+chunkLen)
+			}
 		} else if tag == 254 {
 			// SET_HIGH16_ADDR32 header: persistent upper 16-bit address extension (spec-hatvan-68000)
 			high16 = addr
@@ -124,7 +134,7 @@ func LoadDECB(pathId byte, targetTask byte) byte {
 // and loads it into targetTask.
 // Returns errCode.
 func LoadBinary(pathId byte, targetTask byte, baseAddr word) byte {
-	err := path.SysRead(pathId, 0, &decbHdr[0], 2)
+	err := path.SysRead(pathId, 0, &decbHdr[0], 5)
 	if path.TransferredBytes < 2 || err != 0 {
 		return path.E_READ
 	}
@@ -140,10 +150,14 @@ func LoadBinary(pathId byte, targetTask byte, baseAddr word) byte {
 		}
 	}
 
-	// Format 2: DECB segmented binary ($00 or $FE)
-	if decbHdr[0] == 0x00 || decbHdr[0] == 254 {
-		LastLoadedIsOS9 = 0
-		return LoadDECB(pathId, targetTask)
+	// Format 2: Tag 253 ($FD) Extended DECB with architecture validation
+	if path.TransferredBytes >= 5 && decbHdr[0] == 253 {
+		if decbHdr[3] == 'x' && decbHdr[4] == hal.ARCH {
+			LastLoadedIsOS9 = 0
+			return LoadDECB(pathId, targetTask)
+		}
+		// Wrong architecture or invalid magic marker
+		return E_FORMAT
 	}
 
 	return E_FORMAT
