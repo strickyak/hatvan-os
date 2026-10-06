@@ -268,10 +268,10 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 	isOdd := (addr & 1) != 0
 
 	switch base {
-	case 0x00FF0000: // Term.Out (Write-only, reading returns 0)
+	case 0x00FF0000: // Term.Out ($FF00 -> $00FF0000)
 		return 0
 
-	case 0x00FF0002: // Term.In
+	case 0x00FF0010: // Term.In ($FF01 -> $00FF0010)
 		if len(b.ConsoleIn) == 0 && b.StdinChan != nil {
 			b.pollStdinInternal()
 		}
@@ -291,56 +291,56 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		}
 		return 0 // Non-blocking: 0 if no char ready
 
-	case 0x00FF0004: // Reg.Stat
+	case 0x00FF0020, 0x00FF0022: // Reg.Stat ($FF02 -> $00FF0020)
 		if isOdd {
 			return byte(b.RegStat)
 		}
 		return byte(b.RegStat >> 8)
 
-	case 0x00FF0006: // Reg.Ctrl
+	case 0x00FF0030, 0x00FF0032: // Reg.Ctrl ($FF03 -> $00FF0030)
 		if isOdd {
 			return byte(b.RegCtrl)
 		}
 		return byte(b.RegCtrl >> 8)
 
-	case 0x00FF0008: // logchar
+	case 0x00FF0040: // logchar ($FF04 -> $00FF0040)
 		return 0
 
-	case 0x00FF000A: // Exit.Code
+	case 0x00FF0050, 0x00FF0052: // Exit.Code ($FF05 -> $00FF0050)
 		if isOdd {
 			return byte(b.ExitCode)
 		}
 		return byte(b.ExitCode >> 8)
 
-	case 0x00FF0010: // Disk.Drive
+	case 0x00FF0100: // Disk.Drive ($FF10 -> $00FF0100)
 		return byte(b.DiskDrive)
 
-	case 0x00FF0014: // Disk.Sector (MSW)
+	case 0x00FF0110: // Disk.Sector (MSW) ($FF11 -> $00FF0110)
 		if isOdd {
 			return byte(b.DiskSector >> 16)
 		}
 		return byte(b.DiskSector >> 24)
-	case 0x00FF0016: // Disk.Sector (LSW)
+	case 0x00FF0112: // Disk.Sector (LSW)
 		if isOdd {
 			return byte(b.DiskSector)
 		}
 		return byte(b.DiskSector >> 8)
 
-	case 0x00FF0018: // Disk.Task
+	case 0x00FF0140: // Disk.Task ($FF14 -> $00FF0140)
 		return byte(b.DiskTask)
 
-	case 0x00FF001A: // Disk.Addr (MSW)
+	case 0x00FF0150: // Disk.Addr (MSW) ($FF15 -> $00FF0150)
 		if isOdd {
 			return byte(b.DiskAddr >> 16)
 		}
 		return byte(b.DiskAddr >> 24)
-	case 0x00FF001C: // Disk.Addr (LSW)
+	case 0x00FF0152: // Disk.Addr (LSW)
 		if isOdd {
 			return byte(b.DiskAddr)
 		}
 		return byte(b.DiskAddr >> 8)
 
-	case 0x00FF001E: // Disk.CmdSt
+	case 0x00FF0170: // Disk.CmdSt ($FF17 -> $00FF0170)
 		if isOdd {
 			st := b.DiskStatus
 			b.DiskStatus = 0
@@ -348,49 +348,49 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		}
 		return byte(b.DiskStatus >> 8)
 
-	case 0x00FF0020: // Task.Active
+	case 0x00FF0200: // Task.Active ($FF20 -> $00FF0200)
 		return byte(b.TaskReg)
 
-	case 0x00FF0022: // DMA.SrcTask
+	case 0x00FF0210: // DMA.SrcTask ($FF21 -> $00FF0210)
 		return byte(b.DmaSrcTask)
 
-	case 0x00FF0024: // DMA.SrcAddr (MSW)
+	case 0x00FF0220: // DMA.SrcAddr (MSW) ($FF22 -> $00FF0220)
 		if isOdd {
 			return byte(b.DmaSrcAddr >> 16)
 		}
 		return byte(b.DmaSrcAddr >> 24)
-	case 0x00FF0026: // DMA.SrcAddr (LSW)
+	case 0x00FF0222: // DMA.SrcAddr (LSW)
 		if isOdd {
 			return byte(b.DmaSrcAddr)
 		}
 		return byte(b.DmaSrcAddr >> 8)
 
-	case 0x00FF0028: // DMA.DstTask
+	case 0x00FF0240: // DMA.DstTask ($FF24 -> $00FF0240)
 		return byte(b.DmaDstTask)
 
-	case 0x00FF002A: // DMA.DstAddr (MSW)
+	case 0x00FF0250: // DMA.DstAddr (MSW) ($FF25 -> $00FF0250)
 		if isOdd {
 			return byte(b.DmaDstAddr >> 16)
 		}
 		return byte(b.DmaDstAddr >> 24)
-	case 0x00FF002C: // DMA.DstAddr (LSW)
+	case 0x00FF0252: // DMA.DstAddr (LSW)
 		if isOdd {
 			return byte(b.DmaDstAddr)
 		}
 		return byte(b.DmaDstAddr >> 8)
 
-	case 0x00FF002E: // DMA.Count (MSW)
+	case 0x00FF0270: // DMA.Count (MSW) ($FF27 -> $00FF0270)
 		if isOdd {
 			return byte(b.DmaCount >> 16)
 		}
 		return byte(b.DmaCount >> 24)
-	case 0x00FF0030: // DMA.Count (LSW)
+	case 0x00FF0272: // DMA.Count (LSW)
 		if isOdd {
 			return byte(b.DmaCount)
 		}
 		return byte(b.DmaCount >> 8)
 
-	case 0x00FF0032: // DMA.CmdSt
+	case 0x00FF0274: // DMA.CmdSt ($FF27 slot offset 4)
 		if isOdd {
 			st := b.DmaStatus
 			b.DmaStatus = 0
@@ -398,24 +398,24 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 		}
 		return byte(b.DmaStatus >> 8)
 
-	case 0x00FF0034: // SharedMemoryCurtain (MSW)
+	case 0x00FF0280: // SharedMemoryCurtain (MSW) ($FF28 -> $00FF0280)
 		if isOdd {
 			return byte(b.SharedMemoryCurtain >> 16)
 		}
 		return byte(b.SharedMemoryCurtain >> 24)
-	case 0x00FF0036: // SharedMemoryCurtain (LSW)
+	case 0x00FF0282: // SharedMemoryCurtain (LSW)
 		if isOdd {
 			return byte(b.SharedMemoryCurtain)
 		}
 		return byte(b.SharedMemoryCurtain >> 8)
 
-	case 0x00FF005A: // TaskFlagsTarget (0x00FF005A or 0x00FF005B)
+	case 0x00FF02D0: // TaskFlagsTarget ($FF2D -> $00FF02D0)
 		return b.TaskFlagsTarget
 
-	case 0x00FF005C: // TaskFlagsRegister (0x00FF005C or 0x00FF005D)
+	case 0x00FF02E0: // TaskFlagsRegister ($FF2E -> $00FF02E0)
 		return b.TaskFlags[b.TaskFlagsTarget]
 
-	case 0x00FF005E: // PurgeTaskMem (0x00FF005E or 0x00FF005F)
+	case 0x00FF02F0: // PurgeTaskMem ($FF2F -> $00FF02F0)
 		return 0
 
 	default:
@@ -428,7 +428,7 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 	isOdd := (addr & 1) != 0
 
 	switch base {
-	case 0x00FF0000: // Term.Out
+	case 0x00FF0000: // Term.Out ($FF00 -> $00FF0000)
 		if b.ConsoleOut != nil {
 			if val == 10 || val == 13 {
 				b.ConsoleOut.Write([]byte{'\n'})
@@ -439,10 +439,10 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 			}
 		}
 
-	case 0x00FF0002: // Term.In (read only)
+	case 0x00FF0010: // Term.In ($FF01 -> $00FF0010) (read only)
 		// Ignored
 
-	case 0x00FF0004: // Reg.Stat (write 1 to clear)
+	case 0x00FF0020, 0x00FF0022: // Reg.Stat ($FF02 -> $00FF0020) (write 1 to clear)
 		if isOdd {
 			b.RegStat &^= uint16(val) & 0x0003
 		} else {
@@ -453,7 +453,7 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 		}
 		b.evalInterrupts()
 
-	case 0x00FF0006: // Reg.Ctrl
+	case 0x00FF0030, 0x00FF0032: // Reg.Ctrl ($FF03 -> $00FF0030)
 		if isOdd {
 			b.RegCtrl = (b.RegCtrl & 0xFF00) | uint16(val)
 		} else {
@@ -461,129 +461,132 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 		}
 		b.evalInterrupts()
 
-	case 0x00FF0008: // logchar
+	case 0x00FF0040: // logchar ($FF04 -> $00FF0040)
 		if b.LogOut != nil {
 			b.LogOut.Write([]byte{val})
 		}
 
-	case 0x00FF000A: // Exit.Code
+	case 0x00FF0050, 0x00FF0052: // Exit.Code ($FF05 -> $00FF0050)
 		if isOdd {
 			b.ExitCode = (b.ExitCode & 0xFF00) | uint16(val)
 		} else {
 			b.ExitCode = (b.ExitCode & 0x00FF) | (uint16(val) << 8)
+			if val != 0 && b.ExitCode == 0 {
+				b.ExitCode = uint16(val)
+			}
 		}
 		b.Exited = true
 
-	case 0x00FF0010: // Disk.Drive
+	case 0x00FF0100: // Disk.Drive ($FF10 -> $00FF0100)
 		b.DiskDrive = uint16(val & 0x03)
 
-	case 0x00FF0014: // Disk.Sector (MSW)
+	case 0x00FF0110: // Disk.Sector (MSW) ($FF11 -> $00FF0110)
 		if isOdd {
 			b.DiskSector = (b.DiskSector & 0xFF00FFFF) | (uint32(val) << 16)
 		} else {
 			b.DiskSector = (b.DiskSector & 0x00FFFFFF) | (uint32(val) << 24)
 		}
-	case 0x00FF0016: // Disk.Sector (LSW)
+	case 0x00FF0112: // Disk.Sector (LSW)
 		if isOdd {
 			b.DiskSector = (b.DiskSector & 0xFFFFFF00) | uint32(val)
 		} else {
 			b.DiskSector = (b.DiskSector & 0xFFFF00FF) | (uint32(val) << 8)
 		}
 
-	case 0x00FF0018: // Disk.Task
+	case 0x00FF0140: // Disk.Task ($FF14 -> $00FF0140)
 		b.DiskTask = uint16(val)
 
-	case 0x00FF001A: // Disk.Addr (MSW)
+	case 0x00FF0150: // Disk.Addr (MSW) ($FF15 -> $00FF0150)
 		if isOdd {
 			b.DiskAddr = (b.DiskAddr & 0xFF00FFFF) | (uint32(val) << 16)
 		} else {
 			b.DiskAddr = (b.DiskAddr & 0x00FFFFFF) | (uint32(val) << 24)
 		}
-	case 0x00FF001C: // Disk.Addr (LSW)
+	case 0x00FF0152: // Disk.Addr (LSW)
 		if isOdd {
 			b.DiskAddr = (b.DiskAddr & 0xFFFFFF00) | uint32(val)
 		} else {
 			b.DiskAddr = (b.DiskAddr & 0xFFFF00FF) | (uint32(val) << 8)
 		}
 
-	case 0x00FF001E: // Disk.CmdSt
+	case 0x00FF0170: // Disk.CmdSt ($FF17 -> $00FF0170)
 		if val != 0 {
 			b.executeDiskCommand(val)
 		}
 
-	case 0x00FF0020: // Task.Active
+	case 0x00FF0200: // Task.Active ($FF20 -> $00FF0200)
 		b.TaskReg = val
 
-	case 0x00FF0022: // DMA.SrcTask
+	case 0x00FF0210: // DMA.SrcTask ($FF21 -> $00FF0210)
 		b.DmaSrcTask = uint16(val)
 
-	case 0x00FF0024: // DMA.SrcAddr (MSW)
+	case 0x00FF0220: // DMA.SrcAddr (MSW) ($FF22 -> $00FF0220)
 		if isOdd {
 			b.DmaSrcAddr = (b.DmaSrcAddr & 0xFF00FFFF) | (uint32(val) << 16)
 		} else {
 			b.DmaSrcAddr = (b.DmaSrcAddr & 0x00FFFFFF) | (uint32(val) << 24)
 		}
-	case 0x00FF0026: // DMA.SrcAddr (LSW)
+	case 0x00FF0222: // DMA.SrcAddr (LSW)
 		if isOdd {
 			b.DmaSrcAddr = (b.DmaSrcAddr & 0xFFFFFF00) | uint32(val)
 		} else {
 			b.DmaSrcAddr = (b.DmaSrcAddr & 0xFFFF00FF) | (uint32(val) << 8)
 		}
 
-	case 0x00FF0028: // DMA.DstTask
+	case 0x00FF0240: // DMA.DstTask ($FF24 -> $00FF0240)
 		b.DmaDstTask = uint16(val)
 
-	case 0x00FF002A: // DMA.DstAddr (MSW)
+	case 0x00FF0250: // DMA.DstAddr (MSW) ($FF25 -> $00FF0250)
 		if isOdd {
 			b.DmaDstAddr = (b.DmaDstAddr & 0xFF00FFFF) | (uint32(val) << 16)
 		} else {
 			b.DmaDstAddr = (b.DmaDstAddr & 0x00FFFFFF) | (uint32(val) << 24)
 		}
-	case 0x00FF002C: // DMA.DstAddr (LSW)
+	case 0x00FF0252: // DMA.DstAddr (LSW)
 		if isOdd {
 			b.DmaDstAddr = (b.DmaDstAddr & 0xFFFFFF00) | uint32(val)
 		} else {
 			b.DmaDstAddr = (b.DmaDstAddr & 0xFFFF00FF) | (uint32(val) << 8)
 		}
 
-	case 0x00FF002E: // DMA.Count (MSW)
+	case 0x00FF0270: // DMA.Count (MSW) ($FF27 -> $00FF0270)
 		if isOdd {
 			b.DmaCount = (b.DmaCount & 0xFF00FFFF) | (uint32(val) << 16)
 		} else {
 			b.DmaCount = (b.DmaCount & 0x00FFFFFF) | (uint32(val) << 24)
 		}
-	case 0x00FF0030: // DMA.Count (LSW)
+	case 0x00FF0272: // DMA.Count (LSW)
 		if isOdd {
 			b.DmaCount = (b.DmaCount & 0xFFFFFF00) | uint32(val)
 		} else {
 			b.DmaCount = (b.DmaCount & 0xFFFF00FF) | (uint32(val) << 8)
 		}
 
-	case 0x00FF0032: // DMA.CmdSt
+	case 0x00FF0274: // DMA.CmdSt ($FF27 slot offset 4)
 		if val != 0 {
 			b.executeDMACopy()
 		}
 
-	case 0x00FF0034: // SharedMemoryCurtain (MSW)
+	case 0x00FF0280: // SharedMemoryCurtain (MSW) ($FF28 -> $00FF0280)
 		if isOdd {
 			b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0xFF00FFFF) | (uint32(val) << 16)
 		} else {
 			b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0x00FFFFFF) | (uint32(val) << 24)
 		}
-	case 0x00FF0036: // SharedMemoryCurtain (LSW)
+	case 0x00FF0282: // SharedMemoryCurtain (LSW)
 		if isOdd {
 			b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0xFFFFFF00) | uint32(val)
 		} else {
 			b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0xFFFF00FF) | (uint32(val) << 8)
 		}
 
-	case 0x00FF005A: // TaskFlagsTarget (0x00FF005A or 0x00FF005B)
+	case 0x00FF02D0: // TaskFlagsTarget ($FF2D -> $00FF02D0)
 		b.TaskFlagsTarget = val
 
-	case 0x00FF005C: // TaskFlagsRegister (0x00FF005C or 0x00FF005D): sets flags for TaskFlagsTarget
+	case 0x00FF02E0: // TaskFlagsRegister ($FF2E -> $00FF02E0): sets flags for TaskFlagsTarget
 		b.TaskFlags[b.TaskFlagsTarget] = val
 
-	case 0x00FF005E: // PurgeTaskMem (0x00FF005E or 0x00FF005F)
+	case 0x00FF02F0: // PurgeTaskMem ($FF2F -> $00FF02F0)
 		if val != 0 {
 			b.purgeTaskMem(val)
 		}

@@ -127,7 +127,7 @@ func TestCPUEndToEndProgram(t *testing.T) {
 	// 0x1004: D280           ADD.L D0, D1
 	// 0x1006: 5380           SUBQ.L #1, D0
 	// 0x1008: 66FA           BNE loop (-6 bytes from 0x100A -> 0x1004)
-	// 0x100A: 33C1 00FF 000A MOVE.W D1, ($00FF000A).L  (writes result to Exit.Code)
+	// 0x100A: 33C1 00FF 0050 MOVE.W D1, ($00FF0050).L  (writes result to Exit.Code)
 	// 0x1010: 4E71           NOP
 
 	bus.WriteWord(0x1000, 0x7005)
@@ -137,7 +137,7 @@ func TestCPUEndToEndProgram(t *testing.T) {
 	bus.WriteWord(0x1008, 0x66FA)
 	bus.WriteWord(0x100A, 0x33C1)
 	bus.WriteWord(0x100C, 0x00FF)
-	bus.WriteWord(0x100E, 0x000A)
+	bus.WriteWord(0x100E, 0x0050)
 	bus.WriteWord(0x1010, 0x4E71)
 
 	cpu := NewCPU(bus)

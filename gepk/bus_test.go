@@ -93,17 +93,17 @@ func TestBusTaskFlagsIOBlessing(t *testing.T) {
 	assertPanic(func() { bus.ReadByte(0x00FF0000) }, "Unblessed Task 1 ReadByte")
 	assertPanic(func() { bus.WriteByte(0x00FF0000, 0x41) }, "Unblessed Task 1 WriteByte")
 
-	// 2. Supervisor blesses Task 1 via $00FF005C = 0x01
+	// 2. Supervisor blesses Task 1 via $00FF02E0 = 0x01
 	bus.CurrentFC = FCSupervisorData
-	bus.WriteByte(0x00FF005C, 0x01)
-	if got := bus.ReadByte(0x00FF005C); got != 0x01 {
-		t.Fatalf("ReadByte(0x00FF005C) = 0x%02X, want 0x01", got)
+	bus.WriteByte(0x00FF02E0, 0x01)
+	if got := bus.ReadByte(0x00FF02E0); got != 0x01 {
+		t.Fatalf("ReadByte(0x00FF02E0) = 0x%02X, want 0x01", got)
 	}
 
 	// 3. Task 1 in User mode now has I/O access
 	bus.CurrentFC = FCUserData
 	bus.TaskReg = 1
-	bus.WriteByte(0x00FF0010, 0x03) // Set DiskDrive to 3
+	bus.WriteByte(0x00FF0100, 0x03) // Set DiskDrive to 3
 	if bus.DiskDrive != 3 {
 		t.Fatalf("expected DiskDrive=3 from blessed Task 1, got %d", bus.DiskDrive)
 	}
@@ -112,23 +112,23 @@ func TestBusTaskFlagsIOBlessing(t *testing.T) {
 	bus.TaskReg = 2
 	assertPanic(func() { bus.ReadByte(0x00FF0000) }, "Unblessed Task 2 ReadByte")
 
-	// 4b. Supervisor blesses Task 2 via $00FF005A = 2, $00FF005C = 0x01
+	// 4b. Supervisor blesses Task 2 via $00FF02D0 = 2, $00FF02E0 = 0x01
 	bus.CurrentFC = FCSupervisorData
-	bus.WriteByte(0x00FF005A, 2)
-	bus.WriteByte(0x00FF005C, 0x01)
+	bus.WriteByte(0x00FF02D0, 2)
+	bus.WriteByte(0x00FF02E0, 0x01)
 	bus.CurrentFC = FCUserData
 	bus.TaskReg = 2
-	bus.WriteByte(0x00FF0010, 0x02) // Access succeeds
+	bus.WriteByte(0x00FF0100, 0x02) // Access succeeds
 	if bus.DiskDrive != 2 {
 		t.Fatalf("expected DiskDrive=2 from blessed Task 2, got %d", bus.DiskDrive)
 	}
 
 	// 5. Purging Task 1 revokes blessing
 	bus.CurrentFC = FCSupervisorData
-	bus.WriteByte(0x00FF005A, 1)
-	bus.WriteByte(0x00FF005E, 0x01) // Purge Task 1
-	if got := bus.ReadByte(0x00FF005C); got != 0x00 {
-		t.Fatalf("ReadByte(0x00FF005C) after purge = 0x%02X, want 0x00", got)
+	bus.WriteByte(0x00FF02D0, 1)
+	bus.WriteByte(0x00FF02F0, 0x01) // Purge Task 1
+	if got := bus.ReadByte(0x00FF02E0); got != 0x00 {
+		t.Fatalf("ReadByte(0x00FF02E0) after purge = 0x%02X, want 0x00", got)
 	}
 
 	// Task 1 now panics again
@@ -145,7 +145,7 @@ func TestBusTaskRouting(t *testing.T) {
 	bus.WriteLong(0x00010000, 0xAAAAAAAA)
 
 	// Switch TaskReg to Task 2
-	bus.WriteWord(0x00FF0020, 0x0002)
+	bus.WriteWord(0x00FF0200, 0x0002)
 
 	// Write to Task 2 in User mode at same logical address
 	bus.CurrentFC = FCUserData
@@ -174,15 +174,15 @@ func TestBusDMAEngine(t *testing.T) {
 	bus.Tasks[1].writeByte(0x1003, 0x44)
 
 	// Program DMA registers: copy 4 bytes from Task 1:0x1000 to Task 2:0x2000
-	bus.WriteWord(0x00FF0022, 0x0001)     // Src Task 1
-	bus.WriteLong(0x00FF0024, 0x00001000) // Src Addr
-	bus.WriteWord(0x00FF0028, 0x0002)     // Dst Task 2
-	bus.WriteLong(0x00FF002A, 0x00002000) // Dst Addr
-	bus.WriteLong(0x00FF002E, 0x00000004) // Count 4 bytes
-	bus.WriteWord(0x00FF0032, 0x0001)     // Trigger DMA command
+	bus.WriteWord(0x00FF0210, 0x0001)     // Src Task 1 ($FF21 -> $00FF0210)
+	bus.WriteLong(0x00FF0220, 0x00001000) // Src Addr ($FF22 -> $00FF0220)
+	bus.WriteWord(0x00FF0240, 0x0002)     // Dst Task 2 ($FF24 -> $00FF0240)
+	bus.WriteLong(0x00FF0250, 0x00002000) // Dst Addr ($FF25 -> $00FF0250)
+	bus.WriteLong(0x00FF0270, 0x00000004) // Count 4 bytes ($FF27 -> $00FF0270)
+	bus.WriteWord(0x00FF0274, 0x0001)     // Trigger DMA command ($FF27+4 -> $00FF0274)
 
 	// Check status
-	stat := bus.ReadWord(0x00FF0032)
+	stat := bus.ReadWord(0x00FF0274)
 	if stat != 1 {
 		t.Fatalf("DMA status = %d, want 1 (OKAY)", stat)
 	}

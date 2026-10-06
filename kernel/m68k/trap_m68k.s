@@ -65,7 +65,7 @@ _printf:
 
 _exit:
     move.l  4(sp), d0
-    move.b  d0, $00FF000A
+    move.b  d0, $00FF0050
 .exit_hang:
     bra     .exit_hang
 
@@ -229,7 +229,7 @@ trap_0:
     ; Restore parent PID from saved_parent_pid_table_m68k[childPID]
     lea     saved_parent_pid_table_m68k, a0
     move.b  0(a0, d0.w), v_proc.CurrentPID
-    move.b  v_proc.CurrentPID, $00FF0020
+    move.b  v_proc.CurrentPID, $00FF0200
 
     ; Restore kernel stack and return to LaunchProcess caller
     lea     saved_kernel_sp_table_m68k, a0
@@ -245,7 +245,7 @@ trap_0:
     ; Switch to next runnable process via scheduler
     jsr     f_proc__ScheduleNext
     move.b  d0, v_proc.CurrentPID
-    move.b  d0, $00FF0020       ; Set TaskReg to nextPID
+    move.b  d0, $00FF0200       ; Set TaskReg to nextPID
     bra     .l6_resume_same
 
 .m68k_driver_return:
@@ -274,7 +274,7 @@ trap_0:
     move.l  a0, usp
 
     ; Restore TaskReg to caller PID
-    move.b  v_proc.CurrentPID, $00FF0020
+    move.b  v_proc.CurrentPID, $00FF0200
 
     ; Restore Task 0 callee-saved registers
     move.l  (sp)+, a6
@@ -313,7 +313,7 @@ trap_0:
     move.l  a0, usp
 
     ; Restore TaskReg to caller PID
-    move.b  v_proc.CurrentPID, $00FF0020
+    move.b  v_proc.CurrentPID, $00FF0200
 
     ; Restore Task 0 callee-saved registers
     move.l  (sp)+, a6
@@ -359,8 +359,8 @@ f_hal__RBFCall:
     ; Save kernel stack pointer
     move.l  sp, saved_kernel_sp_rbf_m68k
 
-    ; Set TaskReg to Task 1 ($00FF0020)
-    move.b  #1, $00FF0020
+    ; Set TaskReg to Task 1 ($00FF0200)
+    move.b  #1, $00FF0200
 
     ; Set USP to Task 1 stack pointer
     move.l  saved_task1_sp_m68k, a0
@@ -409,8 +409,8 @@ f_hal__ProcfsCall:
     ; Save kernel stack pointer
     move.l  sp, saved_kernel_sp_procfs_m68k
 
-    ; Set TaskReg to Task 2 ($00FF0020)
-    move.b  #2, $00FF0020
+    ; Set TaskReg to Task 2 ($00FF0200)
+    move.b  #2, $00FF0200
 
     ; Set USP to Task 2 stack pointer
     move.l  saved_task2_sp_m68k, a0
@@ -527,7 +527,7 @@ f_hal__LaunchProcess:
     move.l  sp, 0(a1, d2.w)
 
     move.b  d0, v_proc.CurrentPID
-    move.b  d0, $00FF0020       ; Set TaskReg to user PID
+    move.b  d0, $00FF0200       ; Set TaskReg to user PID
 
     ; Check if user_context_table_m68k[d0] already has a valid PC
     moveq   #0, d2
@@ -568,7 +568,7 @@ trap_level4:
 
 trap_level6:
     ; Acknowledge Level 6 timer interrupt
-    move.w  #1, $00FF0004
+    move.w  #1, $00FF0020
 
     ; Save all registers onto supervisor stack
     movem.l d0-d7/a0-a6, -(sp)
@@ -642,7 +642,7 @@ trap_level6:
 
 .l6_ksp_ok:
     move.b  d0, v_proc.CurrentPID
-    move.b  d0, $00FF0020       ; Set TaskReg to nextPID
+    move.b  d0, $00FF0200       ; Set TaskReg to nextPID
 
 .l6_resume_same:
     ; Restore context of CurrentPID

@@ -100,8 +100,8 @@ Hatvan OS/K organizes memory into **256 independent task spaces** (`Task 0` thro
 
 Because the 68000 features built-in dual stacks and privilege states, the 6809 `TaskFuse` mechanism is retired in favor of a clean, hardware-native model:
 
-### The Task Register (`$00FF0020`)
-* Located at `$00FF0020` in Task 0 I/O space (accessible only in Supervisor mode).
+### The Task Register (`$00FF0200`)
+* Located at `$00FF0200` in Task 0 I/O space (accessible only in Supervisor mode).
 * Holds the 8-bit ID of the currently active User Task (`1..255`).
 * **Memory Routing Rule**:
   * When the CPU is in **Supervisor State** (`FC2 = 1`), memory accesses route to **Task 0**.
@@ -126,7 +126,11 @@ Because the 68000 features built-in dual stacks and privilege states, the 6809 `
 
 ## 5. Memory-Mapped I/O Device Registers (`$00FF0000..$00FFFFFF`)
 
-All registers are placed on **even 16-bit word boundaries** to comply with 68000 word-alignment rules. Registers may be accessed using byte (`MOVE.B`), word (`MOVE.W`), or longword (`MOVE.L`) operations as specified.
+The 68000 I/O page maps each 6809 port offset into a dedicated 16-byte slot using the formula:
+$$\text{Port}_{\text{68k}} = \$00\text{FF}0000 + 16 \times \text{offset} = \$00\text{FF0}xx0$$
+where $\text{offset} = \text{Port}_{\text{6809}} - \$FF00$.
+
+All slot base addresses are multiples of 16, inherently satisfying 16-bit word and 32-bit longword alignment rules (`A0 = 0`). Registers may be accessed using byte (`MOVE.B`), word (`MOVE.W`), or longword (`MOVE.L`) operations as specified.
 
 All multi-byte numbers are big-endian.
 
@@ -134,43 +138,44 @@ All multi-byte numbers are big-endian.
 Address     Width  Name        Description
 ----------  -----  ----------  -------------------------------------------------------
 $00FF0000   W/B    Term.Out    Console Output (write ASCII char to stdout)
-$00FF0002   W/B    Term.In     Console Input (read non-blocking ASCII char from stdin)
-$00FF0004   W      Reg.Stat    Interrupt / Device Status Register
-$00FF0006   W      Reg.Ctrl    Interrupt Control Register
-$00FF0008   W/B    logchar     Log Output (write ASCII char to stderr)
-$00FF000A   W      Exit.Code   VM Termination Code (write halts VM; read returns status)
+$00FF0010   W/B    Term.In     Console Input (read non-blocking ASCII char from stdin)
+$00FF0020   W/L    Reg.Stat    Interrupt / Device Status Register
+$00FF0030   W/L    Reg.Ctrl    Interrupt Control Register
+$00FF0040   W/B    logchar     Log Output (write ASCII char to stderr)
+$00FF0050   W/B/L  Exit.Code   VM Termination Code (write halts VM; read returns status)
 
-$00FF0010   W      Disk.Drive  Disk Drive Selector (0 to 3)
-$00FF0012   W      (reserved)  Reserved (must be 0)
-$00FF0014   L      Disk.Sector 32-bit Logical Sector Number (LSN)
-$00FF0018   W      Disk.Task   Target Task ID (0 to 255)
-$00FF001A   L      Disk.Addr   32-bit Target Memory Address in Disk.Task
-$00FF001E   W      Disk.CmdSt  Disk Command / Status Register
+$00FF0100   W/B    Disk.Drive  Disk Drive Selector (0 to 3)
+$00FF0110   L      Disk.Sector 32-bit Logical Sector Number (LSN)
+$00FF0140   W/B    Disk.Task   Target Task ID (0 to 255)
+$00FF0150   L      Disk.Addr   32-bit Target Memory Address in Disk.Task
+$00FF0170   W/B    Disk.CmdSt  Disk Command / Status Register
 
-$00FF0020   W      Task.Active Active User Task Register (1 to 255)
+$00FF0200   W/B    Task.Active Active User Task Register (1 to 255)
 
-$00FF0022   W      DMA.SrcTask DMA Source Task ID (0 to 255)
-$00FF0024   L      DMA.SrcAddr DMA 32-bit Source Address
-$00FF0028   W      DMA.DstTask DMA Destination Task ID (0 to 255)
-$00FF002A   L      DMA.DstAddr DMA 32-bit Destination Address
-$00FF002E   L      DMA.Count   DMA Byte Count (1 to 16,777,216 bytes)
-$00FF0032   W      DMA.CmdSt   DMA Command / Status Register
+$00FF0210   W/B    DMA.SrcTask DMA Source Task ID (0 to 255)
+$00FF0220   L      DMA.SrcAddr DMA 32-bit Source Address
+$00FF0240   W/B    DMA.DstTask DMA Destination Task ID (0 to 255)
+$00FF0250   L      DMA.DstAddr DMA 32-bit Destination Address
+$00FF0270   L      DMA.Count   DMA Byte Count (1 to 16,777,216 bytes)
+$00FF0274   W/B    DMA.CmdSt   DMA Command / Status Register
+$00FF0280   L      SharedMemoryCurtain 32-bit Shared Memory Curtain Address
 
-$00FF005C   B      TaskFlags   Task Flags Register (Bit 0 = allow I/O for Task 1)
-$00FF005E   B      PurgeTaskMem Purge / zero task memory (task 1 to 255)
+$00FF02D0   W/B    TaskFlagsTarget Task selector for capability flags
+$00FF02E0   W/B    TaskFlags   Task Flags Register (Bit 0 = allow I/O for Task)
+$00FF02F0   W/B    PurgeTaskMem Purge / zero task memory (task 1 to 255)
 ```
 
-### Character Console & 60Hz Timer (`$00FF0000..$00FF000A`)
+### Character Console & 60Hz Timer (`$00FF0000..$00FF0050`)
 * **`Term.Out` (`$00FF0000`)**: Writing an ASCII byte transmits it to standard output.
-* **`Term.In` (`$00FF0002`)**: Reading returns the next character from non-blocking stdin (cooked line mode), or returns `0` if no character is ready.
-* **`Reg.Stat` (`$00FF0004`)**:
+* **`Term.In` (`$00FF0010`)**: Reading returns the next character from non-blocking stdin (cooked line mode), or returns `0` if no character is ready.
+* **`Reg.Stat` (`$00FF0020`)**:
   * Bit 0 (`$0001`): `Timer.Ready` (set on 60Hz timer tick; write 1 to clear).
   * Bit 1 (`$0002`): `Term.RxReady` (set when console input is ready; write 1 to clear).
-* **`Reg.Ctrl` (`$00FF0006`)**:
+* **`Reg.Ctrl` (`$00FF0030`)**:
   * Bit 0 (`$0001`): `Ctrl.TimrIRQ` (1 = enable timer interrupt).
   * Bit 1 (`$0002`): `Ctrl.TermIRQ` (1 = enable console receive interrupt).
-* **`logchar` (`$00FF0008`)**: Writing an ASCII byte sends it to standard error / emulator log.
-* **`Exit.Code` (`$00FF000A`)**: Writing a 16-bit status terminates emulator execution with that exit code.
+* **`logchar` (`$00FF0040`)**: Writing an ASCII byte sends it to standard error / emulator log.
+* **`Exit.Code` (`$00FF0050`)**: Writing status terminates emulator execution with that exit code.
 
 ### Interrupt Architecture
 Hatvan VM/K supports two interrupt routing options.
@@ -189,11 +194,11 @@ We will use Option A, Direct Autovectors.
 * Both timer and console input assert **Interrupt Level 2 (Autovector 26 at `$00000068`)**.
 * The ISR reads `Reg.Stat` to distinguish `Timer.Ready` and `Term.RxReady`.
 
-### Disk Subsystem (`$00FF0010..$00FF001E`)
+### Disk Subsystem (`$00FF0100..$00FF0170`)
 * Sector Size: **512 bytes** (or 256 bytes for legacy OS-9 RBF images).
 * Supports up to 4 attached images (`/d0` through `/d3`).
-* **`Disk.Sector`**: Full 32-bit LSN, supporting multi-terabyte disk images.
-* **`Disk.CmdSt` (`$00FF001E`)**:
+* **`Disk.Sector` (`$00FF0110`)**: Full 32-bit LSN, supporting multi-terabyte disk images.
+* **`Disk.CmdSt` (`$00FF0170`)**:
   * Write: `1 = Read Sector`, `2 = Write Sector`. Initiates transfer and sets status to `0` (busy).
   * Read:
     * `0` = Busy (transfer in progress).
@@ -201,17 +206,19 @@ We will use Option A, Direct Autovectors.
     * `>1` = Error code (e.g. invalid drive, sector out of bounds).
     * Reading non-zero status automatically clears the register back to `0`.
 
-### Fast DMA Copy Engine (`$00FF0022..$00FF0032`)
+### Fast DMA Copy Engine (`$00FF0210..$00FF0274`)
 A hardware DMA engine allows fast inter-task and intra-task block transfers without software copy loops:
-* **`DMA.Count`**: 32-bit transfer size (up to full 16 MB task spaces).
-* **`DMA.CmdSt` (`$00FF0032`)**:
+* **`DMA.Count` (`$00FF0270`)**: 32-bit transfer size (up to full 16 MB task spaces).
+* **`DMA.CmdSt` (`$00FF0274`)**:
   * Write: `1 = Start Transfer`. Initiates transfer and sets status to `0` (busy).
   * Read: `0 = Busy`, `1 = OKAY`, `>1 = Error`.
 
-### Task Capability Flags & Memory Management (`$00FF005C..$00FF005E`)
-* **`TaskFlags` (`$00FF005C`)**:
-  * Write: writing a byte sets runtime capability flags for Task 1. Specifically, Bit 0 (`$01`) blesses Task 1 with I/O privileges, allowing it in User Mode to read/write the hardware I/O page (`$00FF0000..$00FFFFFF`) without triggering a user protection trap (`ErrUserAccessTrap`). Reading returns the current flags for Task 1.
-* **`PurgeTaskMem` (`$00FF005E`)**:
+### Task Capability Flags & Memory Management (`$00FF02D0..$00FF02F0`)
+* **`TaskFlagsTarget` (`$00FF02D0`)**:
+  * Write: sets the target task ID (0..255) for capability configuration.
+* **`TaskFlags` (`$00FF02E0`)**:
+  * Write: writing a byte sets runtime capability flags for the target task. Specifically, Bit 0 (`$01`) blesses the task with I/O privileges, allowing it in User Mode to read/write the hardware I/O page (`$00FF0000..$00FFFFFF`) without triggering a user protection trap. Reading returns the current flags for the target task.
+* **`PurgeTaskMem` (`$00FF02F0`)**:
   * Write: writing a non-zero task number frees that task's sparse 64KB memory pages (or zeroes its memory), resets any task capability flags (clearing I/O privileges), and guarantees that newly allocated tasks start with clean zero-filled memory. Writing 0 is ignored (Task 0 kernel memory is protected).
 
 ---
