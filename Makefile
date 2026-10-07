@@ -11,6 +11,7 @@ MINIGOLF    ?= $(BUILD_DIR)/minigolf
 ASM68K      ?= $(BUILD_DIR)/asm68k
 ASM6809     ?= $(BUILD_DIR)/asm6809
 ASMZ80      ?= $(BUILD_DIR)/asmz80
+ASM1802     ?= $(BUILD_DIR)/asm1802
 LWASM       ?= lwasm
 OS9         ?= os9
 SREC2DECB   := $(REPO_DIR)/scripts/srec2decb.py
@@ -20,6 +21,7 @@ BUILD_CMD_SH := $(REPO_DIR)/build-cmd.sh
 VM_6809     := $(BUILD_DIR)/gep9
 VM_68K      := $(BUILD_DIR)/gepk
 VM_Z80      := $(BUILD_DIR)/gepz
+VM_1802     := $(BUILD_DIR)/gepc
 
 # Kernel Targets
 KERNEL_6809 := $(BUILD_DIR)/kernel_6809.decb
@@ -52,9 +54,11 @@ M6809_SRCS  := $(wildcard $(REPO_DIR)/kernel/m6809/*.golf) $(REPO_DIR)/kernel/m6
 M68K_SRCS   := $(wildcard $(REPO_DIR)/kernel/m68k/*.golf) $(REPO_DIR)/kernel/m68k/trap_m68k.s
 Z80_SRCS    := $(wildcard $(REPO_DIR)/kernel/z80/*.golf) $(REPO_DIR)/kernel/z80/cstart_z80.asm $(REPO_DIR)/kernel/z80/trap_z80.asm
 
-.PHONY: all vms kernels cmds disk test test-interactive test-z80 test-quick clean
+.PHONY: all vms tools kernels cmds disk test test-interactive test-z80 test-quick clean
 
 all: $(BUILD_DIR) vms kernels cmds disk
+
+tools: $(MINIGOLF) $(ASM68K) $(ASM6809) $(ASMZ80) $(ASM1802)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -72,8 +76,11 @@ $(ASM6809): | $(BUILD_DIR)
 $(ASMZ80): | $(BUILD_DIR)
 	cd $(MINIGOLF_DIR) && $(GO) build -o $(ASMZ80) ./cmd/asmz80
 
+$(ASM1802): | $(BUILD_DIR)
+	cd $(MINIGOLF_DIR) && $(GO) build -o $(ASM1802) ./cmd/asm1802
+
 # --- Emulators ---
-vms: $(VM_6809) $(VM_68K) $(VM_Z80)
+vms: $(VM_6809) $(VM_68K) $(VM_Z80) $(VM_1802)
 
 $(VM_6809): $(shell find $(REPO_DIR)/cmd/gep9 $(REPO_DIR)/gep9 -type f -name '*.go') | $(BUILD_DIR)
 	$(GO) build -o $@ ./cmd/gep9
@@ -83,6 +90,9 @@ $(VM_68K): $(shell find $(REPO_DIR)/cmd/gepk $(REPO_DIR)/gepk -type f -name '*.g
 
 $(VM_Z80): $(shell find $(REPO_DIR)/cmd/gepz $(REPO_DIR)/gepz -type f -name '*.go') | $(BUILD_DIR)
 	$(GO) build -o $@ ./cmd/gepz
+
+$(VM_1802): $(shell find $(REPO_DIR)/cmd/gepc $(REPO_DIR)/gepc -type f -name '*.go') | $(BUILD_DIR)
+	$(GO) build -o $@ ./cmd/gepc
 
 # --- Kernels & Drivers ---
 kernels: $(KERNEL_6809) $(KERNEL_68K) $(KERNEL_Z80) $(RBF_6809) $(RBF_68K) $(RBF_Z80) $(PROCFS_6809) $(PROCFS_68K) $(PROCFS_Z80)

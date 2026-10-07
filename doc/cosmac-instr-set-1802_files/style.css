@@ -1,0 +1,195 @@
+#basic_top {
+    border-collapse: separate;
+    width: 100%;
+}
+
+#basic_top td,
+#basic_top th {
+    vertical-align: top;
+    padding: 5px;
+}
+
+#basic_top tr:hover {
+    background-color: #ddd;
+}
+
+thead {
+    position: -webkit-sticky;
+    position: -moz-sticky;
+    position: -ms-sticky;
+    position: -o-sticky;
+    position: sticky;
+    top: 0;
+}
+
+table.bits {
+    table-layout: fixed;
+    border-collapse: separate ;
+    border-spacing: 30px 8px;
+    text-align: center;
+}
+
+th.bits {
+    text-align: center;
+}
+
+table.type {
+    border-collapse: separate ;
+    border-spacing: 30px 8px;
+}
+
+sub.formula {
+    vertical-align: sub;
+    font-size: small;
+}
+
+sup.formula {
+    vertical-align: super;
+    font-size: small;
+}
+
+line.formula {
+    text-decoration: line-through;
+}
+
+table.basic {
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 10px 0px;
+}
+
+table.basic_center {
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 10px 0px;
+    text-align: center;
+}
+
+th.basic_center {
+    text-align: center;
+}
+
+#pseudo {
+    border-collapse: separate;
+    width: 100%;
+}
+
+#pseudo td,
+#pseudo th {
+    vertical-align: top;
+    border: 1px solid #ddd;
+    padding: 8px;
+}
+
+#pseudo tr:nth-child(odd) {
+    background-color: #f2f2f2;
+}
+
+#pseudo tr:hover {
+    background-color: #ddd;
+}
+
+#pseudo th {
+    padding-top: 12px;
+    padding-bottom: 12px;
+    background-color: #072387;
+    color: #FD9E37;
+}
+
+#xml {
+    border-collapse: separate;
+    width: 100%;
+}
+
+#xml td,
+#xml th {
+    vertical-align: top;
+    border: 1px solid #ddd;
+    padding: 8px;
+}
+
+#xml tr:nth-child(odd) {
+    background-color: #f2f2f2;
+}
+
+#xml tr:hover {
+    background-color: #ddd;
+}
+
+#xml th {
+    padding-top: 12px;
+    padding-bottom: 12px;
+    background-color: #072387;
+    color: #FD9E37;
+}
+
+tr.orange {
+    color: #FD9E37;
+}
+
+td.basic_center {
+    text-align: center;
+}
+
+#diff {
+    table-layout: fixed;
+    border-collapse: separate;
+    width: 100%;
+}
+
+#diff td,
+#diff th {
+    vertical-align: top;
+    border: 1px solid #ddd;
+    padding: 8px;
+}
+
+#diff tr:nth-child(odd) {
+    background-color: #f2f2f2;
+}
+
+#diff tr:hover {
+    background-color: #ddd;
+}
+
+#diff th {
+    padding-top: 12px;
+    padding-bottom: 12px;
+    background-color: #072387;
+    color: #FD9E37;
+}
+
+span.tab4 {
+    position: absolute;
+    left: 4em;
+}
+
+span.tab8 {
+    position: absolute;
+    left: 8em;
+}
+
+sub.formula {
+    vertical-align: sub;
+    font-size: small;
+}
+
+sup.formula {
+    vertical-align: super;
+    font-size: small;
+}
+
+line.formula {
+    text-decoration: line-through;
+}
+
+span.tab4 {
+}
+
+code {
+      background-color: #f4f4f4;
+      padding: 1px 4px;
+      border-radius: 3px;
+      color: inherit;
+  }
+

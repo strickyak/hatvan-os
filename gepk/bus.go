@@ -306,7 +306,7 @@ func (b *Bus) readIOLocked(addr uint32) byte {
 	case 0x00FF0040: // logchar ($FF04 -> $00FF0040)
 		return 0
 
-	case 0x00FF0050, 0x00FF0052: // Exit.Code ($FF05 -> $00FF0050)
+	case 0x00FF0050, 0x00FF0052, 0x00FF000A: // Exit.Code ($FF05 -> $00FF0050, legacy alias $00FF000A)
 		if isOdd {
 			return byte(b.ExitCode)
 		}
@@ -466,7 +466,7 @@ func (b *Bus) writeIOLocked(addr uint32, val byte) {
 			b.LogOut.Write([]byte{val})
 		}
 
-	case 0x00FF0050, 0x00FF0052: // Exit.Code ($FF05 -> $00FF0050)
+	case 0x00FF0050, 0x00FF0052, 0x00FF000A: // Exit.Code ($FF05 -> $00FF0050, legacy alias $00FF000A)
 		if isOdd {
 			b.ExitCode = (b.ExitCode & 0xFF00) | uint16(val)
 		} else {

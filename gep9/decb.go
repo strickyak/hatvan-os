@@ -159,6 +159,11 @@ func LoadDECB(r io.Reader) (*DECB, error) {
 		case ChunkSrcFile:
 			d.Files[addr] = string(payload)
 
+		case ChunkMagic:
+			if header[3] == 'x' && header[4] != '9' {
+				return nil, fmt.Errorf("incompatible architecture magic in DECB: expected 'x9', got 'x%c'", header[4])
+			}
+
 		default:
 			// Safely skip any unknown chunk types
 		}

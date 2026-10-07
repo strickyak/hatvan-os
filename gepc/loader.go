@@ -1,4 +1,4 @@
-package gepz
+package gepc
 
 import (
 	"encoding/binary"
@@ -55,8 +55,8 @@ func (b *Bus) LoadDECBIntoTask(task uint8, r io.Reader) (*LoadedBinary, error) {
 			lb.HasEntry = true
 			break
 		} else if tag == 0xFD { // Architecture magic marker ('x', <arch>)
-			if header[3] == 'x' && header[4] != 'z' {
-				return nil, fmt.Errorf("incompatible architecture magic in DECB: expected 'xz', got 'x%c'", header[4])
+			if header[3] == 'x' && header[4] != 'c' {
+				return nil, fmt.Errorf("incompatible architecture magic in DECB: expected 'xc', got 'x%c'", header[4])
 			}
 			if length > 0 {
 				discard := make([]byte, length)

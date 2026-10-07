@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<!-- saved from url=(0043)https://www.emma02.hobby-site.com/1802.html -->
+<html lang="en" data-pgc-master="master.html"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+        <script language="Javascript" src="./cosmac-instr-set-1802_files/display.php">
+        <!--
+        //-->
+        </script>
+        
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description" content="Emma 02 Emulator">
+        <meta name="author" content="Marcel van Tongeren">
+        <title>Emma 02</title>
+        <!-- Bootstrap core CSS -->
+        <!-- Custom styles for this template -->
+        <!-- HTML5 shim and Respond.js IE8 support of HTML5 elements and media queries -->
+        <!--[if lt IE 9]>
+      <script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+      <script src="https://oss.maxcdn.com/libs/respond.js/1.3.0/respond.min.js"></script>
+    <![endif]-->
+        <link href="./cosmac-instr-set-1802_files/bootstrap.css" rel="stylesheet" type="text/css">
+        <link href="./cosmac-instr-set-1802_files/style.css" rel="stylesheet" type="text/css">
+        <link href="./cosmac-instr-set-1802_files/sidebar.css" rel="stylesheet" type="text/css">
+    </head>
+    <body>
+        <div class="page-header">
+            <div class="row">
+                <div class="col-xs-4 col-sm-2">
+                    <img src="./cosmac-instr-set-1802_files/logo.png" width="128" height="128">
+                    <p></p>
+                </div>
+                <div class="col-xs-8 col-sm-5">
+                    <h1><font color="#FD8E25">EMMA</font> <font color="#020B76">02</font></h1>
+                    <h2 data-pgc-field="Page Title"></h2><h2 data-pgc-field="Page Title" style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: rgb(51, 51, 51);"></h2><h2 data-pgc-field="Page Title" style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: rgb(51, 51, 51);">Machine Code</h2>
+                </div>
+                <div class="col-xs-0 col-sm-5">
+                    <span class="picture" data-pgc-field="picture"><div class="row">
+                            <div class="col-xs-6"></div>
+                            <div class="col-xs-6">
+</div>
+                        </div></span>
+                </div>
+            </div>
+        </div>
+        <div class="container-fluid nav-sidebar">
+            <div class="row">
+                <div class="col-sm-2 sidebar">
+                    <ul class="nav nav-sidebar">
+                        <li data-pgc-field="nav_home"><a href="https://www.emma02.hobby-site.com/index.html">Home</a>
+                        </li>
+                        <li data-pgc-field="nav_download"><a href="https://www.emma02.hobby-site.com/download.html">Download</a>
+                        </li>
+                        <li data-pgc-field="nav_changelog"><a href="https://www.emma02.hobby-site.com/changelog.html">Change Log</a>
+                        </li>
+                        <li data-pgc-field="nav_help"><a href="https://www.emma02.hobby-site.com/help/Main.htm" target="_blank">Help</a>
+                        </li>
+                        <li class="dropdown" data-pgc-field="nav_compilation"><a href="https://www.emma02.hobby-site.com/1802.html#" class="dropdown-toggle" data-toggle="dropdown">Compilation<b class="caret"></b></a>
+                            <ul class="dropdown-menu">
+                                <li><a href="https://www.emma02.hobby-site.com/compile_windows.html">Windows</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/compile_osx.html">OS X</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/compile_linux.html">Ubuntu</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/compile_linux_fedora.html">Fedora</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/compile_linux_suse.html">openSUSE</a>
+                                </li>
+                            </ul>
+                        </li>
+                        <li data-pgc-field="nav_forum" data-pgc-edit-classes="active"><a href="https://www.emma02.hobby-site.com/forum.html">Forums</a>
+                        </li>
+                        <li data-pgc-field="nav_tape"><a href="https://www.emma02.hobby-site.com/cassette.html">Tape Conversion</a>
+                        </li>
+                        <li class="active dropdown" data-pgc-field="nav_machine"><a href="https://www.emma02.hobby-site.com/1802.html#" class="dropdown-toggle" data-toggle="dropdown">Machine Code<b class="caret"></b></a>
+                            <ul class="dropdown-menu">
+                                <li><a href="https://www.emma02.hobby-site.com/system00.html">SYSTEM00</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/1801.html">CDP1801</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/1802.html">CDP1802</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/1804.html">CDP1804</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/1805.html">CDP1805</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/cpu_diff.html">Differences</a>
+                                </li>
+                            </ul>
+                        </li>
+                        <li class="dropdown" data-pgc-field="nav_pseudo"><a href="https://www.emma02.hobby-site.com/1802.html#" class="dropdown-toggle" data-toggle="dropdown">Pseudo Code<b class="caret"></b></a>
+                            <ul class="dropdown-menu">
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_amvbas.html">AMVBAS</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_am4kbas.html">AM4KBAS</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_cardtran.html">CARDTRAN</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_chip8.html">Chip-8, 8X, ETI-660 &amp; Elf</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_fel-1.html">FEL-1</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_fpa-1.html">FPA-1</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_fpl-2.html">FPL-2</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_fpl-4.html">FPL-4</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_gpl-2.html">GPL-2</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_gpl-3.html">GPL-3</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_gpl-4.html">GPL-4</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_gpl-a_ram.html">GPL-A (2K RAM)</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_gpl-a_rom.html">GPL-A (2K ROM)</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_st2.html">ST2</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_st4.html">ST4</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_stk.html">STK</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_test_word.html">Test-Word</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/pseudo_super_chip.html">Super-chip</a>
+                                </li>
+                            </ul>
+                        </li>
+                        <li class="dropdown" data-pgc-field="nav_xml"><a href="https://www.emma02.hobby-site.com/1802.html#" class="dropdown-toggle" data-toggle="dropdown">XML Code<b class="caret"></b></a>
+                            <ul class="dropdown-menu">
+                                <li><a href="https://www.emma02.hobby-site.com/xml_main.html">Main Elements</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_io.html">I/O</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_system.html">System</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_ad_converter.html">A/D Convertor</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_basic.html">BASIC</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_batchwav.html">Batch wav</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_bootstrap.html">Bootstrap</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_cassette.html">Cassette</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_cd4536b.html">CD4536B</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_cdp1851.html">CDP1851</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_cdp1852.html">CDP1852</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_cdp1854.html">CDP1854</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_cdp1855.html">CDP1855</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_cdp1877.html">CDP1877</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_cdp1878.html">CDP1878</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_cdp1879.html">CDP1879</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_debugger.html">Debugger</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_diagnostic.html">COMX Diagnostic</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_dip.html">Dip switch</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_disk.html">Disk</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_efbuttons.html">EF Buttons</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_flipflop.html">Flip Flop</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_frontpanel.html">Front Panel</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_gui.html">GUI</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_hexmodem.html">HEX Modem</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_iogroup.html">I/O Group</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_keyboard.html">Keyboard</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_keyfile.html">Keyfile</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_keypad.html">Keypad</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_locations.html">Locations</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_memory.html">Memory</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_mm57109.html">MM57109</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_printer.html">Printer</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_rtc.html">RTC</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_sound.html">Sound</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_splash.html">Splash</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_usb.html">USB</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_video.html">Video</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_videodump.html">Videodump</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_vt.html">vt</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/xml_xmodem.html">X Modem</a>
+                                </li>
+                            </ul>
+                        </li>
+                        <li class="dropdown" data-pgc-field="nav_basic"><a href="https://www.emma02.hobby-site.com/1802.html#" class="dropdown-toggle" data-toggle="dropdown">BASIC<b class="caret"></b></a>
+                            <ul class="dropdown-menu">
+                                <li><a href="https://www.emma02.hobby-site.com/basic.html">General Information</a>
+                                </li>
+                                <li class="divider"></li>
+                                <li><a href="https://www.emma02.hobby-site.com/basic_comx.html">COMX BASIC V1.00</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/basic_fpb.html">Floating Point BASIC 2.2</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/basic_pecom_32.html">Pecom 32 BASIC</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/basic_pecom.html">Pecom 64 BASIC 1.0 &amp; 4.0</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/basic_quest_1_4.html">Quest Super BASIC 1.4</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/basic_quest_3_0.html">Quest Super BASIC 3.0</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/basic_quest_5_0.html">Quest Super BASIC 5.0</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/basic_quest_6_0.html">Quest Super BASIC 6.0</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/basic_rca.html">RCA BASIC3 V1.1</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/basic_telmac.html">Telmac SBASIC v24.3</a>
+                                </li>
+                                <li><a href="https://www.emma02.hobby-site.com/basic_error.html">Error Messages</a>
+                                </li>
+                            </ul>
+                        </li>
+                        <li data-pgc-field="nav_comix" data-pgc-edit-classes="active"><a href="https://www.emma02.hobby-site.com/computers.html">Computer List</a>
+                        </li>
+                    </ul>
+                    <span class="hidden-xs"><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p><p>&nbsp;</p></span>
+                </div>
+                <main class="main_wrapper" data-pgc-field="main">
+                    <div class="col-sm-10">
+                        <div class="row">
+                            <div class="col-xs-12">
+                                <h3>CDP1802</h3>
+                                <h4>Information</h4>
+                                <p>I believe the most used 180x CPU is the CDP1802, below is the complete instruction set. The 1802&nbsp;was introduced by RCA in 1976, successors of the 1802 are the <a href="https://www.emma02.hobby-site.com/1804.html">CDP1804</a>, <a href="https://www.emma02.hobby-site.com/1805.html">CDP1805</a> and CDP1806 with extended instruction sets which you can find on the linked pages.&nbsp;An overview of all difference between the <a href="https://www.emma02.hobby-site.com/system00.html">SYSTEM00</a>, <a href="https://www.emma02.hobby-site.com/1801.html">CDP1801</a> and CDP1802 can be found on the <a href="https://www.emma02.hobby-site.com/cpu_diff.html">differences</a> page.</p>
+                                <h4>Definitions</h4>
+                                <table id="basic_top">
+                                    <tbody>
+                                        <tr>
+                                            <td>xx</td>
+                                            <td>8 bit value</td>
+                                        </tr>
+                                        <tr>
+                                            <td>xxxx</td>
+                                            <td>16 bit value</td>
+                                        </tr>
+                                        <tr>
+                                            <td>RN</td>
+                                            <td>Register number N (N = 0 to F), RN can also be represented as N in all commands</td>
+                                        </tr>
+                                        <tr>
+                                            <td>RX</td>
+                                            <td>Stack or data pointer register</td>
+                                        </tr>
+                                        <tr>
+                                            <td>RP</td>
+                                            <td>Program counter register</td>
+                                        </tr>
+                                        <tr>
+                                            <td>RN.0, RX.0 or RP.0</td>
+                                            <td>Lower order byte or RN, RX or RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>RN.1, RX.1 or RP.1</td>
+                                            <td>Higher order byte or RN, RX or RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>M(RN)-&gt;D; RN+1-&gt;RN</td>
+                                            <td>This notation means: The memory byte pointed to by RN is loaded into D, and RN is incremented by 1.</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                                <h4>Syntax</h4>
+                                <table id="pseudo">
+                                    <tbody>
+                                        </tbody><thead>
+                                            <tr>
+                                                <th>Instruction</th>
+                                                <th>Mnemonic</th>
+                                                <th>Opcode</th>
+                                                <th>Definition</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody><tr>
+                                            <td><b>MEMORY REFERENCE</b></td>
+                                        </tr>
+                                        <tr>
+                                            <td>LOAD VIA N</td>
+                                            <td>LDN RN</td>
+                                            <td>0N</td>
+                                            <td>M(RN)-&gt;D; FOR N not 0</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LOAD ADVANCE</td>
+                                            <td>LDA RN</td>
+                                            <td>4N</td>
+                                            <td>M(RN)-&gt;D; RN+1-&gt;RN</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LOAD VIA X</td>
+                                            <td>LDX</td>
+                                            <td>F0</td>
+                                            <td>M(RX)-&gt;D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LOAD VIA X AND ADVANCE</td>
+                                            <td>LDXA</td>
+                                            <td>72</td>
+                                            <td>M(RX)-&gt;D; RX+1-&gt;RX</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LOAD IMMEDIATE</td>
+                                            <td>LDI xx</td>
+                                            <td>F8</td>
+                                            <td>M(RP)-&gt;D; RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>STORE VIA N</td>
+                                            <td>STR RN</td>
+                                            <td>5N</td>
+                                            <td>D-&gt;M(RN)</td>
+                                        </tr>
+                                        <tr>
+                                            <td>STORE VIA X AND DECREMENT</td>
+                                            <td>STXD</td>
+                                            <td>73</td>
+                                            <td>D-&gt;M(RX); RX-1-&gt;RX</td>
+                                        </tr>
+                                        <tr>
+                                            <td><b>REGISTER OPERATIONS</b></td>
+                                        </tr>
+                                        <tr>
+                                            <td>INCREMENT REG N</td>
+                                            <td>INC RN</td>
+                                            <td>1N</td>
+                                            <td>RN+1-&gt;RN</td>
+                                        </tr>
+                                        <tr>
+                                            <td>DECREMENT REG N</td>
+                                            <td>DEC RN</td>
+                                            <td>2N</td>
+                                            <td>RN-1-&gt;RN</td>
+                                        </tr>
+                                        <tr>
+                                            <td>INCREMENT REG X</td>
+                                            <td>IRX</td>
+                                            <td>60</td>
+                                            <td>RX+1-&gt;RX</td>
+                                        </tr>
+                                        <tr>
+                                            <td>GET LOW REG N</td>
+                                            <td>GLO RN</td>
+                                            <td>8N</td>
+                                            <td>RN.0-&gt;D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>PUT LOW REG N</td>
+                                            <td>PLO RN</td>
+                                            <td>AN</td>
+                                            <td>D-&gt;RN.0</td>
+                                        </tr>
+                                        <tr>
+                                            <td>GET HIGH REG N</td>
+                                            <td>GHI RN</td>
+                                            <td>9N</td>
+                                            <td>RN.1-&gt;D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>PUT HIGH REG N</td>
+                                            <td>PHI RN</td>
+                                            <td>BN</td>
+                                            <td>D-&gt;RN.1</td>
+                                        </tr>
+                                        <tr>
+                                            <td><b>LOGIC OPERATIONS</b></td>
+                                        </tr>
+                                        <tr>
+                                            <td>OR</td>
+                                            <td>OR</td>
+                                            <td>F1</td>
+                                            <td>M(RX) OR D-&gt;D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>OR IMMEDIATE</td>
+                                            <td>ORI xx</td>
+                                            <td>F9</td>
+                                            <td>M(RP) OR D-&gt;D; RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>EXCLUSIVE OR</td>
+                                            <td>XOR</td>
+                                            <td>F3</td>
+                                            <td>M(RX) XOR D-&gt;D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>EXCLUSIVE OR IMMEDIATE</td>
+                                            <td>XRI xx</td>
+                                            <td>FB</td>
+                                            <td>M(RP) XOR D-&gt;D; RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>AND</td>
+                                            <td>AND</td>
+                                            <td>F2</td>
+                                            <td>M(RX) AND D-&gt;D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>AND IMMEDIATE</td>
+                                            <td>ANI xx</td>
+                                            <td>FA</td>
+                                            <td>M(RP) AND D-&gt;D; RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHIFT RIGHT</td>
+                                            <td>SHR</td>
+                                            <td>F6</td>
+                                            <td>SHIFT D RIGHT, LSB(D)-&gt;DF, 0-&gt;MSB(D)</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHIFT RIGHT WITH CARRY</td>
+                                            <td>SHRC</td>
+                                            <td>76</td>
+                                            <td>SHIFT D RIGHT, LSB(D)-&gt;DF, DF-&gt;MSB(D)</td>
+                                        </tr>
+                                        <tr>
+                                            <td>RING SHIFT RIGHT</td>
+                                            <td>RSHR</td>
+                                            <td>76</td>
+                                            <td>SHIFT D RIGHT, LSB(D)-&gt;DF, DF-&gt;MSB(D)</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHIFT LEFT</td>
+                                            <td>SHL</td>
+                                            <td>FE</td>
+                                            <td>SHIFT D LEFT, MSB(D)-&gt;DF, 0-&gt;LSB(D)</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHIFT LEFT WITH CARRY</td>
+                                            <td>SHLC</td>
+                                            <td>7E</td>
+                                            <td>SHIFT D LEFT, MSB(D)-&gt;DF, DF-&gt;LSB(D)</td>
+                                        </tr>
+                                        <tr>
+                                            <td>RING SHIFT LEFT</td>
+                                            <td>RSHL</td>
+                                            <td>7E</td>
+                                            <td>SHIFT D LEFT, MSB(D)-&gt;DF, DF-&gt;LSB(D)</td>
+                                        </tr>
+                                        <tr>
+                                            <td><b>ARITHMETIC OPERATIONS</b></td>
+                                        </tr>
+                                        <tr>
+                                            <td>ADD</td>
+                                            <td>ADD</td>
+                                            <td>F4</td>
+                                            <td>M(RX)+D-&gt;DF, D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>ADD IMMEDIATE</td>
+                                            <td>ADI xx</td>
+                                            <td>FC</td>
+                                            <td>M(RP)+D-&gt;DF, D; RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>ADD WITH CARRY</td>
+                                            <td>ADC</td>
+                                            <td>74</td>
+                                            <td>M(RX)+D+DF-&gt;DF, D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>ADD WITH CARRY, IMMEDIATE</td>
+                                            <td>ADCI xx</td>
+                                            <td>7C</td>
+                                            <td>M(RP)+D+DF-&gt;DF, D; RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SUBTRACT D</td>
+                                            <td>SD</td>
+                                            <td>F5</td>
+                                            <td>M(RX)-D-&gt;DF, D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SUBTRACT D IMMEDIATE</td>
+                                            <td>SDI xx</td>
+                                            <td>FD</td>
+                                            <td>M(RP)-D-&gt;DF, D; RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SUBTRACT D WITH BORROW</td>
+                                            <td>SDB</td>
+                                            <td>75</td>
+                                            <td>M(RX)-D-(NOT DF)-&gt;DF, D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SUBTRACT D WITH BORROW, IMMEDIATE</td>
+                                            <td>SDBI xx</td>
+                                            <td>7D</td>
+                                            <td>M(RP)-D-(Not DF)-&gt;DF, D; RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SUBTRACT MEMORY</td>
+                                            <td>SM</td>
+                                            <td>F7</td>
+                                            <td>D-M(RX)-&gt;DF, D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SUBTRACT MEMORY IMMEDIATE</td>
+                                            <td>SMI xx</td>
+                                            <td>FF</td>
+                                            <td>D-M(RP)-&gt;DF, D; RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SUBTRACT MEMORY WITH BORROW</td>
+                                            <td>SMB</td>
+                                            <td>77</td>
+                                            <td>D-M(RX)-(NOT DF)-&gt;DF, D</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SUBTRACT MEMORY WITH BORROW, IMMEDI¬ATE</td>
+                                            <td>SMBl xx</td>
+                                            <td>7F</td>
+                                            <td>D-M(RP)-(NOT DF)-&gt;DF, D; RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td><b>BRANCH INSTRUCTIONS-SHORT BRANCH</b></td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH</td>
+                                            <td>BR xx</td>
+                                            <td>30</td>
+                                            <td>M(RP)-&gt;RP.0</td>
+                                        </tr>
+                                        <tr>
+                                            <td>NO SHORT BRANCH (See SKP)</td>
+                                            <td>NBR</td>
+                                            <td>38</td>
+                                            <td>RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF D=0</td>
+                                            <td>BZ xx</td>
+                                            <td>32</td>
+                                            <td>IF D=0, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF D NOT 0</td>
+                                            <td>BNZ xx</td>
+                                            <td>3A</td>
+                                            <td>IF D NOT 0, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF DF=1</td>
+                                            <td>BDF xx</td>
+                                            <td>33</td>
+                                            <td>IF DF=1, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF POS OR ZERO</td>
+                                            <td>BPZ xx</td>
+                                            <td>33</td>
+                                            <td>IF DF=1, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF GREATER OR EQUAL</td>
+                                            <td>BGE xx</td>
+                                            <td>33</td>
+                                            <td>IF DF=1, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF DF=0</td>
+                                            <td>BNF xx</td>
+                                            <td>3B</td>
+                                            <td>IF DF=0, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF MINUS</td>
+                                            <td>BM xx</td>
+                                            <td>3B</td>
+                                            <td>IF DF=0, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF LESS</td>
+                                            <td>BL xx</td>
+                                            <td>3B</td>
+                                            <td>IF DF=0, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF Q=1</td>
+                                            <td>BQ xx</td>
+                                            <td>31</td>
+                                            <td>IF Q=1, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF Q=0</td>
+                                            <td>BNQ xx</td>
+                                            <td>39</td>
+                                            <td>IF Q=0, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF EF1=1</td>
+                                            <td>B1 xx</td>
+                                            <td>34</td>
+                                            <td>IF EF1=1, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF EF1=0</td>
+                                            <td>BN1 xx</td>
+                                            <td>3C</td>
+                                            <td>IF EF1=0, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF EF2=1</td>
+                                            <td>B2 xx</td>
+                                            <td>35</td>
+                                            <td>IF EF2=1, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF EF2=0</td>
+                                            <td>BN2 xx</td>
+                                            <td>3D</td>
+                                            <td>IF EF2=0, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF EF3=1</td>
+                                            <td>B3 xx</td>
+                                            <td>36</td>
+                                            <td>IF EF3=1, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF EF3=0</td>
+                                            <td>BN3 xx</td>
+                                            <td>3E</td>
+                                            <td>IF EF3=0, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF EF4=1</td>
+                                            <td>B4 xx</td>
+                                            <td>37</td>
+                                            <td>IF EF4=1, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT BRANCH IF EF4=0</td>
+                                            <td>BN4 xx</td>
+                                            <td>3F</td>
+                                            <td>IF EF4=0, M(RP)-&gt;RP.0, ELSE RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td><b>BRANCH INSTRUCTIONS-LONG BRANCH</b></td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG BRANCH</td>
+                                            <td>LBR xxxx</td>
+                                            <td>C0</td>
+                                            <td>M(RP)-&gt;RP. 1, M(RP+1)-&gt;RP.0</td>
+                                        </tr>
+                                        <tr>
+                                            <td>NO LONG BRANCH (See LSKP)</td>
+                                            <td>NLBR</td>
+                                            <td>C8</td>
+                                            <td>RP+2-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG BRANCH IF D=0</td>
+                                            <td>LBZ xxxx</td>
+                                            <td>C2</td>
+                                            <td>lF D=0, M(RP)-&gt;RP.1, M(RP+1)-&gt;RP.0, ELSE RP+2-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG BRANCH IF D NOT 0</td>
+                                            <td>LBNZ xxxx</td>
+                                            <td>CA</td>
+                                            <td>IF D Not 0, M(RP)-&gt;RP.1, M(RP+1)-&gt;RP.0, ELSE RP+2-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG BRANCH IF DF=1</td>
+                                            <td>LBDF xxxx</td>
+                                            <td>C3</td>
+                                            <td>IF DF=1, M(RP)-&gt;RP.1, M(RP+1)-&gt;RP.0, ELSE RP+2-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG BRANCH IF DF=0</td>
+                                            <td>LBNF xxxx</td>
+                                            <td>CB</td>
+                                            <td>IF DF=0, M(RP)-&gt;RP.1, M(RP+1)-&gt;RP.0, ELSE RP+2-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG BRANCH IF Q=1</td>
+                                            <td>LBQ xxxx</td>
+                                            <td>C1</td>
+                                            <td>IF Q=1, M(RP)-&gt;RP.1, M(RP+1)-&gt;RP.0, ELSE RP+2-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG BRANCH lF Q=0</td>
+                                            <td>LBNQ xxxx</td>
+                                            <td>C9</td>
+                                            <td>lF Q=0, M(RP)-&gt;RP.1, M(RP+1)-&gt;RP.0 ELSE RP+2-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td><b>SKIP INSTRUCTIONS</b></td>
+                                        </tr>
+                                        <tr>
+                                            <td>SHORT SKIP (See NBR)</td>
+                                            <td>SKP</td>
+                                            <td>38</td>
+                                            <td>RP+1-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG SKIP (See NLBR)</td>
+                                            <td>LSKP</td>
+                                            <td>C8</td>
+                                            <td>RP+2-&gt;RP</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG SKIP IF D=0</td>
+                                            <td>LSZ</td>
+                                            <td>CE</td>
+                                            <td>IF D=0, RP+2-&gt;RP, ELSE CONTINUE</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG SKIP IF D NOT 0</td>
+                                            <td>LSNZ</td>
+                                            <td>C6</td>
+                                            <td>IF D Not 0, RP+2-&gt;RP, ELSE CONTINUE</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG SKIP IF DF=1</td>
+                                            <td>LSDF</td>
+                                            <td>CF</td>
+                                            <td>IF DF=1, RP+2-&gt;RP, ELSE CONTINUE</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG SKIP IF DF=0</td>
+                                            <td>LSNF</td>
+                                            <td>C7</td>
+                                            <td>IF DF=0, RP+2-&gt;RP, ELSE CONTINUE</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG SKIP lF Q=1</td>
+                                            <td>LSQ</td>
+                                            <td>CD</td>
+                                            <td>IF Q=1, RP+2-&gt;RP, ELSE CONTINUE</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG SKIP IF Q=0</td>
+                                            <td>LSNQ</td>
+                                            <td>C5</td>
+                                            <td>IF Q=0, RP+2-&gt;RP, ELSE CONTINUE</td>
+                                        </tr>
+                                        <tr>
+                                            <td>LONG SKIP IF IE=1</td>
+                                            <td>LSIE</td>
+                                            <td>CC</td>
+                                            <td>IF IE=1, RP+2-&gt;RP, ELSE CONTINUE</td>
+                                        </tr>
+                                        <tr>
+                                            <td><b>CONTROL INSTRUCTIONS</b></td>
+                                        </tr>
+                                        <tr>
+                                            <td>IDLE</td>
+                                            <td>IDL</td>
+                                            <td>00</td>
+                                            <td>WAIT FOR DMA OR INTERRUPT; M(R0)-&gt;BUS</td>
+                                        </tr>
+                                        <tr>
+                                            <td>NO OPERATION</td>
+                                            <td>NOP</td>
+                                            <td>C4</td>
+                                            <td>CONTINUE</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SET P</td>
+                                            <td>SEP RN</td>
+                                            <td>DN</td>
+                                            <td>N-&gt;P</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SET X</td>
+                                            <td>SEX RN</td>
+                                            <td>EN</td>
+                                            <td>N-&gt;X</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SET Q</td>
+                                            <td>SEQ</td>
+                                            <td>7B</td>
+                                            <td>1-&gt;Q</td>
+                                        </tr>
+                                        <tr>
+                                            <td>RESET Q</td>
+                                            <td>REQ</td>
+                                            <td>7A</td>
+                                            <td>0-&gt;Q</td>
+                                        </tr>
+                                        <tr>
+                                            <td>SAVE</td>
+                                            <td>SAV</td>
+                                            <td>78</td>
+                                            <td>T-&gt;M(RX)</td>
+                                        </tr>
+                                        <tr>
+                                            <td>PUSH X, P TO STACK</td>
+                                            <td>MARK</td>
+                                            <td>79</td>
+                                            <td>(X, P)-&gt;T; (X, P)-&gt;M(R2), THEN P-&gt;X; R2-1-&gt;R2</td>
+                                        </tr>
+                                        <tr>
+                                            <td>RETURN</td>
+                                            <td>RET</td>
+                                            <td>70</td>
+                                            <td>M(RX)-&gt;(X, P); RX+1-&gt;RX, 1-&gt;lE</td>
+                                        </tr>
+                                        <tr>
+                                            <td>DISABLE</td>
+                                            <td>DlS</td>
+                                            <td>71</td>
+                                            <td>M(RX)-&gt;(X, P); RX+1-&gt;RX, 0-&gt;lE</td>
+                                        </tr>
+                                        <tr>
+                                            <td><b>INPUT-OUTPUT BYTE TRANSFER</b></td>
+                                        </tr>
+                                        <tr>
+                                            <td>OUTPUT 1</td>
+                                            <td>OUT 1</td>
+                                            <td>61</td>
+                                            <td>M(RX)-&gt;BUS; RX+1-&gt;RX; N LINES=1</td>
+                                        </tr>
+                                        <tr>
+                                            <td>OUTPUT 2</td>
+                                            <td>OUT 2</td>
+                                            <td>62</td>
+                                            <td>M(RX)-&gt;BUS; RX+1-&gt;RX; N LINES=2</td>
+                                        </tr>
+                                        <tr>
+                                            <td>OUTPUT 3</td>
+                                            <td>OUT 3</td>
+                                            <td>63</td>
+                                            <td>M(RX)-&gt;BUS; RX+1-&gt;RX; N LINES=3</td>
+                                        </tr>
+                                        <tr>
+                                            <td>OUTPUT 4</td>
+                                            <td>OUT 4</td>
+                                            <td>64</td>
+                                            <td>M(RX)-&gt;BUS; RX+1-&gt;RX; N LINES=4</td>
+                                        </tr>
+                                        <tr>
+                                            <td>OUTPUT 5</td>
+                                            <td>OUT 5</td>
+                                            <td>65</td>
+                                            <td>M(RX)-&gt;BUS; RX+1-&gt;RX; N LINES=5</td>
+                                        </tr>
+                                        <tr>
+                                            <td>OUTPUT 6</td>
+                                            <td>OUT 6</td>
+                                            <td>66</td>
+                                            <td>M(RX)-&gt;BUS; RX+1-&gt;RX; N LINES=6</td>
+                                        </tr>
+                                        <tr>
+                                            <td>OUTPUT 7</td>
+                                            <td>OUT 7</td>
+                                            <td>67</td>
+                                            <td>M(RX)-&gt;BUS; RX+1-&gt;RX; N LINES=7</td>
+                                        </tr>
+                                        <tr>
+                                            <td>INPUT 1</td>
+                                            <td>INP 1</td>
+                                            <td>69</td>
+                                            <td>BUS-&gt;M(RX); BUS-&gt;D; N LINES=1</td>
+                                        </tr>
+                                        <tr>
+                                            <td>INPUT 2</td>
+                                            <td>INP 2</td>
+                                            <td>6A</td>
+                                            <td>BUS-&gt;M(RX); BUS-&gt;D; N LINES=2</td>
+                                        </tr>
+                                        <tr>
+                                            <td>INPUT 3</td>
+                                            <td>INP 3</td>
+                                            <td>6B</td>
+                                            <td>BUS-&gt;M(RX); BUS-&gt;D; N LINES=3</td>
+                                        </tr>
+                                        <tr>
+                                            <td>INPUT 4</td>
+                                            <td>INP 4</td>
+                                            <td>6C</td>
+                                            <td>BUS-&gt;M(RX); BUS-&gt;D; N LINES=4</td>
+                                        </tr>
+                                        <tr>
+                                            <td>INPUT 5</td>
+                                            <td>INP 5</td>
+                                            <td>6D</td>
+                                            <td>BUS-&gt;M(RX); BUS-&gt;D; N LINES=5</td>
+                                        </tr>
+                                        <tr>
+                                            <td>INPUT 6</td>
+                                            <td>INP 6</td>
+                                            <td>6E</td>
+                                            <td>BUS-&gt;M(RX); BUS-&gt;D; N LINES=6</td>
+                                        </tr>
+                                        <tr>
+                                            <td>INPUT 7</td>
+                                            <td>INP 7</td>
+                                            <td>6F</td>
+                                            <td>BUS-&gt;M(RX); BUS-&gt;D; N LINES=7</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+        <!-- Bootstrap core JavaScript
+    ================================================== -->
+        <!-- Placed at the end of the document so the pages load faster -->
+        <script src="./cosmac-instr-set-1802_files/jquery.min.js"></script>
+        <script src="./cosmac-instr-set-1802_files/bootstrap.min.js"></script>
+        <!-- IE10 viewport hack for Surface/desktop Windows 8 bug -->
+        <script src="./cosmac-instr-set-1802_files/ie10-viewport-bug-workaround.js"></script>
+    
+
+</body></html>
