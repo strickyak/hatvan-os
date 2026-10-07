@@ -1,0 +1,169 @@
+package hal
+
+const ARCH = 'c'
+const SHARED_MEM_CURTAIN = 0xE000
+
+// Hardware ports for 1802 Hatvan VM ($FF00 page in Task 0)
+const PORT_TERMOUT = 0xFF00
+const PORT_TERMIN = 0xFF01
+const PORT_REGSTAT = 0xFF02
+const PORT_REGCTRL = 0xFF03
+const PORT_LOGCHAR = 0xFF04
+const PORT_EXIT = 0xFF05
+
+const PORT_DISKDRV = 0xFF10
+const PORT_DISKSEC0 = 0xFF11
+const PORT_DISKSEC1 = 0xFF12
+const PORT_DISKSEC2 = 0xFF13
+const PORT_DISKTASK = 0xFF14
+const PORT_DISKADDR = 0xFF15 // 2 bytes (Hi, Lo)
+const PORT_DISKCMD = 0xFF17
+
+const PORT_TASKFUSE = 0xFF20
+
+const PORT_DMASRCTASK = 0xFF21
+const PORT_DMASRCADDR = 0xFF22 // 2 bytes (Hi, Lo)
+const PORT_DMADSTTASK = 0xFF24
+const PORT_DMADSTADDR = 0xFF25 // 2 bytes (Hi, Lo)
+const PORT_DMACNT = 0xFF27
+const PORT_TRAPSYSCALL = 0xFF28
+
+const PORT_TASKFLAGSTASK = 0xFF2D
+const PORT_TASKFLAGS = 0xFF2E
+const PORT_PURGETASKMEM = 0xFF2F
+
+func GetSharedCurtain() word {
+	return SHARED_MEM_CURTAIN
+}
+
+func PutChar(b byte) {
+	vpokeb(PORT_TERMOUT, b)
+}
+
+func GetChar() byte {
+	return vpeekb(PORT_TERMIN)
+}
+
+func LogChar(b byte) {
+	vpokeb(PORT_LOGCHAR, b)
+}
+
+func EnableTimer() {
+	vpokeb(PORT_REGCTRL, 3)
+}
+
+func DisableTimer() {
+	vpokeb(PORT_REGCTRL, 0)
+}
+
+func Exit(code byte) {
+	vpokeb(PORT_EXIT, code)
+	for {
+	}
+}
+
+func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte {
+	vpokeb(PORT_DISKDRV, drive)
+	vpokeb(PORT_DISKSEC0, 0)
+	vpokeb(PORT_DISKSEC1, byte(lsn >> 8))
+	vpokeb(PORT_DISKSEC2, byte(lsn))
+	vpokeb(PORT_DISKTASK, task)
+	vpokeb(PORT_DISKADDR, byte(addr >> 8))
+	vpokeb(PORT_DISKADDR + 1, byte(addr))
+
+	cmd := byte(1) // 1 = Read
+	if isWrite != 0 {
+		cmd = 2 // 2 = Write
+	}
+	vpokeb(PORT_DISKCMD, cmd)
+
+	// Busy-wait for completion
+	for {
+		st := vpeekb(PORT_DISKCMD)
+		if st > 0 {
+			return st
+		}
+	}
+}
+
+func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word) {
+	for count > 0 {
+		chunk := count
+		if chunk > 256 {
+			chunk = 256
+		}
+
+		vpokeb(PORT_DMASRCTASK, srcTask)
+		vpokeb(PORT_DMASRCADDR, byte(srcAddr >> 8))
+		vpokeb(PORT_DMASRCADDR + 1, byte(srcAddr))
+		vpokeb(PORT_DMADSTTASK, dstTask)
+		vpokeb(PORT_DMADSTADDR, byte(dstAddr >> 8))
+		vpokeb(PORT_DMADSTADDR + 1, byte(dstAddr))
+
+		cntByte := byte(chunk)
+		if chunk == 256 {
+			cntByte = 0
+		}
+		vpokeb(PORT_DMACNT, cntByte)
+
+		// Wait for completion
+		for vpeekb(PORT_DMACNT) == 0 {
+		}
+
+		count -= chunk
+		srcAddr += chunk
+		dstAddr += chunk
+	}
+}
+
+func SwitchTask(task byte) {
+	vpokeb(PORT_TASKFUSE, task)
+}
+
+func LaunchProcess(pid byte, sp word, pc word)
+
+func HasInput() bool {
+	return (vpeekb(PORT_REGSTAT) & 2) != 0
+}
+
+func PurgeTaskMem(task byte) {
+	if task != 0 {
+		vpokeb(PORT_PURGETASKMEM, task)
+	}
+}
+
+func SetTaskFlags(task byte, flags byte) {
+	vpokeb(PORT_TASKFLAGSTASK, task)
+	vpokeb(PORT_TASKFLAGS, flags)
+}
+
+func RBFCall()
+func Sleep()
+func InitRBF(entryPC word)
+func ProcfsCall()
+func InitProcfs(entryPC word)
+func InitUserContext(pid byte, sp word, pc word)
+func FreeUserContext(pid byte)
+
+var ChildCodeStart word
+
+func SetupChildTask(taskID byte, lineMode byte, entryPC word, binSize word, paramStr *byte, paramLen word) word {
+	paramEnd := word(0xFE00)
+	sp := paramEnd
+	if paramStr != (*byte)(0) && paramLen > 0 {
+		sp -= (paramLen + 1)
+		sp &^= 1
+		DMACopy(0, word(paramStr), taskID, sp, paramLen)
+		cr := byte('\r')
+		DMACopy(0, word(&cr), taskID, sp+paramLen, 1)
+	}
+
+	userSP := sp - 2
+	var initPC [2]byte
+	initPC[0] = byte(entryPC >> 8)
+	initPC[1] = byte(entryPC)
+	DMACopy(0, word(&initPC[0]), taskID, userSP, 2)
+
+	ChildCodeStart = 0x0200
+	return userSP
+}
