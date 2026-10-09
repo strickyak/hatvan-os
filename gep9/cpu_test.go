@@ -1376,5 +1376,260 @@ func TestDeep65280RamSizing(t *testing.T) {
 	}
 }
 
+func TestEmbiggenDisabled(t *testing.T) {
+	bus := NewBus()
+	bus.Embiggen = false
+
+	// Task 0: access to $FF40 should panic with ErrKernelIOPanic
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("expected Task 0 access to $FF40 without EMBIGGEN to panic")
+			}
+			err, ok := r.(error)
+			if !ok || !errors.Is(err, ErrKernelIOPanic) {
+				t.Fatalf("expected ErrKernelIOPanic, got %v", r)
+			}
+		}()
+		bus.CurrentTask = 0
+		bus.ReadByte(0xFF40)
+	}()
+
+	// Task 1: access to $FF40 should panic with ErrUserAccessTrap
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("expected Task 1 access to $FF40 without EMBIGGEN to panic")
+			}
+			err, ok := r.(error)
+			if !ok || !errors.Is(err, ErrUserAccessTrap) {
+				t.Fatalf("expected ErrUserAccessTrap, got %v", r)
+			}
+		}()
+		bus.CurrentTask = 1
+		bus.ReadByte(0xFF40)
+	}()
+}
+
+func TestEmbiggenBasicMapping(t *testing.T) {
+	bus := NewBus()
+	bus.Embiggen = true
+
+	// 1. Task 1 (user task) reading default MMAP vector
+	bus.CurrentTask = 1
+	for slot := 0; slot < 8; slot++ {
+		val := bus.ReadByte(uint16(0xFF40 + slot))
+		if val != byte(slot) {
+			t.Fatalf("expected initial MMAP vector slot %d to be %d, got %d", slot, slot, val)
+		}
+	}
+
+	// 2. User task can write to $FF40..$FF47 without trap
+	for slot := 0; slot < 8; slot++ {
+		bus.WriteByte(uint16(0xFF40+slot), byte(10+slot))
+	}
+	for slot := 0; slot < 8; slot++ {
+		val := bus.ReadByte(uint16(0xFF40 + slot))
+		if val != byte(10+slot) {
+			t.Fatalf("expected updated MMAP vector slot %d to be %d, got %d", slot, 10+slot, val)
+		}
+	}
+
+	// 3. User task accessing other $FFxx still traps
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("expected user access to $FF3F to trap")
+			}
+		}()
+		bus.ReadByte(0xFF3F)
+	}()
+
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("expected user access to $FF48 to trap")
+			}
+		}()
+		bus.ReadByte(0xFF48)
+	}()
+
+	// 4. Per-task isolation: Task 2 has its own vector
+	bus.CurrentTask = 2
+	for slot := 0; slot < 8; slot++ {
+		val := bus.ReadByte(uint16(0xFF40 + slot))
+		if val != byte(slot) {
+			t.Fatalf("expected Task 2 MMAP vector slot %d to be %d, got %d", slot, slot, val)
+		}
+	}
+
+	// Remap slot 2 ($4000..$5FFF) to lazily allocated block 20
+	bus.WriteByte(0xFF42, 20)
+	bus.WriteByte(0x4100, 0xCD)
+	if bus.ReadByte(0x4100) != 0xCD {
+		t.Fatalf("expected 0xCD at $4100, got 0x%02X", bus.ReadByte(0x4100))
+	}
+
+	// Remap slot 2 back to 2 (flat memory): $4100 should be 0
+	bus.WriteByte(0xFF42, 2)
+	if bus.ReadByte(0x4100) != 0x00 {
+		t.Fatalf("expected 0x00 in flat memory, got 0x%02X", bus.ReadByte(0x4100))
+	}
+
+	// Remap slot 5 ($A000..$BFFF) to block 20: $A100 should see 0xCD
+	bus.WriteByte(0xFF45, 20)
+	if bus.ReadByte(0xA100) != 0xCD {
+		t.Fatalf("expected 0xCD in block 20 mapped to slot 5, got 0x%02X", bus.ReadByte(0xA100))
+	}
+}
+
+func TestEmbiggenFrozenIOPage(t *testing.T) {
+	bus := NewBus()
+	bus.Embiggen = true
+
+	// Task 0: remap slot 7 ($E000..$FFFF) to block 15
+	bus.CurrentTask = 0
+	bus.WriteByte(0xFF47, 15)
+
+	// Write to $E100 in slot 7 -> goes to block 15
+	bus.WriteByte(0xE100, 0x55)
+	if bus.ReadByte(0xE100) != 0x55 {
+		t.Fatalf("expected 0x55 at $E100 in block 15, got 0x%02X", bus.ReadByte(0xE100))
+	}
+
+	// Vectors $FFF0..$FFFF remain frozen in Task 0 RAM
+	bus.WriteWord(0xFFFE, 0x1234)
+	if bus.ReadWord(0xFFFE) != 0x1234 {
+		t.Fatalf("expected Reset vector at $FFFE to be 0x1234, got 0x%04X", bus.ReadWord(0xFFFE))
+	}
+
+	// $FF40..$FF47 MMAP vector is still in I/O page
+	if bus.ReadByte(0xFF47) != 15 {
+		t.Fatalf("expected $FF47 to return 15, got %d", bus.ReadByte(0xFF47))
+	}
+
+	// User Task 3: remap slot 7 to block 15
+	bus.CurrentTask = 3
+	bus.WriteByte(0xFF47, 15)
+	bus.WriteByte(0xE200, 0x66)
+	if bus.ReadByte(0xE200) != 0x66 {
+		t.Fatalf("expected 0x66 at $E200 in Task 3 block 15, got 0x%02X", bus.ReadByte(0xE200))
+	}
+
+	// Reading $FF00 in unblessed Task 3 must STILL trap even with slot 7 remapped
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatalf("expected user access to $FF00 to trap with slot 7 remapped")
+			}
+		}()
+		bus.ReadByte(0xFF00)
+	}()
+
+	// But reading $FF47 in Task 3 succeeds!
+	if bus.ReadByte(0xFF47) != 15 {
+		t.Fatalf("expected $FF47 to return 15 in Task 3, got %d", bus.ReadByte(0xFF47))
+	}
+}
+
+func TestEmbiggenCPUStepping(t *testing.T) {
+	bus := NewBus()
+	bus.Embiggen = true
+	cpu := NewCPU(bus)
+
+	bus.CurrentTask = 1 // User task 1
+	cpu.PC = 0x1000
+
+	// Assembly program in Task 1:
+	//   LDA #10
+	//   STA $FF41     (remap slot 1 $2000..$3FFF to block 10)
+	//   LDA #$77
+	//   STA $2000     (write $77 to block 10)
+	//   LDA #1
+	//   STA $FF41     (remap slot 1 back to block 1)
+	//   LDA $2000     (read block 1 -> 0)
+	//   LDA #10
+	//   STA $FF42     (remap slot 2 $4000..$5FFF to block 10)
+	//   LDA $4000     (read block 10 -> $77)
+	code := []byte{
+		0x86, 10, // LDA #10
+		0xB7, 0xFF, 0x41, // STA $FF41
+		0x86, 0x77, // LDA #$77
+		0xB7, 0x20, 0x00, // STA $2000
+		0x86, 1, // LDA #1
+		0xB7, 0xFF, 0x41, // STA $FF41
+		0xB6, 0x20, 0x00, // LDA $2000
+		0x86, 10, // LDA #10
+		0xB7, 0xFF, 0x42, // STA $FF42
+		0xB6, 0x40, 0x00, // LDA $4000
+	}
+	for i, b := range code {
+		bus.WriteByte(uint16(0x1000+i), b)
+	}
+
+	for i := 0; i < 10; i++ {
+		cpu.Step()
+	}
+
+	if cpu.A != 0x77 {
+		t.Fatalf("expected CPU register A=0x77 after reading remapped block 10, got 0x%02X", cpu.A)
+	}
+}
+
+func TestEmbiggenDMACopyAndPurge(t *testing.T) {
+	bus := NewBus()
+	bus.Embiggen = true
+
+	// Task 1 remaps slot 2 ($4000..$5FFF) to block 12
+	bus.CurrentTask = 1
+	bus.WriteByte(0xFF42, 12)
+
+	// Task 0 sets up data at $0100
+	bus.CurrentTask = 0
+	for i := 0; i < 16; i++ {
+		bus.WriteByte(uint16(0x0100+i), byte(0xA0+i))
+	}
+
+	// Task 0 performs DMA copy: Task 0 $0100 -> Task 1 $4000 (16 bytes)
+	bus.WriteByte(0xFF21, 0)      // src task
+	bus.WriteWord(0xFF22, 0x0100) // src addr
+	bus.WriteByte(0xFF24, 1)      // dst task
+	bus.WriteWord(0xFF25, 0x4000) // dst addr
+	bus.WriteByte(0xFF27, 16)     // count
+
+	if bus.DmaStatus != 1 {
+		t.Fatalf("expected DMA status 1, got %d", bus.DmaStatus)
+	}
+
+	// Verify data is in Task 1 at $4000 (block 12)
+	bus.CurrentTask = 1
+	for i := 0; i < 16; i++ {
+		if val := bus.ReadByte(uint16(0x4000 + i)); val != byte(0xA0+i) {
+			t.Fatalf("DMA to remapped block 12 failed at offset %d: expected 0x%02X, got 0x%02X", i, 0xA0+i, val)
+		}
+	}
+
+	// Purge Task 1
+	bus.CurrentTask = 0
+	bus.WriteByte(0xFF2F, 1) // Purge task 1
+
+	// MMAP vector should be reset to 0..7 and block 12 cleared
+	bus.CurrentTask = 1
+	for slot := 0; slot < 8; slot++ {
+		if val := bus.ReadByte(uint16(0xFF40 + slot)); val != byte(slot) {
+			t.Fatalf("after purge: expected slot %d = %d, got %d", slot, slot, val)
+		}
+	}
+	if bus.EmbiggenBlocks[1][12] != nil {
+		t.Fatalf("expected EmbiggenBlocks[1][12] to be nil after purge")
+	}
+}
+
+
 
 

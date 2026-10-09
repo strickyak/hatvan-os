@@ -17,12 +17,13 @@ const (
 	ChunkSymRel  = 0x05 // Extended: OS-9 module-relative symbol
 	ChunkSrcFile = 0x06 // Extended: Source file name declaration
 	ChunkMagic   = 0xFD // Extended: Hatvan executable magic marker ('x', <arch>)
+	ChunkHigh16  = 0xFE // Extended: Upper 16-bit address extension (Tag 254)
 	ChunkExec    = 0xFF // Standard execution address trailer
 )
 
 // DataSegment represents a contiguous block of binary data loaded into memory.
 type DataSegment struct {
-	Addr uint16
+	Addr uint32
 	Data []byte
 }
 
@@ -69,6 +70,7 @@ func LoadDECB(r io.Reader) (*DECB, error) {
 	d := NewDECB()
 	header := make([]byte, 5)
 	var activeMod *OS9Module
+	var high16 uint16
 
 	for {
 		_, err := io.ReadFull(r, header)
@@ -91,11 +93,15 @@ func LoadDECB(r io.Reader) (*DECB, error) {
 		}
 
 		switch chunkType {
+		case ChunkHigh16:
+			high16 = addr
+
 		case ChunkData:
 			dataCopy := make([]byte, length)
 			copy(dataCopy, payload)
+			fullAddr := (uint32(high16) << 16) | uint32(addr)
 			d.Segments = append(d.Segments, DataSegment{
-				Addr: addr,
+				Addr: fullAddr,
 				Data: dataCopy,
 			})
 

@@ -51,6 +51,8 @@ The peripheral and MMU design adheres to the following core principles:
 | `TaskFlagsTarget` | `$FF2D` | `$FF2D` | `$00FF02D0` | Byte / Word | R/W | Target task selector (`0..255`) for capability configuration |
 | `TaskFlagsRegister` | `$FF2E` | `$FF2E` | `$00FF02E0` | Byte / Word | R/W | Capability flags for selected task: Bit 0 = `TASK_FLAG_IO` |
 | `PurgeTaskMem` | `$FF2F` | `$FF2F` | `$00FF02F0` | Byte / Word | W | Zeroes/frees task RAM and clears capability flags |
+| **EMBIGGEN MMU (Optional)** | | | | | | |
+| `Embiggen MMAP Vector` | `$FF40..$FF47` | `$FF40..$FF47` | N/A | 8 Bytes | R/W | 8-byte MMAP vector mapping 8KB slots to up to 256 blocks (user accessible) |
 
 ---
 
@@ -155,6 +157,24 @@ While functional semantics are identical, the Motorola 68000 (`gepk`) differs fr
 * **`SharedMemoryCurtain`**:
   * 6809 / Z80: 16-bit boundary (`$FF28..$FF29`, defaulting to `$E000`).
   * 68000: 32-bit boundary (`$00FF0280`, defaulting to `$00FE0000`).
+
+### 3.5 EMBIGGEN 8KB Paged MMU (Optional for 64KB CPU Architectures)
+* **Purpose**: Allows 64KB CPU architectures (6809, Z80, 1802) to map additional memory blocks into 8KB address windows (slots 0..7).
+* **MMAP Vector (`$FF40..$FF47`)**:
+  * `$FF40`: Slot 0 (`$0000..$1FFF`)
+  * `$FF41`: Slot 1 (`$2000..$3FFF`)
+  * `$FF42`: Slot 2 (`$4000..$5FFF`)
+  * `$FF43`: Slot 3 (`$6000..$7FFF`)
+  * `$FF44`: Slot 4 (`$8000..$9FFF`)
+  * `$FF45`: Slot 5 (`$A000..$BFFF`)
+  * `$FF46`: Slot 6 (`$C000..$DFFF`)
+  * `$FF47`: Slot 7 (`$E000..$FFFF`)
+* **Behavior**:
+  * Each task possesses its own independent MMAP vector, initialized to `{0, 1, 2, 3, 4, 5, 6, 7}` (flat 64KB address space).
+  * Up to 256 8KB blocks (2 MB per task) are lazily allocated on demand when blocks $\ge 8$ are accessed.
+  * **User Privileges**: Any user task may read and write its own MMAP vector at `$FF40..$FF47` directly without triggering an `ErrUserAccessTrap`.
+  * **Frozen I/O Page**: The I/O page at `$FF00..$FFFF` is frozen in place regardless of the 7th MMAP byte at `$FF47`. Slot 7 translates addresses `$E000..$FEFF` to the mapped block, while `$FF00..$FFFF` continues to host the I/O page, vectors, and protection traps.
+  * **Backwards Compatibility**: When the `--embiggen` option is disabled, `$FF40..$FF47` remains unmapped (causing `ErrUserAccessTrap` for user tasks and `ErrKernelIOPanic` in Task 0).
 
 ### 4. Hardware Privilege Model & Bus Error (`/BERR`) Assertion
 * On the 68000, CPU privilege state is explicitly signaled via function code pins:

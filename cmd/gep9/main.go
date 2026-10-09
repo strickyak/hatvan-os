@@ -34,6 +34,7 @@ var (
 	sharedCurtainFlag = flag.String("shared-curtain", "0xE000", "shared memory curtain address for tasks 0, 1, and 2")
 	engineFlag        = flag.String("engine", "hatvan", "emulation engine: \"hatvan\" (default), \"flat65280v2\", or \"deep65280v2\"")
 	ramFlag           = flag.String("ram", "512k", "RAM size for deep65280v2: \"128k\", \"512k\", or \"2m\"")
+	embiggenFlag      = flag.Bool("embiggen", false, "enable EMBIGGEN 8KB page mapping at $FF40..$FF47")
 )
 
 func main() {
@@ -100,6 +101,9 @@ func main() {
 		if v, err := strconv.ParseUint(s, 16, 16); err == nil {
 			bus.SharedMemoryCurtain = uint16(v)
 		}
+	}
+	if *embiggenFlag {
+		bus.Embiggen = true
 	}
 	bus.CurlyEscape = *curlyEscapeFlag
 	cpu := gep9.NewCPU(bus)
@@ -243,6 +247,9 @@ func main() {
 	defer flushDisks()
 
 	bus.OnHalt = func(code int) {
+		if *traceFlag || *printCyclesFlag || os.Getenv("HATVAN_PRINT_CYCLES") != "" {
+			fmt.Fprintf(os.Stderr, "[gep9 finished: %d total cycles executed]\n", cpu.Cycles)
+		}
 		flushDisks()
 		os.Exit(code)
 	}

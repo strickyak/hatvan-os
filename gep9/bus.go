@@ -78,6 +78,11 @@ type Bus struct {
 	// Tunable shared memory curtain ($E000 by default) for Tasks 0, 1, 2
 	SharedMemoryCurtain uint16
 
+	// EMBIGGEN 8KB page mapping ($FF40..$FF47)
+	Embiggen       bool
+	EmbiggenMMap   [256][8]byte
+	EmbiggenBlocks [256][256]*[8192]byte
+
 	// flat65280v2 EMUDSK registers ($FF80..$FF86)
 	EmuDskLSN    uint32 // $FF80..$FF82: 24-bit LSN
 	EmuDskStatus byte   // $FF83: Command / Status
@@ -125,11 +130,31 @@ func NewBus() *Bus {
 		ConsoleOut:          os.Stdout,
 		LogOut:              os.Stderr,
 	}
+	if os.Getenv("HATVAN_EMBIGGEN") == "1" || strings.ToLower(os.Getenv("HATVAN_EMBIGGEN")) == "true" {
+		b.Embiggen = true
+	}
+	for t := 0; t < 256; t++ {
+		for s := 0; s < 8; s++ {
+			b.EmbiggenMMap[t][s] = byte(s)
+		}
+	}
 	for i := 0; i < 8; i++ {
 		b.MmuRegs[0][i] = byte(0x38 + i)
 		b.MmuRegs[1][i] = byte(0x38 + i)
 	}
 	return b
+}
+
+func (b *Bus) embiggenBytePtr(task uint8, block uint8, offset uint16) *byte {
+	if block < 8 {
+		return &b.Memory[task][uint16(block)*8192+offset]
+	}
+	blk := b.EmbiggenBlocks[task][block]
+	if blk == nil {
+		blk = new([8192]byte)
+		b.EmbiggenBlocks[task][block] = blk
+	}
+	return &blk[offset]
 }
 
 // SetRamSize configures the physical RAM size for deep65280v2.
@@ -179,6 +204,11 @@ func (b *Bus) ReadByte(addr uint16) byte {
 		return b.Memory[0][addr]
 	}
 
+	// EMBIGGEN MMAP Vector at $FF40..$FF47 (accessible to all tasks without trap)
+	if b.Embiggen && addr >= 0xFF40 && addr <= 0xFF47 {
+		return b.EmbiggenMMap[b.CurrentTask][addr-0xFF40]
+	}
+
 	// In user tasks (Task > 0), access to $FF00..$FFFF is strictly forbidden unless blessed with I/O flag
 	if addr >= 0xFF00 {
 		if b.CurrentTask == 0 || (b.TaskFlags[b.CurrentTask]&0x01) != 0 {
@@ -189,7 +219,16 @@ func (b *Bus) ReadByte(addr uint16) byte {
 
 	// Shared Memory Curtain for Tasks 0, 1, and 2
 	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && b.CurrentTask <= 2 {
-		return b.Memory[0][addr]
+		if !b.Embiggen || b.EmbiggenMMap[b.CurrentTask][addr>>13] == byte(addr>>13) {
+			return b.Memory[0][addr]
+		}
+	}
+
+	if b.Embiggen {
+		slot := addr >> 13
+		offset := addr & 0x1FFF
+		block := b.EmbiggenMMap[b.CurrentTask][slot]
+		return *b.embiggenBytePtr(b.CurrentTask, block, offset)
 	}
 
 	return b.Memory[b.CurrentTask][addr]
@@ -222,6 +261,12 @@ func (b *Bus) WriteByte(addr uint16, val byte) {
 		return
 	}
 
+	// EMBIGGEN MMAP Vector at $FF40..$FF47 (accessible to all tasks without trap)
+	if b.Embiggen && addr >= 0xFF40 && addr <= 0xFF47 {
+		b.EmbiggenMMap[b.CurrentTask][addr-0xFF40] = val
+		return
+	}
+
 	// In user tasks (Task > 0), access to $FF00..$FFFF is strictly forbidden unless blessed with I/O flag
 	if addr >= 0xFF00 {
 		if b.CurrentTask == 0 || (b.TaskFlags[b.CurrentTask]&0x01) != 0 {
@@ -233,7 +278,17 @@ func (b *Bus) WriteByte(addr uint16, val byte) {
 
 	// Shared Memory Curtain for Tasks 0, 1, and 2
 	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && b.CurrentTask <= 2 {
-		b.Memory[0][addr] = val
+		if !b.Embiggen || b.EmbiggenMMap[b.CurrentTask][addr>>13] == byte(addr>>13) {
+			b.Memory[0][addr] = val
+			return
+		}
+	}
+
+	if b.Embiggen {
+		slot := addr >> 13
+		offset := addr & 0x1FFF
+		block := b.EmbiggenMMap[b.CurrentTask][slot]
+		*b.embiggenBytePtr(b.CurrentTask, block, offset) = val
 		return
 	}
 
@@ -353,6 +408,12 @@ func (b *Bus) readIO(addr uint16) byte {
 	case 0xFF2F: // PurgeTaskMem
 		return 0
 
+	case 0xFF40, 0xFF41, 0xFF42, 0xFF43, 0xFF44, 0xFF45, 0xFF46, 0xFF47:
+		if b.Embiggen {
+			return b.EmbiggenMMap[b.CurrentTask][addr-0xFF40]
+		}
+		panic(fmt.Errorf("%w: read at unmapped 0x%04X in Task 0", ErrKernelIOPanic, addr))
+
 	default:
 		panic(fmt.Errorf("%w: read at unmapped 0x%04X in Task 0", ErrKernelIOPanic, addr))
 	}
@@ -452,6 +513,13 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 		if val != 0 {
 			b.purgeTaskMem(val)
 		}
+
+	case 0xFF40, 0xFF41, 0xFF42, 0xFF43, 0xFF44, 0xFF45, 0xFF46, 0xFF47:
+		if b.Embiggen {
+			b.EmbiggenMMap[b.CurrentTask][addr-0xFF40] = val
+			return
+		}
+		panic(fmt.Errorf("%w: write at unmapped 0x%04X in Task 0", ErrKernelIOPanic, addr))
 
 	default:
 		panic(fmt.Errorf("%w: write at unmapped 0x%04X in Task 0", ErrKernelIOPanic, addr))
@@ -948,6 +1016,12 @@ func (b *Bus) LoadRawImage(data []byte) error {
 		b.MmuRegs[0][i] = byte(0x38 + i)
 		b.MmuRegs[1][i] = byte(0x38 + i)
 	}
+	for s := 0; s < 8; s++ {
+		b.EmbiggenMMap[0][s] = byte(s)
+	}
+	for blk := 0; blk < 256; blk++ {
+		b.EmbiggenBlocks[0][blk] = nil
+	}
 
 	return nil
 }
@@ -972,13 +1046,13 @@ func (b *Bus) executeDiskCommand(cmd byte) {
 	switch cmd {
 	case 1: // Read sector from disk into memory
 		for i := 0; i < 256; i++ {
-			b.Memory[task][addr+uint16(i)] = disk[offset+i]
+			b.writeTaskByte(task, addr+uint16(i), disk[offset+i])
 		}
 		b.DiskStatus = 1 // OKAY
 
 	case 2: // Write sector from memory to disk
 		for i := 0; i < 256; i++ {
-			disk[offset+i] = b.Memory[task][addr+uint16(i)]
+			disk[offset+i] = b.readTaskByte(task, addr+uint16(i))
 		}
 		b.DiskStatus = 1 // OKAY
 
@@ -988,15 +1062,51 @@ func (b *Bus) executeDiskCommand(cmd byte) {
 }
 
 func (b *Bus) readTaskByte(task byte, addr uint16) byte {
-	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && addr < 0xFF00 && task <= 2 {
-		return b.Memory[0][addr]
+	if b.Embiggen && addr >= 0xFF40 && addr <= 0xFF47 {
+		return b.EmbiggenMMap[task][addr-0xFF40]
+	}
+	if addr >= 0xFF00 {
+		if addr >= 0xFFF0 && task == 0 {
+			return b.Memory[0][addr]
+		}
+		return 0
+	}
+	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && task <= 2 {
+		if !b.Embiggen || b.EmbiggenMMap[task][addr>>13] == byte(addr>>13) {
+			return b.Memory[0][addr]
+		}
+	}
+	if b.Embiggen {
+		slot := addr >> 13
+		offset := addr & 0x1FFF
+		block := b.EmbiggenMMap[task][slot]
+		return *b.embiggenBytePtr(task, block, offset)
 	}
 	return b.Memory[task][addr]
 }
 
 func (b *Bus) writeTaskByte(task byte, addr uint16, val byte) {
-	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && addr < 0xFF00 && task <= 2 {
-		b.Memory[0][addr] = val
+	if b.Embiggen && addr >= 0xFF40 && addr <= 0xFF47 {
+		b.EmbiggenMMap[task][addr-0xFF40] = val
+		return
+	}
+	if addr >= 0xFF00 {
+		if addr >= 0xFFF0 && task == 0 {
+			b.Memory[0][addr] = val
+		}
+		return
+	}
+	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && task <= 2 {
+		if !b.Embiggen || b.EmbiggenMMap[task][addr>>13] == byte(addr>>13) {
+			b.Memory[0][addr] = val
+			return
+		}
+	}
+	if b.Embiggen {
+		slot := addr >> 13
+		offset := addr & 0x1FFF
+		block := b.EmbiggenMMap[task][slot]
+		*b.embiggenBytePtr(task, block, offset) = val
 		return
 	}
 	b.Memory[task][addr] = val
@@ -1029,6 +1139,12 @@ func (b *Bus) purgeTaskMem(task uint8) {
 	for i := range b.Memory[task] {
 		b.Memory[task][i] = 0
 	}
+	for s := 0; s < 8; s++ {
+		b.EmbiggenMMap[task][s] = byte(s)
+	}
+	for blk := 0; blk < 256; blk++ {
+		b.EmbiggenBlocks[task][blk] = nil
+	}
 }
 
 // LoadDECBIntoTask zeroes memory and loads a DECB structure into the specified task.
@@ -1040,10 +1156,23 @@ func (b *Bus) LoadDECBIntoTask(task uint8, d *DECB) {
 	for i := range b.Memory[task] {
 		b.Memory[task][i] = 0
 	}
+	for s := 0; s < 8; s++ {
+		b.EmbiggenMMap[task][s] = byte(s)
+	}
+	for blk := 0; blk < 256; blk++ {
+		b.EmbiggenBlocks[task][blk] = nil
+	}
 
 	for _, seg := range d.Segments {
 		for i, v := range seg.Data {
-			b.Memory[task][seg.Addr+uint16(i)] = v
+			physAddr := seg.Addr + uint32(i)
+			if b.Embiggen && physAddr >= 0x10000 {
+				block := uint8(physAddr / 8192)
+				offset := uint16(physAddr % 8192)
+				*b.embiggenBytePtr(task, block, offset) = v
+			} else {
+				b.Memory[task][uint16(physAddr)] = v
+			}
 		}
 	}
 
