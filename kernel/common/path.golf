@@ -107,6 +107,7 @@ func openDisk(pathId byte, pd *tables.PathDesc, pathStr *byte, mode byte, defaul
 		return E_BMODE
 	}
 
+	pd.FileSizeHi = rbf_ipc.ResFileSizeHi
 	pd.FileSize = rbf_ipc.ResFileSize
 	AllocatedPathId = pathId
 	return 0
@@ -174,7 +175,9 @@ func SysCreate(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN wo
 	pd.Drive = rbf_ipc.ResDrive
 	pd.Mode = mode | MODE_WRITE
 	pd.FDLSN = rbf_ipc.ResFDLSN
+	pd.FileSizeHi = 0
 	pd.FileSize = 0
+	pd.FilePosHi = 0
 	pd.FilePos = 0
 	AllocatedPathId = pathId
 	return 0
@@ -226,29 +229,40 @@ func readProc(pd *tables.PathDesc, task byte, ubuf *byte, count word) byte {
 	return 0
 }
 
-func readDisk(pd *tables.PathDesc, task byte, ubuf *byte, count word) byte {
-	if pd.FilePos >= pd.FileSize {
+func readDiskPage(pd *tables.PathDesc, task byte, page byte, ubuf *byte, count word) byte {
+	if pd.FilePosHi > pd.FileSizeHi || (pd.FilePosHi == pd.FileSizeHi && pd.FilePos >= pd.FileSize) {
 		TransferredBytes = 0
 		return E_EOF
 	}
 	toRead := count
-	if pd.FilePos+toRead > pd.FileSize {
-		toRead = pd.FileSize - pd.FilePos
+	if pd.FilePosHi == pd.FileSizeHi {
+		rem := pd.FileSize - pd.FilePos
+		if toRead > rem {
+			toRead = rem
+		}
 	}
-	err := rbf_ipc.ReadFile(pd.Drive, pd.FDLSN, pd.FilePos, task, word(ubuf), toRead)
+	err := rbf_ipc.ReadFilePage(pd.Drive, pd.FDLSN, pd.FilePosHi, pd.FilePos, task, page, word(ubuf), toRead)
 	if err != 0 {
 		TransferredBytes = 0
 		return err
 	}
-	pd.FilePos += rbf_ipc.TransferredBytes
+	newPos := pd.FilePos + rbf_ipc.TransferredBytes
+	if newPos < pd.FilePos {
+		pd.FilePosHi++
+	}
+	pd.FilePos = newPos
 	TransferredBytes = rbf_ipc.TransferredBytes
 	return 0
 }
 
+func readDisk(pd *tables.PathDesc, task byte, ubuf *byte, count word) byte {
+	return readDiskPage(pd, task, 0, ubuf, count)
+}
+
 var TransferredBytes word
 
-// SysRead reads up to count bytes from pathId into ubuf in task space
-func SysRead(pathId byte, task byte, ubuf *byte, count word) byte {
+// SysReadPage reads up to count bytes from pathId directly into task at page:ubuf
+func SysReadPage(pathId byte, task byte, page byte, ubuf *byte, count word) byte {
 	TransferredBytes = 0
 	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
 		return E_BPNUM
@@ -269,7 +283,12 @@ func SysRead(pathId byte, task byte, ubuf *byte, count word) byte {
 	if pd.DevType == dev.DEV_PROC {
 		return readProc(pd, task, ubuf, count)
 	}
-	return readDisk(pd, task, ubuf, count)
+	return readDiskPage(pd, task, page, ubuf, count)
+}
+
+// SysRead reads up to count bytes from pathId into ubuf in task space (page 0)
+func SysRead(pathId byte, task byte, ubuf *byte, count word) byte {
+	return SysReadPage(pathId, task, 0, ubuf, count)
 }
 
 func writeDisk(pd *tables.PathDesc, task byte, ubuf *byte, count word) byte {
@@ -278,8 +297,13 @@ func writeDisk(pd *tables.PathDesc, task byte, ubuf *byte, count word) byte {
 		TransferredBytes = 0
 		return err
 	}
-	pd.FilePos += rbf_ipc.TransferredBytes
-	if pd.FilePos > pd.FileSize {
+	newPos := pd.FilePos + rbf_ipc.TransferredBytes
+	if newPos < pd.FilePos {
+		pd.FilePosHi++
+	}
+	pd.FilePos = newPos
+	if pd.FilePosHi > pd.FileSizeHi || (pd.FilePosHi == pd.FileSizeHi && pd.FilePos > pd.FileSize) {
+		pd.FileSizeHi = pd.FilePosHi
 		pd.FileSize = pd.FilePos
 	}
 	TransferredBytes = rbf_ipc.TransferredBytes
@@ -327,7 +351,21 @@ func SysSeek(pathId byte, offset word) byte {
 			offset = pd.FileSize
 		}
 	}
+	pd.FilePosHi = 0
 	pd.FilePos = offset
+	return 0
+}
+
+func SysSeekForward(pathId byte, count word) byte {
+	if pathId >= MAX_PATHS || tables.Shared.PathTable[pathId].RefCount == 0 {
+		return E_BPNUM
+	}
+	pd := &tables.Shared.PathTable[pathId]
+	newPos := pd.FilePos + count
+	if newPos < pd.FilePos {
+		pd.FilePosHi++
+	}
+	pd.FilePos = newPos
 	return 0
 }
 

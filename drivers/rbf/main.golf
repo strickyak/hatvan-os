@@ -118,7 +118,7 @@ func dispatch() {
 		pokeb(MB_OUT_WORD1+1, byte(fdLSN))
 		pokeb(MB_OUT_BYTE1, fd.Attributes)
 		pokeb(MB_OUT_LONG1, 0)
-		pokeb(MB_OUT_LONG1+1, 0)
+		pokeb(MB_OUT_LONG1+1, fd.FileSizeHi)
 		pokeb(MB_OUT_LONG1+2, byte(fd.FileSize>>8))
 		pokeb(MB_OUT_LONG1+3, byte(fd.FileSize))
 		if sizeof[word]() > 2 {
@@ -147,11 +147,16 @@ func dispatch() {
 
 	if cmd == RBF_CMD_READ_FILE {
 		drive := peekb(MB_DRIVE)
-		targetTask := peekb(MB_TARGET_TASK)
-		targetAddr := readW32(MB_TARGET_ADDR)
+		targetTask := peekb(MB_TARGET_ADDR)
+		targetPage := peekb(MB_TARGET_ADDR + 1)
+		targetAddr := (word(peekb(MB_TARGET_ADDR + 2)) << 8) | word(peekb(MB_TARGET_ADDR + 3))
+		if targetTask == 0 && peekb(MB_TARGET_TASK) != 0 {
+			targetTask = peekb(MB_TARGET_TASK)
+		}
 		fdLSN := readW32(MB_LSN)
 		count := readW16(MB_COUNT)
-		filePos := readW32(MB_FILE_POS)
+		filePosHi := peekb(MB_FILE_POS + 1)
+		filePosLo := (word(peekb(MB_FILE_POS + 2)) << 8) | word(peekb(MB_FILE_POS + 3))
 
 		var fd rbf.RBFFileDescriptor
 		st := rbf.RBFReadFD(drive, fdLSN, &fd)
@@ -162,7 +167,7 @@ func dispatch() {
 			return
 		}
 
-		if filePos >= fd.FileSize {
+		if filePosHi > fd.FileSizeHi || (filePosHi == fd.FileSizeHi && filePosLo >= fd.FileSize) {
 			pokeb(MB_STATUS, 211) // E_EOF
 			pokeb(MB_OUT_WORD1, 0)
 			pokeb(MB_OUT_WORD1+1, 0)
@@ -170,16 +175,20 @@ func dispatch() {
 		}
 
 		toRead := count
-		if filePos+toRead > fd.FileSize {
-			toRead = fd.FileSize - filePos
+		if filePosHi == fd.FileSizeHi {
+			rem := fd.FileSize - filePosLo
+			if toRead > rem {
+				toRead = rem
+			}
 		}
 
 		bytesDone := word(0)
-		curPos := filePos
+		curPosLo := filePosLo
+		curPosHi := filePosHi
 
 		for bytesDone < toRead {
-			logSec := curPos / 256
-			secOff := curPos % 256
+			logSec := (word(curPosHi) << 8) | (curPosLo >> 8)
+			secOff := curPosLo & 0xFF
 			physLSN := rbf.RBFLogicalToPhys(&fd, logSec)
 			if physLSN == 0 {
 				break
@@ -191,7 +200,7 @@ func dispatch() {
 				chunk = rem
 			}
 
-			if secOff == 0 && chunk == 256 {
+			if targetPage == 0 && secOff == 0 && chunk == 256 {
 				st = hal.DiskTransfer(drive, physLSN, targetTask, targetAddr+bytesDone, 0)
 				if st != 1 {
 					break
@@ -201,11 +210,15 @@ func dispatch() {
 				if st != 1 {
 					break
 				}
-				hal.DMACopy(1, word(&localBuf[0])+secOff, targetTask, targetAddr+bytesDone, chunk)
+				hal.DMACopyPage(1, 0, word(&localBuf[0])+secOff, targetTask, targetPage, targetAddr+bytesDone, chunk)
 			}
 
 			bytesDone += chunk
-			curPos += chunk
+			nextLo := curPosLo + chunk
+			if nextLo < curPosLo {
+				curPosHi++
+			}
+			curPosLo = nextLo
 		}
 
 		pokeb(MB_STATUS, 0)

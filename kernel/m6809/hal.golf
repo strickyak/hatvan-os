@@ -22,11 +22,14 @@ const PORT_DISKCMD = 0xFF17
 const PORT_TASKFUSE = 0xFF20
 
 const PORT_DMASRCTASK = 0xFF21
-const PORT_DMASRCADDR = 0xFF22 // 2 bytes (Hi, Lo)
-const PORT_DMADSTTASK = 0xFF24
-const PORT_DMADSTADDR = 0xFF25 // 2 bytes (Hi, Lo)
-const PORT_DMACNT = 0xFF27
-const PORT_SHAREDCURTAIN = 0xFF28 // 2 bytes (Hi, Lo)
+const PORT_DMASRCPAGE = 0xFF22
+const PORT_DMASRCADDR = 0xFF23 // 2 bytes (Hi, Lo)
+const PORT_DMADSTTASK = 0xFF25
+const PORT_DMADSTPAGE = 0xFF26
+const PORT_DMADSTADDR = 0xFF27 // 2 bytes (Hi, Lo)
+const PORT_DMACNT = 0xFF29
+const PORT_DMASTATUS = 0xFF2A
+const PORT_SHAREDCURTAIN = 0xFF2B // 2 bytes (Hi, Lo)
 
 const PORT_TASKFLAGSTASK = 0xFF2D
 const PORT_TASKFLAGS = 0xFF2E
@@ -87,7 +90,7 @@ func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte
 	}
 }
 
-func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word) {
+func DMACopyPage(srcTask byte, srcPage byte, srcAddr word, dstTask byte, dstPage byte, dstAddr word, count word) {
 	for count > 0 {
 		chunk := count
 		if chunk > 256 {
@@ -95,8 +98,10 @@ func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word)
 		}
 
 		vpokeb(PORT_DMASRCTASK, srcTask)
+		vpokeb(PORT_DMASRCPAGE, srcPage)
 		vpokew(PORT_DMASRCADDR, srcAddr)
 		vpokeb(PORT_DMADSTTASK, dstTask)
+		vpokeb(PORT_DMADSTPAGE, dstPage)
 		vpokew(PORT_DMADSTADDR, dstAddr)
 
 		cntByte := byte(chunk)
@@ -113,6 +118,10 @@ func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word)
 		srcAddr += chunk
 		dstAddr += chunk
 	}
+}
+
+func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word) {
+	DMACopyPage(srcTask, 0, srcAddr, dstTask, 0, dstAddr, count)
 }
 
 func SwitchTask(task byte) {

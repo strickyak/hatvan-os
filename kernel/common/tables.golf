@@ -31,16 +31,18 @@ type Process struct {
 }
 
 type PathDesc struct {
-	RefCount  byte
-	DevType   byte
-	Drive     byte
-	Mode      byte
-	FilePos   word
-	FileSize  word
-	FDLSN     word
-	BufLSN    word
-	BufDirty  byte
-	SectorBuf [256]byte
+	RefCount   byte
+	DevType    byte
+	Drive      byte
+	Mode       byte
+	FilePosHi  byte
+	FilePos    word
+	FileSizeHi byte
+	FileSize   word
+	FDLSN      word
+	BufLSN     word
+	BufDirty   byte
+	SectorBuf  [256]byte
 }
 
 // SharedTables resides at the SharedMemoryCurtain address:

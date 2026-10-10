@@ -68,6 +68,7 @@ func Call() byte {
 var ResDrive byte
 var ResFDLSN word
 var ResAttr byte
+var ResFileSizeHi byte
 var ResFileSize word
 var TransferredBytes word
 
@@ -98,6 +99,7 @@ func ResolvePath(pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isE
 		ResDrive = 0xFF
 		ResFDLSN = 0
 		ResAttr = 0
+		ResFileSizeHi = 0
 		ResFileSize = 0
 		return st
 	}
@@ -105,33 +107,47 @@ func ResolvePath(pathStr *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isE
 	ResDrive = mb[MB_DRIVE]
 	ResFDLSN = (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
 	ResAttr = mb[MB_OUT_BYTE1]
+	ResFileSizeHi = mb[MB_OUT_LONG1+1]
 	fileSize := (word(mb[MB_OUT_LONG1+2]) << 8) | word(mb[MB_OUT_LONG1+3])
 	if sizeof[word]() > 2 {
 		fileSize = (word(mb[MB_OUT_LONG1]) << 24) | (word(mb[MB_OUT_LONG1+1]) << 16) | fileSize
+		ResFileSizeHi = byte(fileSize >> 16)
 	}
 	ResFileSize = fileSize
 
 	return 0
 }
 
-// ReadFile requests Task 1 to read up to count bytes from file (drive, fdLSN)
-// at filePos directly into targetTask at targetAddr.
-// Sets TransferredBytes. Returns errCode.
-func ReadFile(drive byte, fdLSN word, filePos word, targetTask byte, targetAddr word, count word) byte {
+// ReadFilePage requests Task 1 to read up to count bytes from file (drive, fdLSN)
+// at 24-bit filePos directly into targetTask at targetPage:targetAddr.
+func ReadFilePage(drive byte, fdLSN word, filePosHi byte, filePos word, targetTask byte, targetPage byte, targetAddr word, count word) byte {
 	for i := word(0); i < 64; i++ {
 		mb[i] = 0
 	}
 	mb[MB_CMD] = RBF_CMD_READ_FILE
 	mb[MB_DRIVE] = drive
 	mb[MB_TARGET_TASK] = targetTask
-	writeW32(MB_TARGET_ADDR, targetAddr)
+	mb[MB_TARGET_ADDR] = targetTask
+	mb[MB_TARGET_ADDR+1] = targetPage
+	mb[MB_TARGET_ADDR+2] = byte(targetAddr >> 8)
+	mb[MB_TARGET_ADDR+3] = byte(targetAddr)
 	writeW32(MB_LSN, fdLSN)
 	writeW16(MB_COUNT, count)
-	writeW32(MB_FILE_POS, filePos)
+	mb[MB_FILE_POS] = 0
+	mb[MB_FILE_POS+1] = filePosHi
+	mb[MB_FILE_POS+2] = byte(filePos >> 8)
+	mb[MB_FILE_POS+3] = byte(filePos)
 
 	st := Call()
 	TransferredBytes = (word(mb[MB_OUT_WORD1]) << 8) | word(mb[MB_OUT_WORD1+1])
 	return st
+}
+
+// ReadFile requests Task 1 to read up to count bytes from file (drive, fdLSN)
+// at filePos directly into targetTask at targetAddr.
+// Sets TransferredBytes. Returns errCode.
+func ReadFile(drive byte, fdLSN word, filePos word, targetTask byte, targetAddr word, count word) byte {
+	return ReadFilePage(drive, fdLSN, 0, filePos, targetTask, 0, targetAddr, count)
 }
 
 // ReadSector requests Task 1 to read physical disk sector lsn into targetTask at targetAddr.

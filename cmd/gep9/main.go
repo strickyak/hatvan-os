@@ -286,16 +286,17 @@ func main() {
 	}
 
 	type historyEntry struct {
+		task       byte
 		pc         uint16
 		op         byte
 		a, b       byte
 		x, y, u, s uint16
 	}
-	var history [512]historyEntry
+	var history [4096]historyEntry
 	var hIdx int
 	formatEntry := func(e historyEntry) string {
-		return fmt.Sprintf("PC=%04X op=%02X A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X",
-			e.pc, e.op, e.a, e.b, e.x, e.y, e.u, e.s)
+		return fmt.Sprintf("T=%d PC=%04X op=%02X A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X",
+			e.task, e.pc, e.op, e.a, e.b, e.x, e.y, e.u, e.s)
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -313,14 +314,15 @@ func main() {
 	for !cpu.Halted {
 		pc := cpu.PC
 		history[hIdx] = historyEntry{
-			pc: pc,
-			op: bus.ReadByte(pc),
-			a:  cpu.A,
-			b:  cpu.B,
-			x:  cpu.X,
-			y:  cpu.Y,
-			u:  cpu.U,
-			s:  cpu.S,
+			task: bus.CurrentTask,
+			pc:   pc,
+			op:   bus.ReadByte(pc),
+			a:    cpu.A,
+			b:    cpu.B,
+			x:    cpu.X,
+			y:    cpu.Y,
+			u:    cpu.U,
+			s:    cpu.S,
 		}
 		hIdx = (hIdx + 1) % len(history)
 

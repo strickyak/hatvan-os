@@ -89,6 +89,10 @@ func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte
 }
 
 func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word) {
+	DMACopyPage(srcTask, 0, srcAddr, dstTask, 0, dstAddr, count)
+}
+
+func DMACopyPage(srcTask byte, srcPage byte, srcAddr word, dstTask byte, dstPage byte, dstAddr word, count word) {
 	for count > 0 {
 		chunk := count
 		if chunk > 256 {

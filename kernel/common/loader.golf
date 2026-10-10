@@ -84,13 +84,10 @@ func LoadDECB(pathId byte, targetTask byte) byte {
 		addr := (word(decbHdr[3]) << 8) | word(decbHdr[4])
 
 		if tag == 0 {
-			// DECB_DATA chunk: load chunkLen bytes into targetTask at fullAddr
-			fullAddr := addr
-			if sizeof[word]() > 2 {
-				fullAddr = (high16 << 16) | addr
-			}
+			// DECB_DATA chunk: load chunkLen bytes into targetTask at page:addr
+			page := byte(high16 & 0xFF)
 			if chunkLen > 0 {
-				rerr := path.SysRead(pathId, targetTask, (*byte)(fullAddr), chunkLen)
+				rerr := path.SysReadPage(pathId, targetTask, page, (*byte)(addr), chunkLen)
 				if path.TransferredBytes != chunkLen || rerr != 0 {
 					return path.E_READ
 				}
@@ -103,8 +100,7 @@ func LoadDECB(pathId byte, targetTask byte) byte {
 				return E_FORMAT
 			}
 			if chunkLen > 0 {
-				curPos := path.GetPath(pathId).FilePos
-				path.SysSeek(pathId, curPos+chunkLen)
+				path.SysSeekForward(pathId, chunkLen)
 			}
 		} else if tag == 254 {
 			// SET_HIGH16_ADDR32 header: persistent upper 16-bit address extension (spec-hatvan-68000)
@@ -119,8 +115,7 @@ func LoadDECB(pathId byte, targetTask byte) byte {
 		} else {
 			// Unrecognized or extended debug chunks (source lines, symbols): skip payload
 			if chunkLen > 0 {
-				curPos := path.GetPath(pathId).FilePos
-				path.SysSeek(pathId, curPos+chunkLen)
+				path.SysSeekForward(pathId, chunkLen)
 			}
 		}
 	}

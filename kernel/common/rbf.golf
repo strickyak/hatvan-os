@@ -32,6 +32,7 @@ type RBFSegment struct {
 // RBFFileDescriptor represents decoded metadata from an FD sector
 type RBFFileDescriptor struct {
 	Attributes byte
+	FileSizeHi byte
 	FileSize   word
 	SegCount   byte
 	Segments   [RBF_MAX_SEGMENTS]RBFSegment
@@ -129,7 +130,12 @@ func RBFReadFD(drive byte, fdLSN word, fd *RBFFileDescriptor) byte {
 	}
 
 	fd.Attributes = peekb(bufAddr)
-	fd.FileSize = readWord32(bufAddr + 9)
+	fd.FileSizeHi = peekb(bufAddr + 10)
+	fd.FileSize = readWord16(bufAddr + 11)
+	if sizeof[word]() > 2 {
+		fd.FileSize = readWord32(bufAddr + 9)
+		fd.FileSizeHi = byte(fd.FileSize >> 16)
+	}
 	fd.SegCount = 0
 
 	segAddr := bufAddr + 16
@@ -159,10 +165,14 @@ func RBFWriteFD(drive byte, fdLSN word, fd *RBFFileDescriptor) byte {
 	}
 
 	pokeb(bufAddr, fd.Attributes)
-	pokeb(bufAddr+9, byte(fd.FileSize>>24))
-	pokeb(bufAddr+10, byte(fd.FileSize>>16))
+	pokeb(bufAddr+9, 0)
+	pokeb(bufAddr+10, fd.FileSizeHi)
 	pokeb(bufAddr+11, byte(fd.FileSize>>8))
 	pokeb(bufAddr+12, byte(fd.FileSize))
+	if sizeof[word]() > 2 {
+		pokeb(bufAddr+9, byte(fd.FileSize>>24))
+		pokeb(bufAddr+10, byte(fd.FileSize>>16))
+	}
 
 	segAddr := bufAddr + 16
 	for i := word(0); i < RBF_MAX_SEGMENTS; i++ {

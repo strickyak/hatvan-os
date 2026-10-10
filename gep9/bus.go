@@ -64,12 +64,14 @@ type Bus struct {
 	TaskFuseArmed  bool
 	TaskFuseTarget uint8
 
-	// Hatvan DMA Copy ($FF21..$FF27)
-	DmaSrcTask byte   // $FF21
-	DmaSrcAddr uint16 // $FF22..$FF23
-	DmaDstTask byte   // $FF24
-	DmaDstAddr uint16 // $FF25..$FF26
-	DmaStatus  byte   // $FF27 (0 = busy, 1 = OKAY, >1 = error)
+	// Hatvan DMA Copy ($FF21..$FF2A)
+	DmaSrcTask byte   // $FF21 (TT)
+	DmaSrcPage byte   // $FF22 (PP)
+	DmaSrcAddr uint16 // $FF23..$FF24 (HHLL)
+	DmaDstTask byte   // $FF25 (TT)
+	DmaDstPage byte   // $FF26 (PP)
+	DmaDstAddr uint16 // $FF27..$FF28 (HHLL)
+	DmaStatus  byte   // $FF29 / $FF2A (0 = busy, 1 = OKAY, >1 = error)
 
 	// Hatvan TaskFlags ($FF2D..$FF2E)
 	TaskFlagsTarget byte // $FF2D: target task to configure (default: 1)
@@ -381,23 +383,27 @@ func (b *Bus) readIO(addr uint16) byte {
 	case 0xFF21:
 		return b.DmaSrcTask
 	case 0xFF22:
-		return byte(b.DmaSrcAddr >> 8)
+		return b.DmaSrcPage
 	case 0xFF23:
-		return byte(b.DmaSrcAddr)
+		return byte(b.DmaSrcAddr >> 8)
 	case 0xFF24:
-		return b.DmaDstTask
+		return byte(b.DmaSrcAddr)
 	case 0xFF25:
-		return byte(b.DmaDstAddr >> 8)
+		return b.DmaDstTask
 	case 0xFF26:
-		return byte(b.DmaDstAddr)
+		return b.DmaDstPage
 	case 0xFF27:
+		return byte(b.DmaDstAddr >> 8)
+	case 0xFF28:
+		return byte(b.DmaDstAddr)
+	case 0xFF29, 0xFF2A:
 		st := b.DmaStatus
 		b.DmaStatus = 0 // Reset on read
 		return st
 
-	case 0xFF28:
+	case 0xFF2B:
 		return byte(b.SharedMemoryCurtain >> 8)
-	case 0xFF29:
+	case 0xFF2C:
 		return byte(b.SharedMemoryCurtain)
 
 	case 0xFF2D:
@@ -487,21 +493,25 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 	case 0xFF21:
 		b.DmaSrcTask = val
 	case 0xFF22:
-		b.DmaSrcAddr = (b.DmaSrcAddr & 0x00FF) | (uint16(val) << 8)
+		b.DmaSrcPage = val
 	case 0xFF23:
-		b.DmaSrcAddr = (b.DmaSrcAddr & 0xFF00) | uint16(val)
+		b.DmaSrcAddr = (b.DmaSrcAddr & 0x00FF) | (uint16(val) << 8)
 	case 0xFF24:
-		b.DmaDstTask = val
+		b.DmaSrcAddr = (b.DmaSrcAddr & 0xFF00) | uint16(val)
 	case 0xFF25:
-		b.DmaDstAddr = (b.DmaDstAddr & 0x00FF) | (uint16(val) << 8)
+		b.DmaDstTask = val
 	case 0xFF26:
+		b.DmaDstPage = val
+	case 0xFF27:
+		b.DmaDstAddr = (b.DmaDstAddr & 0x00FF) | (uint16(val) << 8)
+	case 0xFF28:
 		b.DmaDstAddr = (b.DmaDstAddr & 0xFF00) | uint16(val)
-	case 0xFF27: // DMA Copy command: length 1..255, 0 = 256
+	case 0xFF29: // DMA Copy command: length 1..255, 0 = 256
 		b.executeDMACopy(val)
 
-	case 0xFF28:
+	case 0xFF2B:
 		b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0x00FF) | (uint16(val) << 8)
-	case 0xFF29:
+	case 0xFF2C:
 		b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0xFF00) | uint16(val)
 
 	case 0xFF2D: // TaskFlagsTarget: target task to configure
@@ -1112,6 +1122,27 @@ func (b *Bus) writeTaskByte(task byte, addr uint16, val byte) {
 	b.Memory[task][addr] = val
 }
 
+func (b *Bus) readTaskPhysByte(task byte, page byte, addr uint16) byte {
+	if b.Embiggen && page > 0 {
+		physAddr := (uint32(page) << 16) | uint32(addr)
+		block := uint8(physAddr / 8192)
+		offset := uint16(physAddr % 8192)
+		return *b.embiggenBytePtr(task, block, offset)
+	}
+	return b.readTaskByte(task, addr)
+}
+
+func (b *Bus) writeTaskPhysByte(task byte, page byte, addr uint16, val byte) {
+	if b.Embiggen && page > 0 {
+		physAddr := (uint32(page) << 16) | uint32(addr)
+		block := uint8(physAddr / 8192)
+		offset := uint16(physAddr % 8192)
+		*b.embiggenBytePtr(task, block, offset) = val
+		return
+	}
+	b.writeTaskByte(task, addr, val)
+}
+
 func (b *Bus) executeDMACopy(lengthByte byte) {
 	count := int(lengthByte)
 	if count == 0 {
@@ -1119,13 +1150,15 @@ func (b *Bus) executeDMACopy(lengthByte byte) {
 	}
 
 	srcTask := b.DmaSrcTask
+	srcPage := b.DmaSrcPage
 	srcAddr := b.DmaSrcAddr
 	dstTask := b.DmaDstTask
+	dstPage := b.DmaDstPage
 	dstAddr := b.DmaDstAddr
 
 	for i := 0; i < count; i++ {
-		val := b.readTaskByte(srcTask, srcAddr+uint16(i))
-		b.writeTaskByte(dstTask, dstAddr+uint16(i), val)
+		val := b.readTaskPhysByte(srcTask, srcPage, srcAddr+uint16(i))
+		b.writeTaskPhysByte(dstTask, dstPage, dstAddr+uint16(i), val)
 	}
 
 	b.DmaStatus = 1 // OKAY

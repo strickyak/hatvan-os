@@ -252,10 +252,12 @@ func TestHatvanDMACopyAndTaskFuse(t *testing.T) {
 	// Program in Task 0: copy 4 bytes from Task 1 (0x0200) to Task 0 (0x0300)
 	bus.CurrentTask = 0
 	bus.WriteByte(0xFF21, 1)      // src task
-	bus.WriteWord(0xFF22, 0x0200) // src addr
-	bus.WriteByte(0xFF24, 0)      // dst task
-	bus.WriteWord(0xFF25, 0x0300) // dst addr
-	bus.WriteByte(0xFF27, 4)      // copy 4 bytes
+	bus.WriteByte(0xFF22, 0)      // src page
+	bus.WriteWord(0xFF23, 0x0200) // src addr
+	bus.WriteByte(0xFF25, 0)      // dst task
+	bus.WriteByte(0xFF26, 0)      // dst page
+	bus.WriteWord(0xFF27, 0x0300) // dst addr
+	bus.WriteByte(0xFF29, 4)      // copy 4 bytes
 
 	if bus.DmaStatus != 1 {
 		t.Fatalf("expected DMA status 1, got %d", bus.DmaStatus)
@@ -1597,10 +1599,12 @@ func TestEmbiggenDMACopyAndPurge(t *testing.T) {
 
 	// Task 0 performs DMA copy: Task 0 $0100 -> Task 1 $4000 (16 bytes)
 	bus.WriteByte(0xFF21, 0)      // src task
-	bus.WriteWord(0xFF22, 0x0100) // src addr
-	bus.WriteByte(0xFF24, 1)      // dst task
-	bus.WriteWord(0xFF25, 0x4000) // dst addr
-	bus.WriteByte(0xFF27, 16)     // count
+	bus.WriteByte(0xFF22, 0)      // src page
+	bus.WriteWord(0xFF23, 0x0100) // src addr
+	bus.WriteByte(0xFF25, 1)      // dst task
+	bus.WriteByte(0xFF26, 0)      // dst page
+	bus.WriteWord(0xFF27, 0x4000) // dst addr
+	bus.WriteByte(0xFF29, 16)     // count
 
 	if bus.DmaStatus != 1 {
 		t.Fatalf("expected DMA status 1, got %d", bus.DmaStatus)
@@ -1611,6 +1615,29 @@ func TestEmbiggenDMACopyAndPurge(t *testing.T) {
 	for i := 0; i < 16; i++ {
 		if val := bus.ReadByte(uint16(0x4000 + i)); val != byte(0xA0+i) {
 			t.Fatalf("DMA to remapped block 12 failed at offset %d: expected 0x%02X, got 0x%02X", i, 0xA0+i, val)
+		}
+	}
+
+	// Task 0 performs DMA copy directly into Task 1 Page 1 $0000 (which is physical block 8)
+	bus.CurrentTask = 0
+	bus.WriteByte(0xFF21, 0)      // src task
+	bus.WriteByte(0xFF22, 0)      // src page
+	bus.WriteWord(0xFF23, 0x0100) // src addr
+	bus.WriteByte(0xFF25, 1)      // dst task
+	bus.WriteByte(0xFF26, 1)      // dst page 1
+	bus.WriteWord(0xFF27, 0x0000) // dst addr 0x0000 -> Block 8 offset 0
+	bus.WriteByte(0xFF29, 16)     // count
+
+	if bus.DmaStatus != 1 {
+		t.Fatalf("expected DMA status 1, got %d", bus.DmaStatus)
+	}
+
+	// Map block 8 into Task 1 slot 5 ($A000) and verify data
+	bus.CurrentTask = 1
+	bus.WriteByte(0xFF45, 8)
+	for i := 0; i < 16; i++ {
+		if val := bus.ReadByte(uint16(0xA000 + i)); val != byte(0xA0+i) {
+			t.Fatalf("DMA to page 1 (block 8) failed at offset %d: expected 0x%02X, got 0x%02X", i, 0xA0+i, val)
 		}
 	}
 
