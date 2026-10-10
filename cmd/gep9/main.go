@@ -78,17 +78,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	if bus.Engine == gep9.EngineDeep65280v2 {
+	if bus.Engine == gep9.EngineDeep65280v2 || bus.Engine == gep9.EngineMulticomp09Fuzix {
 		var ramBytes int
 		switch strings.ToLower(*ramFlag) {
 		case "128k", "128kb":
 			ramBytes = 128 * 1024
+		case "256k", "256kb":
+			ramBytes = 256 * 1024
 		case "512k", "512kb":
 			ramBytes = 512 * 1024
 		case "2m", "2mb", "2048k", "2048kb":
 			ramBytes = 2048 * 1024
 		default:
-			fmt.Fprintf(os.Stderr, "Error: invalid -ram %q (must be \"128k\", \"512k\", or \"2m\")\n", *ramFlag)
+			fmt.Fprintf(os.Stderr, "Error: invalid -ram %q (must be \"128k\", \"256k\", \"512k\", or \"2m\")\n", *ramFlag)
 			os.Exit(1)
 		}
 		if err := bus.SetRamSize(ramBytes); err != nil {

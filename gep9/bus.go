@@ -190,12 +190,14 @@ func (b *Bus) SetRamSize(bytes int) error {
 	switch bytes {
 	case 128 * 1024:
 		b.PhysRamMask = 0x1FFFF
+	case 256 * 1024:
+		b.PhysRamMask = 0x3FFFF
 	case 512 * 1024:
 		b.PhysRamMask = 0x7FFFF
 	case 2048 * 1024:
 		b.PhysRamMask = 0x1FFFFF
 	default:
-		return fmt.Errorf("unsupported RAM size: %d bytes (supported: 128k, 512k, 2m)", bytes)
+		return fmt.Errorf("unsupported RAM size: %d bytes (supported: 128k, 256k, 512k, 2m)", bytes)
 	}
 	return nil
 }
