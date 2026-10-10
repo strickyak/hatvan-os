@@ -71,8 +71,10 @@ func main() {
 		bus.Engine = gep9.EngineFlat65280v2
 	case "deep65280v2":
 		bus.Engine = gep9.EngineDeep65280v2
+	case "multicomp09fuzix", "multicomp09fuxiz":
+		bus.Engine = gep9.EngineMulticomp09Fuzix
 	default:
-		fmt.Fprintf(os.Stderr, "Error: unknown engine %q (must be \"hatvan\", \"flat65280v2\", or \"deep65280v2\")\n", *engineFlag)
+		fmt.Fprintf(os.Stderr, "Error: unknown engine %q (must be \"hatvan\", \"flat65280v2\", \"deep65280v2\", or \"multicomp09fuzix\")\n", *engineFlag)
 		os.Exit(1)
 	}
 
@@ -349,6 +351,13 @@ func main() {
 			if cpt > 0 && cyclesSinceTick >= cpt {
 				cyclesSinceTick %= cpt
 				bus.ClockTick()
+			}
+		} else if bus.Engine == gep9.EngineMulticomp09Fuzix {
+			cyclesSinceTick += uint64(c)
+			cpt := uint64(*cpuClockHz / 50)
+			if cpt > 0 && cyclesSinceTick >= cpt {
+				cyclesSinceTick %= cpt
+				bus.McTimerTick()
 			}
 		}
 

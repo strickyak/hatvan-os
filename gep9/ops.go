@@ -597,6 +597,9 @@ func (c *CPU) executePage1() int {
 		n := (c.CC & FlagN) != 0
 		v := (c.CC & FlagV) != 0
 		return c.branch16(z || (n != v))
+	case 0x43: // COMA (used by 6309 CPU detection: on 6809, only A is inverted, B is preserved)
+		c.A = c.com8(c.A)
+		return 3
 
 	default:
 		panic(fmt.Errorf("unimplemented Page 1 opcode 0x10 0x%02X at PC 0x%04X", op, c.PC-2))

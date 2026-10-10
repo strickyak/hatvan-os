@@ -15,9 +15,10 @@ import (
 type EngineType string
 
 const (
-	EngineHatvan       EngineType = "hatvan"
-	EngineFlat65280v2 EngineType = "flat65280v2"
-	EngineDeep65280v2 EngineType = "deep65280v2"
+	EngineHatvan          EngineType = "hatvan"
+	EngineFlat65280v2    EngineType = "flat65280v2"
+	EngineDeep65280v2    EngineType = "deep65280v2"
+	EngineMulticomp09Fuzix EngineType = "multicomp09fuzix"
 )
 
 var (
@@ -103,6 +104,24 @@ type Bus struct {
 	MmuRegs     [2][8]byte    // Task 0 and Task 1 DAT registers ($FFA0..$FFAF)
 	MmuTask     byte          // Active MMU Task (bit 0: $FF91)
 
+	// multicomp09fuzix MMU ($FFDE..$FFDF)
+	McMap0 [8]byte // Task / Map 0 mapping (8 x 8KB blocks)
+	McMap1 [8]byte // Kernel / Map 1 mapping (8 x 8KB blocks)
+	McSlot byte    // Selected slot index (0..15)
+	McTR   byte    // Active map: 0 = Map 0, 1 = Map 1
+
+	// multicomp09fuzix SPI SD controller ($FFD8..$FFDC)
+	McSdLba0 byte // $FFDA: LBA[7:0]
+	McSdLba1 byte // $FFDB: LBA[15:8]
+	McSdLba2 byte // $FFDC: LBA[23:16]
+	McSdCtl  byte // $FFD9: Status/Command (0x80 idle, 0xE0 read, 0xA0 write)
+	McSdBuf  [512]byte
+	McSdIdx  int
+
+	// multicomp09fuzix 50Hz Timer ($FFDD)
+	McTimerEn      bool // bit 1: Timer enable
+	McTimerPending bool // bit 7: Interrupt pending
+
 	// Callback when IRQ line state changes
 	OnIRQChanged func(asserted bool)
 
@@ -144,6 +163,11 @@ func NewBus() *Bus {
 		b.MmuRegs[0][i] = byte(0x38 + i)
 		b.MmuRegs[1][i] = byte(0x38 + i)
 	}
+	for s := 0; s < 8; s++ {
+		b.McMap0[s] = byte(s)
+		b.McMap1[s] = byte(s)
+	}
+	b.McSdCtl = 0x80
 	return b
 }
 
@@ -191,6 +215,13 @@ func (b *Bus) deepPhysAddr(addr uint16) uint32 {
 func (b *Bus) ReadByte(addr uint16) byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.Engine == EngineMulticomp09Fuzix {
+		if addr >= 0xFFD0 && addr <= 0xFFDF {
+			return b.readIOMulticomp(addr)
+		}
+		return b.PhysRam[b.mcPhysAddr(addr)]
+	}
 
 	if b.Engine == EngineDeep65280v2 {
 		if addr >= 0xFF00 {
@@ -243,6 +274,15 @@ func (b *Bus) WriteByte(addr uint16, val byte) {
 
 	if b.OnWrite != nil {
 		b.OnWrite(addr, val)
+	}
+
+	if b.Engine == EngineMulticomp09Fuzix {
+		if addr >= 0xFFD0 && addr <= 0xFFDF {
+			b.writeIOMulticomp(addr, val)
+			return
+		}
+		b.PhysRam[b.mcPhysAddr(addr)] = val
+		return
 	}
 
 	if b.Engine == EngineDeep65280v2 {
@@ -538,7 +578,9 @@ func (b *Bus) writeIO(addr uint16, val byte) {
 
 func (b *Bus) evalIRQ() {
 	var asserted bool
-	if b.Engine == EngineFlat65280v2 || b.Engine == EngineDeep65280v2 {
+	if b.Engine == EngineMulticomp09Fuzix {
+		asserted = b.McTimerPending
+	} else if b.Engine == EngineFlat65280v2 || b.Engine == EngineDeep65280v2 {
 		rdrf := len(b.ConsoleIn) > 0
 		rie := (b.AciaCtrl & 0x80) != 0
 		aciaIRQ := rdrf && rie
@@ -552,10 +594,20 @@ func (b *Bus) evalIRQ() {
 	}
 }
 
+// McTimerTick signals a 50Hz periodic timer tick for multicomp09fuzix.
+func (b *Bus) McTimerTick() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.McTimerEn {
+		b.McTimerPending = true
+		b.evalIRQ()
+	}
+}
+
 // TimerTick signals a 60Hz timer tick.
 func (b *Bus) TimerTick() {
-	if b.Engine == EngineFlat65280v2 || b.Engine == EngineDeep65280v2 {
-		return // Handled via ClockTick in flat65280v2 and deep65280v2
+	if b.Engine == EngineFlat65280v2 || b.Engine == EngineDeep65280v2 || b.Engine == EngineMulticomp09Fuzix {
+		return // Handled via ClockTick or McTimerTick
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -662,6 +714,164 @@ func (b *Bus) writeIODeep(addr uint16, val byte) {
 		// SAM speed / mode - ignored
 	default:
 		panic(fmt.Errorf("%w: write at 0x%04X", ErrDeepStrayWrite, addr))
+	}
+}
+
+func (b *Bus) mcPhysAddr(addr uint16) uint32 {
+	slot := addr >> 13
+	var page byte
+	if b.McTR != 0 {
+		page = b.McMap1[slot]
+	} else {
+		page = b.McMap0[slot]
+	}
+	return ((uint32(page) << 13) | uint32(addr&0x1FFF)) & b.PhysRamMask
+}
+
+func (b *Bus) readIOMulticomp(addr uint16) byte {
+	switch addr {
+	case 0xFFD0: // UART0 Status
+		return b.readAciaStatus()
+	case 0xFFD1: // UART0 Data
+		return b.readAciaData()
+	case 0xFFD2: // UART1 Status
+		return 0x02
+	case 0xFFD3: // UART1 Data
+		return 0
+	case 0xFFD4: // UART2 Status (DriveWire)
+		return 0x02
+	case 0xFFD5: // UART2 Data
+		return 0
+
+	case 0xFFD8: // SDDATA
+		return b.readMcSdData()
+	case 0xFFD9: // SDCTL
+		return b.McSdCtl
+	case 0xFFDA: // SDLBA0
+		return b.McSdLba0
+	case 0xFFDB: // SDLBA1
+		return b.McSdLba1
+	case 0xFFDC: // SDLBA2
+		return b.McSdLba2
+
+	case 0xFFDD: // TIMER
+		var val byte
+		if b.McTimerPending {
+			val |= 0x80
+		}
+		if b.McTimerEn {
+			val |= 0x02
+		}
+		b.McTimerPending = false
+		b.evalIRQ()
+		return val
+
+	case 0xFFDE: // MMUADR
+		return (b.McTR << 6) | (b.McSlot & 0x0F) | 0x80 | 0x20
+	case 0xFFDF: // MMUDAT
+		if b.McSlot < 8 {
+			return b.McMap0[b.McSlot]
+		}
+		return b.McMap1[b.McSlot-8]
+	}
+	return 0xFF
+}
+
+func (b *Bus) writeIOMulticomp(addr uint16, val byte) {
+	switch addr {
+	case 0xFFD0: // UART0 Control
+		b.writeAciaCtrl(val)
+	case 0xFFD1: // UART0 Data
+		b.writeAciaData(val)
+	case 0xFFD2, 0xFFD4:
+		// ignore
+	case 0xFFD3, 0xFFD5:
+		// ignore
+
+	case 0xFFD8: // SDDATA
+		b.writeMcSdData(val)
+	case 0xFFD9: // SDCTL
+		b.writeMcSdCtl(val)
+	case 0xFFDA: // SDLBA0
+		b.McSdLba0 = val
+	case 0xFFDB: // SDLBA1
+		b.McSdLba1 = val
+	case 0xFFDC: // SDLBA2
+		b.McSdLba2 = val
+
+	case 0xFFDD: // TIMER
+		b.McTimerEn = (val & 0x02) != 0
+		b.McTimerPending = false
+		b.evalIRQ()
+
+	case 0xFFDE: // MMUADR
+		b.McSlot = val & 0x0F
+		b.McTR = (val >> 6) & 1
+
+	case 0xFFDF: // MMUDAT
+		page := val & 0x7F
+		if b.McSlot < 8 {
+			b.McMap0[b.McSlot] = page
+		} else {
+			b.McMap1[b.McSlot-8] = page
+		}
+	}
+}
+
+func (b *Bus) writeMcSdCtl(cmd byte) {
+	lba := uint32(b.McSdLba0) | (uint32(b.McSdLba1) << 8) | (uint32(b.McSdLba2) << 16)
+	offset := int64(lba) * 512
+
+	switch cmd {
+	case 0x00: // SD_RD_CMD
+		b.McSdIdx = 0
+		disk := b.Disks[0]
+		if disk != nil && offset+512 <= int64(len(disk)) {
+			copy(b.McSdBuf[:], disk[offset:offset+512])
+		} else {
+			for i := range b.McSdBuf {
+				b.McSdBuf[i] = 0
+			}
+		}
+		b.McSdCtl = 0xE0 // Data byte ready
+
+	case 0x01: // SD_WR_CMD
+		b.McSdIdx = 0
+		b.McSdCtl = 0xA0 // Ready for write data
+
+	default:
+		b.McSdCtl = 0x80 // Idle
+	}
+}
+
+func (b *Bus) readMcSdData() byte {
+	if b.McSdCtl != 0xE0 {
+		return 0xFF
+	}
+	val := b.McSdBuf[b.McSdIdx]
+	b.McSdIdx++
+	if b.McSdIdx >= 512 {
+		b.McSdIdx = 0
+		b.McSdCtl = 0x80
+	}
+	return val
+}
+
+func (b *Bus) writeMcSdData(val byte) {
+	if b.McSdCtl != 0xA0 {
+		return
+	}
+	b.McSdBuf[b.McSdIdx] = val
+	b.McSdIdx++
+	if b.McSdIdx >= 512 {
+		b.McSdIdx = 0
+		b.McSdCtl = 0x80
+		lba := uint32(b.McSdLba0) | (uint32(b.McSdLba1) << 8) | (uint32(b.McSdLba2) << 16)
+		offset := int64(lba) * 512
+		disk := b.Disks[0]
+		if disk != nil && offset+512 <= int64(len(disk)) {
+			copy(disk[offset:offset+512], b.McSdBuf[:])
+		}
 	}
 }
 
@@ -798,7 +1008,9 @@ func (b *Bus) writeAciaCtrl(val byte) {
 
 func (b *Bus) writeAciaData(val byte) {
 	if b.ConsoleOut != nil {
-		if val == 10 || val == 13 {
+		if b.Engine == EngineMulticomp09Fuzix {
+			b.ConsoleOut.Write([]byte{val})
+		} else if val == 10 || val == 13 {
 			b.ConsoleOut.Write([]byte{'\n'})
 		} else if b.CurlyEscape && !(val >= 32 && val <= 126) {
 			fmt.Fprintf(b.ConsoleOut, "{%d}", val)
@@ -1199,7 +1411,12 @@ func (b *Bus) LoadDECBIntoTask(task uint8, d *DECB) {
 	for _, seg := range d.Segments {
 		for i, v := range seg.Data {
 			physAddr := seg.Addr + uint32(i)
-			if b.Embiggen && physAddr >= 0x10000 {
+			if b.Engine == EngineMulticomp09Fuzix {
+				if physAddr < uint32(len(b.PhysRam)) {
+					b.PhysRam[physAddr] = v
+				}
+				b.Memory[task][uint16(physAddr)] = v
+			} else if b.Embiggen && physAddr >= 0x10000 {
 				block := uint8(physAddr / 8192)
 				offset := uint16(physAddr % 8192)
 				*b.embiggenBytePtr(task, block, offset) = v
@@ -1212,5 +1429,8 @@ func (b *Bus) LoadDECBIntoTask(task uint8, d *DECB) {
 	if d.HasExec && task == 0 {
 		// Set Reset Vector at $FFFE..$FFFF
 		binary.BigEndian.PutUint16(b.Memory[0][0xFFFE:0x10000], d.ExecAddr)
+		if b.Engine == EngineMulticomp09Fuzix {
+			binary.BigEndian.PutUint16(b.PhysRam[0xFFFE:0x10000], d.ExecAddr)
+		}
 	}
 }
