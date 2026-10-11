@@ -811,7 +811,7 @@ func (b *Bus) writeIOMulticomp(addr uint16, val byte) {
 		b.McTR = (val >> 6) & 1
 
 	case 0xFFDF: // MMUDAT
-		page := val & 0x7F
+		page := val
 		if b.McSlot < 8 {
 			b.McMap0[b.McSlot] = page
 		} else {
