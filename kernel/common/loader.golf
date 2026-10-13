@@ -86,8 +86,12 @@ func LoadDECB(pathId byte, targetTask byte) byte {
 		if tag == 0 {
 			// DECB_DATA chunk: load chunkLen bytes into targetTask at page:addr
 			page := byte(high16 & 0xFF)
+			destAddr := addr
+			if sizeof[word]() > 2 {
+				destAddr = (high16 << 16) | addr
+			}
 			if chunkLen > 0 {
-				rerr := path.SysReadPage(pathId, targetTask, page, (*byte)(addr), chunkLen)
+				rerr := path.SysReadPage(pathId, targetTask, page, (*byte)(destAddr), chunkLen)
 				if path.TransferredBytes != chunkLen || rerr != 0 {
 					return path.E_READ
 				}

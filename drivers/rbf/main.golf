@@ -28,6 +28,7 @@ const MB_PARAM = 0x008C       // alias for Count
 const MB_AUX_LSN1 = 0x008E    // 2 bytes: 0x008E..0x008F
 const MB_AUX_LSN2 = 0x0090    // 2 bytes: 0x0090..0x0091
 const MB_FILE_POS = 0x0092    // 4 bytes: 0x0092..0x0095
+const MB_TARGET_PAGE = 0x0096 // 1 byte: 0x0096 (offset 22 from 0x0080)
 const MB_PATH_STR = 0x0098    // 32 bytes: 0x0098..0x00B7
 const MB_OUT_WORD1 = 0x00B8   // 2 bytes: 0x00B8..0x00B9
 const MB_OUT_BYTE1 = 0x00BA   // 1 byte: 0x00BA
@@ -147,12 +148,9 @@ func dispatch() {
 
 	if cmd == RBF_CMD_READ_FILE {
 		drive := peekb(MB_DRIVE)
-		targetTask := peekb(MB_TARGET_ADDR)
-		targetPage := peekb(MB_TARGET_ADDR + 1)
-		targetAddr := (word(peekb(MB_TARGET_ADDR + 2)) << 8) | word(peekb(MB_TARGET_ADDR + 3))
-		if targetTask == 0 && peekb(MB_TARGET_TASK) != 0 {
-			targetTask = peekb(MB_TARGET_TASK)
-		}
+		targetTask := peekb(MB_TARGET_TASK)
+		targetPage := peekb(MB_TARGET_PAGE)
+		targetAddr := readW32(MB_TARGET_ADDR)
 		fdLSN := readW32(MB_LSN)
 		count := readW16(MB_COUNT)
 		filePosHi := peekb(MB_FILE_POS + 1)

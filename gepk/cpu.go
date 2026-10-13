@@ -278,6 +278,10 @@ func (c *CPU) Step() int {
 	opcode := c.FetchInstructionWord()
 	c.ExecuteOpcode(opcode)
 
+	if c.Cycles == startCycles {
+		c.Cycles += 4
+	}
+
 	return int(c.Cycles - startCycles)
 }
 

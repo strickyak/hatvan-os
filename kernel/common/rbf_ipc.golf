@@ -27,6 +27,7 @@ const MB_PARAM = 12       // alias for Count
 const MB_AUX_LSN1 = 14    // 2 bytes: 14..15 (cwdLSN)
 const MB_AUX_LSN2 = 16    // 2 bytes: 16..17 (cxdLSN)
 const MB_FILE_POS = 18    // 4 bytes: 18..21 (filePos)
+const MB_TARGET_PAGE = 22 // 1 byte: 22 (page for multi-page DECB loading)
 const MB_PATH_STR = 24    // 32 bytes: 24..55
 const MB_OUT_WORD1 = 56   // 2 bytes: 56..57 (OutFDLSN / BytesRead)
 const MB_OUT_BYTE1 = 58   // 1 byte: 58 (Attributes)
@@ -127,10 +128,8 @@ func ReadFilePage(drive byte, fdLSN word, filePosHi byte, filePos word, targetTa
 	mb[MB_CMD] = RBF_CMD_READ_FILE
 	mb[MB_DRIVE] = drive
 	mb[MB_TARGET_TASK] = targetTask
-	mb[MB_TARGET_ADDR] = targetTask
-	mb[MB_TARGET_ADDR+1] = targetPage
-	mb[MB_TARGET_ADDR+2] = byte(targetAddr >> 8)
-	mb[MB_TARGET_ADDR+3] = byte(targetAddr)
+	mb[MB_TARGET_PAGE] = targetPage
+	writeW32(MB_TARGET_ADDR, targetAddr)
 	writeW32(MB_LSN, fdLSN)
 	writeW16(MB_COUNT, count)
 	mb[MB_FILE_POS] = 0
