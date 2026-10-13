@@ -99,45 +99,62 @@ trap_nmi:
 
     ; 3. Fetch user return PC from user task memory at temp_sp via DMA:
     ld   a, (v_proc.CurrentPID)
-    ld   (0xFF21), a                ; SrcTask
+    ld   (0xFF24), a                ; SrcTask
+    xor  a
+    ld   (0xFF25), a                ; SrcAddr Hi (0)
     ld   hl, (temp_sp)
     ld   a, h
-    ld   (0xFF22), a
+    ld   (0xFF26), a                ; SrcAddr Mid
     ld   a, l
-    ld   (0xFF23), a                ; SrcAddr (Hi, Lo)
+    ld   (0xFF27), a                ; SrcAddr Lo
     xor  a
-    ld   (0xFF24), a                ; DstTask = 0
+    ld   (0xFF28), a                ; DstTask = 0
+    ld   (0xFF29), a                ; DstAddr Hi (0)
     ld   hl, user_return_pc
     ld   a, h
-    ld   (0xFF25), a
+    ld   (0xFF2A), a                ; DstAddr Mid
     ld   a, l
-    ld   (0xFF26), a                ; DstAddr (Hi, Lo)
+    ld   (0xFF2B), a                ; DstAddr Lo
+    xor  a
+    ld   (0xFF2C), a
+    ld   (0xFF2D), a
+    ld   (0xFF2E), a
     ld   a, 2
-    ld   (0xFF27), a                ; Count = 2
+    ld   (0xFF2F), a                ; Count = 2
+    ld   a, 1
+    ld   (0xFF21), a                ; Trigger DMA
 .wait_dma_pc1:
-    ld   a, (0xFF27)
+    ld   a, (0xFF21)
     or   a
     jr   z, .wait_dma_pc1
 
     ; 4. Fetch inline syscall opcode byte from user task RAM at user_return_pc
     ld   a, (v_proc.CurrentPID)
-    ld   (0xFF21), a
+    ld   (0xFF24), a
+    xor  a
+    ld   (0xFF25), a
     ld   hl, (user_return_pc)
     ld   a, h
-    ld   (0xFF22), a
+    ld   (0xFF26), a
     ld   a, l
-    ld   (0xFF23), a
+    ld   (0xFF27), a
     xor  a
-    ld   (0xFF24), a
+    ld   (0xFF28), a
+    ld   (0xFF29), a
     ld   hl, call_num
     ld   a, h
-    ld   (0xFF25), a
+    ld   (0xFF2A), a
     ld   a, l
-    ld   (0xFF26), a
+    ld   (0xFF2B), a
+    xor  a
+    ld   (0xFF2C), a
+    ld   (0xFF2D), a
+    ld   (0xFF2E), a
     ld   a, 1
-    ld   (0xFF27), a
+    ld   (0xFF2F), a
+    ld   (0xFF21), a
 .wait_dma_op:
-    ld   a, (0xFF27)
+    ld   a, (0xFF21)
     or   a
     jr   z, .wait_dma_op
 
@@ -148,23 +165,32 @@ trap_nmi:
 
     ; Write updated return PC back to user task stack at temp_sp:
     xor  a
-    ld   (0xFF21), a
+    ld   (0xFF24), a
+    ld   (0xFF25), a
     ld   hl, user_return_pc
     ld   a, h
-    ld   (0xFF22), a
+    ld   (0xFF26), a
     ld   a, l
-    ld   (0xFF23), a
+    ld   (0xFF27), a
     ld   a, (v_proc.CurrentPID)
-    ld   (0xFF24), a
+    ld   (0xFF28), a
+    xor  a
+    ld   (0xFF29), a
     ld   hl, (temp_sp)
     ld   a, h
-    ld   (0xFF25), a
+    ld   (0xFF2A), a
     ld   a, l
-    ld   (0xFF26), a
+    ld   (0xFF2B), a
+    xor  a
+    ld   (0xFF2C), a
+    ld   (0xFF2D), a
+    ld   (0xFF2E), a
     ld   a, 2
-    ld   (0xFF27), a
+    ld   (0xFF2F), a
+    ld   a, 1
+    ld   (0xFF21), a
 .wait_dma_pc2:
-    ld   a, (0xFF27)
+    ld   a, (0xFF21)
     or   a
     jr   z, .wait_dma_pc2
 
@@ -250,23 +276,32 @@ trap_nmi:
     ; Hardware pushed return PC on driver task stack at temp_sp.
     ; 1. Fetch return PC via DMA
     ld   a, (v_proc.CurrentPID)
-    ld   (0xFF21), a
+    ld   (0xFF24), a
+    xor  a
+    ld   (0xFF25), a
     ld   hl, (temp_sp)
     ld   a, h
-    ld   (0xFF22), a
+    ld   (0xFF26), a
     ld   a, l
-    ld   (0xFF23), a
+    ld   (0xFF27), a
     xor  a
-    ld   (0xFF24), a
+    ld   (0xFF28), a
+    ld   (0xFF29), a
     ld   hl, user_return_pc
     ld   a, h
-    ld   (0xFF25), a
+    ld   (0xFF2A), a
     ld   a, l
-    ld   (0xFF26), a
+    ld   (0xFF2B), a
+    xor  a
+    ld   (0xFF2C), a
+    ld   (0xFF2D), a
+    ld   (0xFF2E), a
     ld   a, 2
-    ld   (0xFF27), a
+    ld   (0xFF2F), a
+    ld   a, 1
+    ld   (0xFF21), a
 .wait_drv_dma1:
-    ld   a, (0xFF27)
+    ld   a, (0xFF21)
     or   a
     jr   z, .wait_drv_dma1
 
@@ -277,23 +312,32 @@ trap_nmi:
 
     ; 3. Write updated PC back to driver stack at temp_sp
     xor  a
-    ld   (0xFF21), a
+    ld   (0xFF24), a
+    ld   (0xFF25), a
     ld   hl, user_return_pc
     ld   a, h
-    ld   (0xFF22), a
+    ld   (0xFF26), a
     ld   a, l
-    ld   (0xFF23), a
+    ld   (0xFF27), a
     ld   a, (v_proc.CurrentPID)
-    ld   (0xFF24), a
+    ld   (0xFF28), a
+    xor  a
+    ld   (0xFF29), a
     ld   hl, (temp_sp)
     ld   a, h
-    ld   (0xFF25), a
+    ld   (0xFF2A), a
     ld   a, l
-    ld   (0xFF26), a
+    ld   (0xFF2B), a
+    xor  a
+    ld   (0xFF2C), a
+    ld   (0xFF2D), a
+    ld   (0xFF2E), a
     ld   a, 2
-    ld   (0xFF27), a
+    ld   (0xFF2F), a
+    ld   a, 1
+    ld   (0xFF21), a
 .wait_drv_dma2:
-    ld   a, (0xFF27)
+    ld   a, (0xFF21)
     or   a
     jr   z, .wait_drv_dma2
 
@@ -430,22 +474,31 @@ f_hal__InitRBF:
 
     ; DMA copy 2 bytes of entryPC to Task 1 at 0x3EFE
     xor  a
-    ld   (0xFF21), a
+    ld   (0xFF24), a
+    ld   (0xFF25), a
     ld   hl, user_return_pc
     ld   a, h
-    ld   (0xFF22), a
-    ld   a, l
-    ld   (0xFF23), a
-    ld   a, 1
-    ld   (0xFF24), a
-    ld   a, 0x3E
-    ld   (0xFF25), a
-    ld   a, 0xFE
     ld   (0xFF26), a
-    ld   a, 2
+    ld   a, l
     ld   (0xFF27), a
+    ld   a, 1
+    ld   (0xFF28), a
+    xor  a
+    ld   (0xFF29), a
+    ld   a, 0x3E
+    ld   (0xFF2A), a
+    ld   a, 0xFE
+    ld   (0xFF2B), a
+    xor  a
+    ld   (0xFF2C), a
+    ld   (0xFF2D), a
+    ld   (0xFF2E), a
+    ld   a, 2
+    ld   (0xFF2F), a
+    ld   a, 1
+    ld   (0xFF21), a
 .wait_init_rbf:
-    ld   a, (0xFF27)
+    ld   a, (0xFF21)
     or   a
     jr   z, .wait_init_rbf
 
@@ -493,22 +546,31 @@ f_hal__InitProcfs:
 
     ; DMA copy 2 bytes of entryPC to Task 2 at 0x3EFE
     xor  a
-    ld   (0xFF21), a
+    ld   (0xFF24), a
+    ld   (0xFF25), a
     ld   hl, user_return_pc
     ld   a, h
-    ld   (0xFF22), a
-    ld   a, l
-    ld   (0xFF23), a
-    ld   a, 2
-    ld   (0xFF24), a
-    ld   a, 0x3E
-    ld   (0xFF25), a
-    ld   a, 0xFE
     ld   (0xFF26), a
-    ld   a, 2
+    ld   a, l
     ld   (0xFF27), a
+    ld   a, 2
+    ld   (0xFF28), a
+    xor  a
+    ld   (0xFF29), a
+    ld   a, 0x3E
+    ld   (0xFF2A), a
+    ld   a, 0xFE
+    ld   (0xFF2B), a
+    xor  a
+    ld   (0xFF2C), a
+    ld   (0xFF2D), a
+    ld   (0xFF2E), a
+    ld   a, 2
+    ld   (0xFF2F), a
+    ld   a, 1
+    ld   (0xFF21), a
 .wait_init_procfs:
-    ld   a, (0xFF27)
+    ld   a, (0xFF21)
     or   a
     jr   z, .wait_init_procfs
 

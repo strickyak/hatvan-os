@@ -1,212 +1,229 @@
-# Hatvan Unified Hardware I/O Architecture Specification
+# Hatvan Unified Hardware I/O Architecture Specification (v2.0)
+## 32-Bit Addressing, Natural Alignment, and Cross-Platform Uniformity
 
 **Architecture Specification for Hatvan Operating System Virtual Machines & Discrete Hardware**  
-*Covers Motorola 6809 / Hitachi 6309 (`gep9`), Zilog Z80 (`gepz`), and Motorola 68000 (`gepk`)*
+*Covers Motorola 6809 / Hitachi 6309 (`gep9`), Zilog Z80 (`gepz`), RCA/COSMAC 1802 (`gepc`), and Motorola 68000 (`gepk`)*
 
 ---
 
-## 1. Overview & Principles
+## 1. Executive Summary & Design Principles
 
-Hatvan OS provides a unified, cross-architecture hardware I/O and MMU abstraction across both 8-bit small-memory processors and 16/32-bit large-memory processors.
+The Hatvan Operating System hardware I/O architecture v2.0 establishes a completely uniform, cross-architecture peripheral and MMU interface across both 8-bit small-memory processors and 16/32-bit large-memory processors.
 
-The peripheral and MMU design adheres to the following core principles:
-1. **Identical Functional Semantics**: Console UART, system timer, disk controller, DMA block transfer engine, MMU task-fuse mechanism, and task capability security flags operate identically across all CPU architectures.
-2. **Deterministic Driver Tasks (Level 3 Architecture)**: Trusted userland service tasks (such as RBF filesystem on Task 1 and PROCFS on Task 2) can be "blessed" by the kernel with direct I/O privileges, allowing them to communicate directly with hardware controllers without kernel context-switch mediation.
-3. **Natural Architectural Alignment**:
-   - **Small-Memory Architectures (16-bit address space, e.g. 6809, Z80)**: Place the 256-byte I/O page at the top of memory: **`$FF00..$FFFF`**. Registers are tightly packed single-byte or 16-bit big-endian fields.
-   - **Small-Memory Architectures (16-bit address space, e.g. 6809, Z80)**: Place the 256-byte I/O page at the top of memory: **`$FF00..$FFFF`**. Registers are tightly packed single-byte or 16-bit big-endian fields.
-   - **Large-Memory Architectures (24-bit / 32-bit address space, e.g. 68000)**: Place the I/O block at the top of physical memory: **`$00FF0000..$00FFFFFF`**. Every 8-bit port at `$FF00 + offset` on 6809/Z80 maps deterministically to a 16-byte slot at:
-     $$\text{Port}_{\text{68k}} = \$00\text{FF}0000 + 16 \times \text{offset} = \$00\text{FF0}xx0$$
-     where $\text{offset} = \text{Port}_{\text{6809}} - \$FF00$. This 16-byte slot allocation ensures inherent 16-bit and 32-bit natural alignment, allows single-byte fields to expand to 32 bits, and provides dedicated command/status offsets without register crowding.
+This design standardizes on the following core principles:
+
+1. **Identical 1:1 Byte Offsets Across All CPUs**:
+   Every register offset (`+$00` through `+$47`) is **100% identical** across M6809, Z80, COSMAC 1802, and M68000.
+   - **Small-Memory Platforms (6809, Z80, 1802)**: Base address = **`$FF00`** (`$FF00..$FF47`)
+   - **Large-Memory Platforms (68000)**: Base address = **`$00FF0000`** (`$00FF0000..$00FF0047`)
+   - The obsolete rule multiplying 68000 I/O offsets by 16 is completely retired.
+2. **Unified 32-Bit Composite Memory Pointers (`TAddr32`)**:
+   All task-relative memory pointers (for DMA source, DMA destination, disk target buffers, and shared memory boundaries) use a standardized 32-bit composite format combining an **8-bit Task ID** in the high byte and a **24-bit Task Memory Address** in the low 24 bits.
+3. **Strict Big-Endian Standard**:
+   All multi-byte I/O registers (32-bit composite addresses, 32-bit LSNs, 32-bit DMA counts) are strictly **Big-Endian** on the hardware bus. Z80 and other little-endian CPUs access multi-byte registers MSB-first.
+4. **Natural 4-Byte Alignment**:
+   Every 32-bit register is aligned on a 4-byte boundary (`+$14`, `+$18`, `+$24`, `+$28`, `+$2C`, `+$30`). The 68000 can access them using atomic `MOVE.L` instructions without risking hardware address error exceptions.
+5. **Turbo9Sim Binary Compatibility**:
+   Single-byte registers at offsets `+$00..+$05` (`Term.Out`, `Term.In`, `Reg.Stat`, `Reg.Ctrl`, `logchar`, `Exit.Code`) are strictly 1 byte wide, preserving 1:1 compatibility with Boisy Pitre's Turbo9Sim specification.
+6. **Decoupled DMA Triggering**:
+   Setting transfer parameters does not initiate a DMA transfer as a side effect. Transfers are explicitly commanded by writing `1` to `DMA.CmdSt` (`+$21`).
 
 ---
 
-## 2. Master I/O Register Comparison Table
+## 2. Unified 32-Bit Composite Address Format (`TAddr32`)
 
-| Register Name | 6809 (`gep9`) | Z80 (`gepz`) | 68000 (`gepk`) | Width (68k) | R/W | Function / Description |
-| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
-| **Console & System Control** | | | | | | |
-| `Term.Out` | `$FF00` | `$FF00` | `$00FF0000` | Byte / Word | W | Console putchar (write ASCII character to stdout) |
-| `Term.In` | `$FF01` | `$FF01` | `$00FF0010` | Byte / Word | R | Console getchar (read non-blocking ASCII character) |
-| `Reg.Stat` | `$FF02` | `$FF02` | `$00FF0020` | 16-bit Word | R/W | UART/Timer Status: Bit 0 = `Timer.Ready`, Bit 1 = `Term.RxReady` |
-| `Reg.Ctrl` | `$FF03` | `$FF03` | `$00FF0030` | 16-bit Word | R/W | IRQ Control: Bit 0 = `TimrIRQ`, Bit 1 = `TermIRQ` |
-| `logchar` | `$FF04` | `$FF04` | `$00FF0040` | Byte / Word | W | Diagnostic log output (emitted to stderr / debug trace) |
-| `Exit.Code` | `$FF05` | `$FF05` | `$00FF0050` | 16-bit Word | W/R | VM halt / termination exit code |
+```
+ 31             24 23             16 15              8 7               0
++-----------------+-----------------+-----------------+-----------------+
+|   Task ID (8)   |   AddrHi (8)    |   AddrMid (8)   |   AddrLo (8)    |
++-----------------+-----------------+-----------------+-----------------+
+|<-- Task: 8b --->|<---------------- Address: 24b --------------------->|
+```
+
+### Field Definitions
+- **`Task ID` (`bits [31..24]`, 8 bits)**:
+  Target Task selector (`0..255`).
+  - Task 0 = Kernel
+  - Task 1 = RBF Filesystem Driver
+  - Task 2 = PROCFS Driver
+  - Tasks 3..255 = User processes
+- **`AddrHi` (`bits [23..16]`, 8 bits)**:
+  Upper byte of the 24-bit task address space. **Must be `0x00` on non-EMBIGGEN'ed 16-bit systems**.
+- **`AddrMid` (`bits [15..8]`, 8 bits)**:
+  Middle byte of the 24-bit task address space (bits 15..8 of standard 16-bit address).
+- **`AddrLo` (`bits [7..0]`, 8 bits)**:
+  Low byte of the 24-bit task address space (bits 7..0 of standard 16-bit address).
+
+### Architectural Interpretation
+1. **Non-EMBIGGEN'ed 16-bit Systems (Standard Flat 64KB)**:
+   - `AddrHi` (`bits [23..16]`) is fixed to `0x00`.
+   - `AddrMid:AddrLo` (`bits [15..0]`) represents the 16-bit task address (`0x0000..0xFFFF`).
+   - *Example*: Task 4, buffer at `$0800` $\implies$ `0x04000800`.
+2. **EMBIGGEN'ed 16-bit Systems (Paged 8KB Windows into 256 Blocks = 2 MB)**:
+   - For direct hardware DMA and Disk streaming, the 24-bit address directly indexes the task's 256 physical 8KB blocks:
+     - `Addr[23..13]` (11 bits): Physical 8KB block index (`0..255`).
+     - `Addr[12..0]` (13 bits): Byte offset within the 8KB block (`0..8191`).
+   - Addresses `0x000000..0x00FFFF` (`AddrHi == 0`) correspond directly to blocks 0..7 under default MMAP `{0, 1, 2, 3, 4, 5, 6, 7}`.
+3. **Motorola 68000 (`gepk`)**:
+   - `Addr[23..0]` directly addresses 24-bit physical RAM within `Bus.Tasks[Task]`.
+   - A single 32-bit instruction (`move.l d0, $00FF0024`) atomically configures both task and destination memory pointer.
+
+---
+
+## 3. Master Hardware Register Map (v2.0)
+
+Registers are organized into functional 16-byte groups with strict 4-byte natural alignment for multi-byte quantities.
+
+| Offset | 6809 / Z80 / 1802 | 68000 (`gepk`) | Register Name | Width | R/W | Description |
+| :--- | :--- | :--- | :--- | :---: | :---: | :--- |
+| **Console & System Control** | | | | | | *(Turbo9Sim Binary Compatible)* |
+| `+$00` | `$FF00` | `$00FF0000` | `Term.Out` | 1 B | W | Console putchar (writes ASCII character to stdout) |
+| `+$01` | `$FF01` | `$00FF0001` | `Term.In` | 1 B | R | Console getchar (non-blocking ASCII character, 0 = empty) |
+| `+$02` | `$FF02` | `$00FF0002` | `Reg.Stat` | 1 B | R/W | Status (Bit 0 = `Timer.Ready`, Bit 1 = `Term.RxReady`) |
+| `+$03` | `$FF03` | `$00FF0003` | `Reg.Ctrl` | 1 B | R/W | IRQ Enable (Bit 0 = `TimrIRQ`, Bit 1 = `TermIRQ`) |
+| `+$04` | `$FF04` | `$00FF0004` | `logchar` | 1 B | W | Diagnostic trace output (written directly to stderr) |
+| `+$05` | `$FF05` | `$00FF0005` | `Exit.Code` | 1 B | W/R | VM halt termination exit code |
+| `+$06..+$0F`| `$FF06..$FF0F`| `$00FF0006..` | *Reserved* | 10 B | - | Reserved for system timer / CPU frequency control |
 | **Disk Subsystem** | | | | | | |
-| `Disk.Drive` | `$FF10` | `$FF10` | `$00FF0100` | Byte / Word | R/W | Drive unit selector (`0..3` for `/d0` through `/d3`) |
-| `Disk.Sector` | `$FF11..$FF13` | `$FF11..$FF13` | `$00FF0110` | 32-bit Long | R/W | Logical Sector Number (LSN, 24-bit on 8-bit, 32-bit on 68k) |
-| `Disk.Task` | `$FF14` | `$FF14` | `$00FF0140` | Byte / Word | R/W | Target Task ID for DMA sector transfer (`0..255`) |
-| `Disk.Addr` | `$FF15..$FF16` | `$FF15..$FF16` | `$00FF0150` | 32-bit Long | R/W | Buffer pointer in `Disk.Task` (16-bit on 8-bit, 32-bit on 68k) |
-| `Disk.CmdSt` | `$FF17` | `$FF17` | `$00FF0170` | Byte / Word | R/W | Command / Status (Write: 1=Read, 2=Write; Read: 0=Busy, 1=OK, >1=Err) |
+| `+$10` | `$FF10` | `$00FF0010` | `Disk.Drive` | 1 B | R/W | Drive unit selector (`0..3` for `/d0` through `/d3`) |
+| `+$11` | `$FF11` | `$00FF0011` | `Disk.CmdSt` | 1 B | R/W | Cmd: 1=Read, 2=Write; Status: 0=Busy, 1=OK, >1=Error |
+| `+$12..+$13`| `$FF12..$FF13`| `$00FF0012..` | *Reserved* | 2 B | - | Alignment padding to 4-byte boundary |
+| `+$14..+$17`| `$FF14..$FF17`| `$00FF0014` | `Disk.Sector` | 4 B | R/W | 32-bit Logical Sector Number (LSN, Big-Endian) |
+| `+$18..+$1B`| `$FF18..$FF1B`| `$00FF0018` | `Disk.Target` | 4 B | R/W | 32-bit `TAddr32` target buffer: `[Task:8][Addr:24]` |
+| `+$1C..+$1F`| `$FF1C..$FF1F`| `$00FF001C..` | *Reserved* | 4 B | - | Reserved for multi-sector count / block size |
 | **MMU & Fast DMA Engine** | | | | | | |
-| `TaskFuse` / `Task.Active` | `$FF20` | `$FF20` | `$00FF0200` | Byte / Word | R/W | Armed Task Switch fuse / Active User Task selector |
-| `DMA.SrcTask` | `$FF21` | `$FF21` | `$00FF0210` | Byte / Word | R/W | DMA Source Task ID (`0..255`) |
-| `DMA.SrcAddr` | `$FF22..$FF23` | `$FF22..$FF23` | `$00FF0220` | 32-bit Long | R/W | DMA Source Memory Address (16-bit on 8-bit, 32-bit on 68k) |
-| `DMA.DstTask` | `$FF24` | `$FF24` | `$00FF0240` | Byte / Word | R/W | DMA Destination Task ID (`0..255`) |
-| `DMA.DstAddr` | `$FF25..$FF26` | `$FF25..$FF26` | `$00FF0250` | 32-bit Long | R/W | DMA Destination Memory Address (16-bit on 8-bit, 32-bit on 68k) |
-| `DMA.Count` | `$FF27` | `$FF27` | `$00FF0270` | 32-bit Long | R/W | Byte Count (`1..255`, 0=256 on 8-bit; up to 16 MB on 68k) |
-| `DMA.CmdSt` | *(in `$FF27`)* | *(in `$FF27`)* | `$00FF0274` | Byte / Word | R/W | DMA Command / Status (1=Start; Read: 0=Busy, 1=OK, >1=Err) |
-| `SharedMemoryCurtain` | `$FF28..$FF29` | `$FF28..$FF29` | `$00FF0280` | 32-bit Long | R/W | Shared memory boundary (`$E000` on 8-bit, `$00FE0000` on 68k) |
-| **Task Capability Flags** | | | | | | |
-| `TaskFlagsTarget` | `$FF2D` | `$FF2D` | `$00FF02D0` | Byte / Word | R/W | Target task selector (`0..255`) for capability configuration |
-| `TaskFlagsRegister` | `$FF2E` | `$FF2E` | `$00FF02E0` | Byte / Word | R/W | Capability flags for selected task: Bit 0 = `TASK_FLAG_IO` |
-| `PurgeTaskMem` | `$FF2F` | `$FF2F` | `$00FF02F0` | Byte / Word | W | Zeroes/frees task RAM and clears capability flags |
-| **EMBIGGEN MMU (Optional)** | | | | | | |
-| `Embiggen MMAP Vector` | `$FF40..$FF47` | `$FF40..$FF47` | N/A | 8 Bytes | R/W | 8-byte MMAP vector mapping 8KB slots to up to 256 blocks (user accessible) |
+| `+$20` | `$FF20` | `$00FF0020` | `TaskFuse` / `Task.Active` | 1 B | R/W | Armed Task Switch fuse / Active Task ID |
+| `+$21` | `$FF21` | `$00FF0021` | `DMA.CmdSt` | 1 B | R/W | Cmd: 1=Start Transfer; Status: 0=Busy, 1=OK, >1=Error |
+| `+$22..+$23`| `$FF22..$FF23`| `$00FF0022..` | *Reserved* | 2 B | - | Alignment padding to 4-byte boundary |
+| `+$24..+$27`| `$FF24..$FF27`| `$00FF0024` | `DMA.Src` | 4 B | R/W | 32-bit `TAddr32` source pointer: `[SrcTask:8][SrcAddr:24]` |
+| `+$28..+$2B`| `$FF28..$FF2B`| `$00FF0028` | `DMA.Dst` | 4 B | R/W | 32-bit `TAddr32` destination pointer: `[DstTask:8][DstAddr:24]` |
+| `+$2C..+$2F`| `$FF2C..$FF2F`| `$00FF002C` | `DMA.Count` | 4 B | R/W | 32-bit transfer byte count (Big-Endian, up to 16 MB) |
+| **Task Security & Shared Memory** | | | | | | |
+| `+$30..+$33`| `$FF30..$FF33`| `$00FF0030` | `SharedMemoryCurtain` | 4 B | R/W | 32-bit boundary ($0000E000 on 8-bit, $00FE0000 on 68k) |
+| `+$34` | `$FF34` | `$00FF0034` | `TaskFlagsTarget` | 1 B | R/W | Target task ID (`0..255`) for capability configuration |
+| `+$35` | `$FF35` | `$00FF0035` | `TaskFlagsRegister` | 1 B | R/W | Capability flags for selected task: Bit 0 = `TASK_FLAG_IO` |
+| `+$36` | `$FF36` | `$00FF0036` | `PurgeTaskMem` | 1 B | W | Zeroes task RAM and revokes capability flags |
+| `+$37..+$3F`| `$FF37..$FF3F`| `$00FF0037..` | *Reserved* | 9 B | - | Reserved |
+| **EMBIGGEN MMU** | | | | | | *(User Accessible)* |
+| `+$40..+$47`| `$FF40..$FF47`| `$00FF0040..` | `Embiggen MMAP` | 8 B | R/W | 8-byte vector mapping 8KB slots 0..7 to physical blocks |
+| `+$48..+$5F`| `$FF48..$FF5F`| `$00FF0048..` | *Reserved* | 24 B | - | Reserved |
+| **Trap Number Register** | | | | | | *(Z80 / 1802)* |
+| `+$60` | `$FF60` | N/A | `TrapSyscallNum` | 1 B | R | Hardware syscall trap number (Z80 port 60h, 1802 OUT 6) |
 
 ---
 
-## 3. Subsystem Specifications
+## 4. Subsystem Behavioral Details
 
-### 3.1 Character Console & 60Hz Timer
-* **Console I/O**:
-  * Writing to `Term.Out` outputs an ASCII byte to standard output.
-  * Reading from `Term.In` retrieves the next pending character from standard input (non-blocking). If no input is ready, it returns `0`.
-* **Status & Interrupt Control (`Reg.Stat` / `Reg.Ctrl`)**:
-  * `Reg.Stat` Bit 0 (`$01`): `Timer.Ready` — asserts on every 60Hz timer tick. Writing `1` clears the flag.
-  * `Reg.Stat` Bit 1 (`$02`): `Term.RxReady` — asserts when keyboard/terminal input is ready. Writing `1` clears the flag.
-  * `Reg.Ctrl` Bit 0 (`$01`): `TimrIRQ` — enables timer interrupts.
-  * `Reg.Ctrl` Bit 1 (`$02`): `TermIRQ` — enables terminal input interrupts.
-* **Diagnostics & VM Exit**:
-  * Writing an ASCII character to `logchar` routes output to the emulator's diagnostic trace log.
-  * Writing an exit code to `Exit.Code` halts the virtual machine and returns the status to the host operating system.
+### 4.1 Character Console & 60Hz Timer (`+$00..+$05`)
+- Exactly preserves Turbo9Sim layout.
+- `Reg.Stat` (`+$02`):
+  - Bit 0 (`$01`): `Timer.Ready` — asserts on 60Hz timer tick. Writing `1` clears.
+  - Bit 1 (`$02`): `Term.RxReady` — asserts when console input is ready. Writing `1` clears.
+- `Reg.Ctrl` (`+$03`):
+  - Bit 0 (`$01`): `TimrIRQ` — enables timer interrupts.
+  - Bit 1 (`$02`): `TermIRQ` — enables console RX interrupts.
 
-### 3.2 Disk Subsystem
-* Supports up to 4 virtual disk drives (`/d0` through `/d3`).
-* Sector size: **512 bytes** (or 256 bytes for legacy OS-9 RBF images).
-* Direct Task-to-Task Transfers:
-  The hardware disk controller features a target task selector (`Disk.Task`) and buffer address pointer (`Disk.Addr`). When a user process requests a read, the driver task (Task 1) sets `Disk.Task` to the user's task ID and `Disk.Addr` to the user's buffer, streaming sector data directly into user RAM without intermediate kernel buffering.
-* `Disk.CmdSt`:
-  * Write `1`: Read sector from disk into `[Disk.Task : Disk.Addr]`.
-  * Write `2`: Write sector from `[Disk.Task : Disk.Addr]` to disk.
-  * Read: `0` = Busy, `1` = OKAY, `>1` = Error code. Reading non-zero status automatically clears the register to `0`.
+### 4.2 Disk Subsystem (`+$10..+$19`)
+- Supports direct task-to-task sector streaming without kernel memory bouncing.
+- Driver sets:
+  - `Disk.Drive` (`+$10`) = Drive number (`0..3`)
+  - `Disk.Sector` (`+$14..+$17`) = 32-bit LSN (Big-Endian)
+  - `Disk.Target` (`+$18..+$1B`) = 32-bit `TAddr32` (`[TargetTask:8][Addr:24]`)
+  - `Disk.CmdSt` (`+$11`) = `1` (Read) or `2` (Write)
+- Hardware transfers 256 or 512 bytes directly to/from the target task's memory space and sets `Disk.CmdSt = 1` on success, or an error code $>1$ on failure.
 
-### 3.3 Fast DMA Block Transfer Engine
-* Enables rapid cross-task and intra-task block transfers without software copy loops.
-* Source buffer is addressed by `[DMA.SrcTask : DMA.SrcAddr]`.
-* Destination buffer is addressed by `[DMA.DstTask : DMA.DstAddr]`.
-* On 8-bit machines, writing `DMA.Count` (`$FF27`) immediately initiates the copy and sets status. On 68000, `DMA.Count` is a 32-bit register at `$00FF0270` and writing `1` to `DMA.CmdSt` (`$00FF0274`) initiates the transfer.
+### 4.3 Fast DMA Engine (`+$20..+$2F`)
+- Supports memory copies up to 16 MB with true 32-bit byte counts.
+- **Explicit Triggering**: Writing parameters does not start DMA. Writing `1` to `DMA.CmdSt` (`+$21`) explicitly starts execution.
+- Reads of `DMA.CmdSt` return `0` while busy, `1` upon successful completion, or $>1$ if a task access violation occurred.
 
-### 3.4 Shared Memory Curtain
-* Tasks 0 (Kernel), 1 (RBF Driver), and 2 (PROCFS Driver) share memory above the curtain address:
-  - Small architectures: `$E000..$FEFF` (default boundary `$E000`).
-  - 68000: `$00FE0000..$00FEFFFF` (default boundary `$00FE0000`).
-* Reads and writes above the curtain by Tasks 1 and 2 directly alias Task 0 memory, providing zero-copy IPC, shared process tables, and shared path descriptors.
-* User tasks (Task $\ge 3$) cannot access memory across the curtain; their entire address space remains strictly isolated.
-
-### 3.5 MMU Task Capability Flags & Security Architecture
-* By default, any attempt by a user task (`TaskID > 0`) to access the hardware I/O page triggers an immediate fatal protection trap (`ErrUserAccessTrap` on 8-bit, hardware `/BERR` on 68000).
-* **Two-Register Configuration Protocol**:
-  1. The kernel writes the target Task ID (`0..255`) to `TaskFlagsTarget` (`$FF2D` / `$00FF02D0`).
-  2. The kernel writes the capability byte to `TaskFlagsRegister` (`$FF2E` / `$00FF02E0`).
-* **Capability Flags**:
-  * **Bit 0 (`$01`, `TASK_FLAG_IO`)**: Blesses the selected task with I/O privileges, granting it direct access to device registers without kernel mediation.
-  * Bits 1..7: Reserved for future capabilities (e.g. raw disk vs filesystem, direct DMA).
-* **Automatic Privilege Revocation**:
-  When a task exits or is terminated, writing its Task ID to `PurgeTaskMem` (`$FF2F` / `$00FF02F0`) zeroes its memory and automatically resets `TaskFlags[task] = 0`, preventing recycled tasks from inheriting stale hardware privileges.
+### 4.4 EMBIGGEN MMU (`+$40..+$47`)
+- Provides eight 8KB windows for 64KB address spaces (Slots 0..7).
+- User processes can directly read and write their own MMAP vector at `+$40..+$47` without triggering an `ErrUserAccessTrap`.
+- The I/O page at `+$00..+$FF` remains frozen in place regardless of the mapping in Slot 7.
 
 ---
 
-## 4. Architecture-Specific Differences for Large-Memory Architectures (68000)
+## 5. Architectural Code Samples
 
-While functional semantics are identical, the Motorola 68000 (`gepk`) differs from the 8-bit implementations in the following specific ways:
+### Motorola 68000 (`gepk`)
+```m68k
+; DMA copy 4096 bytes from Task 1 ($002000) to Task 4 ($018000)
+move.l  #$01002000, $00FF0024   ; DMA.Src: Task 1, Addr $002000
+move.l  #$04018000, $00FF0028   ; DMA.Dst: Task 4, Addr $018000
+move.l  #4096,      $00FF002C   ; DMA.Count = 4096 bytes
+move.b  #1,         $00FF0021   ; DMA.CmdSt = 1 (Start DMA transfer)
+.wait_dma:
+tst.b   $00FF0021
+beq.s   .wait_dma
+```
 
-### 1. I/O Block Relocation to 24-Bit / 32-Bit Top Page
-* **6809 / Z80**: The I/O block occupies the top 256 bytes of the 16-bit address space: **`$FF00..$FFFF`**.
-* **68000**: The I/O block occupies the top 64 KB page of the 24-bit physical address space: **`$00FF0000..$00FFFFFF`** (specifically `$00FF0000..$00FF02FF`).
+### Motorola 6809 (`gep9`)
+```m6809
+; DMA copy 4096 bytes from Task 1 ($2000) to Task 4 (Block 12, offset $0000 -> 24-bit $018000)
+ldd     #$0100          ; Task 1, AddrHi = 0
+std     $FF24           ; DMA.Src [Task:8, AddrHi:8]
+ldd     #$2000          ; AddrMid:AddrLo
+std     $FF26           ; DMA.Src [AddrMid:8, AddrLo:8]
 
-### 2. 16-Byte Slot Allocation and Word Alignment Constraints
-* The 68000 hardware architecture requires all 16-bit word and 32-bit longword memory transfers to occur on **even byte addresses** (`A0 = 0`). Attempting an unaligned word/long access generates a fatal hardware **Address Error exception**.
-* To provide ample room for 16-bit and 32-bit expanded registers without address crowding, each 1-byte register offset on 6809 (`$FF00 + offset`) expands to a dedicated **16-byte slot** on 68000:
-  $$\text{Port}_{\text{68k}} = \$00\text{FF}0000 + 16 \times \text{offset} = \$00\text{FF0}xx0$$
-  * `$00FF0000`: `Term.Out`
-  * `$00FF0010`: `Term.In`
-  * `$00FF0020`: `Reg.Stat`
-  * `$00FF0030`: `Reg.Ctrl`
-  * `$00FF0040`: `logchar`
-  * `$00FF0050`: `Exit.Code`
-  * `$00FF0100`: `Disk.Drive`
-  * `$00FF0110`: `Disk.Sector`
-  * `$00FF0140`: `Disk.Task`
-  * `$00FF0150`: `Disk.Addr`
-  * `$00FF0170`: `Disk.CmdSt`
-  * `$00FF0200`: `TaskFuse` / `Task.Active`
-  * `$00FF0210`: `DMA.SrcTask`
-  * `$00FF0220`: `DMA.SrcAddr`
-  * `$00FF0240`: `DMA.DstTask`
-  * `$00FF0250`: `DMA.DstAddr`
-  * `$00FF0270`: `DMA.Count` (`$00FF0270`) & `DMA.CmdSt` (`$00FF0274`)
-  * `$00FF0280`: `SharedMemoryCurtain`
-  * `$00FF02D0`: `TaskFlagsTarget`
-  * `$00FF02E0`: `TaskFlagsRegister`
-  * `$00FF02F0`: `PurgeTaskMem`
+ldd     #$0401          ; Task 4, AddrHi = $01
+std     $FF28           ; DMA.Dst [Task:8, AddrHi:8]
+ldd     #$8000          ; AddrMid:AddrLo = $8000
+std     $FF2A           ; DMA.Dst [AddrMid:8, AddrLo:8]
 
-### 3. 32-Bit Pointers and Counters
-* **`Disk.Sector`**:
-  * 6809 / Z80: 24-bit LSN represented across 3 consecutive bytes (`$FF11..$FF13`), addressing up to 8 GB (16M $\times$ 512B).
-  * 68000: Full 32-bit LSN longword at `$00FF0110`, addressing up to 2 TB.
-* **`Disk.Addr`**:
-  * 6809 / Z80: 16-bit memory pointer (`$FF15..$FF16`) in target task space.
-  * 68000: Full 32-bit memory pointer longword at `$00FF0150`.
-* **DMA Addressing & Transfer Count**:
-  * 6809 / Z80: `DMA.SrcAddr` and `DMA.DstAddr` are 16-bit; `DMA.Count` is an 8-bit count (`$FF27`, where 0 represents 256 bytes).
-  * 68000: `DMA.SrcAddr` (`$00FF0220`) and `DMA.DstAddr` (`$00FF0250`) are 32-bit longwords; `DMA.Count` (`$00FF0270`) is a 32-bit longword capable of copying entire multi-megabyte address spaces in a single operation.
-* **Dedicated DMA Command Register (`DMA.CmdSt`)**:
-  * 6809 / Z80: Writing `$FF27` sets length and simultaneously triggers the DMA transfer.
-  * 68000: `DMA.Count` at `$00FF0270` is separated from `DMA.CmdSt` at `$00FF0274`. Writing `1` to `DMA.CmdSt` initiates the transfer.
-* **`SharedMemoryCurtain`**:
-  * 6809 / Z80: 16-bit boundary (`$FF28..$FF29`, defaulting to `$E000`).
-  * 68000: 32-bit boundary (`$00FF0280`, defaulting to `$00FE0000`).
+ldd     #0
+std     $FF2C           ; DMA.Count Hi16 = 0
+ldd     #4096
+std     $FF2E           ; DMA.Count Lo16 = 4096
 
-### 3.5 EMBIGGEN 8KB Paged MMU (Optional for 64KB CPU Architectures)
-* **Purpose**: Allows 64KB CPU architectures (6809, Z80, 1802) to map additional memory blocks into 8KB address windows (slots 0..7).
-* **MMAP Vector (`$FF40..$FF47`)**:
-  * `$FF40`: Slot 0 (`$0000..$1FFF`)
-  * `$FF41`: Slot 1 (`$2000..$3FFF`)
-  * `$FF42`: Slot 2 (`$4000..$5FFF`)
-  * `$FF43`: Slot 3 (`$6000..$7FFF`)
-  * `$FF44`: Slot 4 (`$8000..$9FFF`)
-  * `$FF45`: Slot 5 (`$A000..$BFFF`)
-  * `$FF46`: Slot 6 (`$C000..$DFFF`)
-  * `$FF47`: Slot 7 (`$E000..$FFFF`)
-* **Behavior**:
-  * Each task possesses its own independent MMAP vector, initialized to `{0, 1, 2, 3, 4, 5, 6, 7}` (flat 64KB address space).
-  * Up to 256 8KB blocks (2 MB per task) are lazily allocated on demand when blocks $\ge 8$ are accessed.
-  * **User Privileges**: Any user task may read and write its own MMAP vector at `$FF40..$FF47` directly without triggering an `ErrUserAccessTrap`.
-  * **Frozen I/O Page**: The I/O page at `$FF00..$FFFF` is frozen in place regardless of the 7th MMAP byte at `$FF47`. Slot 7 translates addresses `$E000..$FEFF` to the mapped block, while `$FF00..$FFFF` continues to host the I/O page, vectors, and protection traps.
-  * **Backwards Compatibility**: When the `--embiggen` option is disabled, `$FF40..$FF47` remains unmapped (causing `ErrUserAccessTrap` for user tasks and `ErrKernelIOPanic` in Task 0).
+lda     #1
+sta     $FF21           ; DMA.CmdSt: Start DMA transfer
+.wait_dma:
+tst     $FF21
+beq     .wait_dma
+```
 
-### 4. Hardware Privilege Model & Bus Error (`/BERR`) Assertion
-* On the 68000, CPU privilege state is explicitly signaled via function code pins:
-  * `FC2 = 1`: Supervisor Mode.
-  * `FC2 = 0`: User Mode.
-* When `FC2 == 0` (User Mode), any access to `$00FF0000..$00FFFFFF` by an unblessed task asserts the hardware `/BERR` line, generating a fatal 68000 Bus Error exception (Vector 2).
-* On 6809 and Z80, user mode is tracked by software MMU task registers (`CurrentTask > 0`), triggering an `ErrUserAccessTrap`.
+### Zilog Z80 (`gepz` — Big-Endian Standard)
+```z80
+; Set DMA.Src: Task 1, Addr $002000 (Big-Endian: $01, $00, $20, $00)
+ld      hl, 0100h
+ld      a, h
+ld      (0FF24h), a     ; Task = 1
+ld      a, l
+ld      (0FF25h), a     ; AddrHi = 0
+ld      hl, 2000h
+ld      a, h
+ld      (0FF26h), a     ; AddrMid = $20
+ld      a, l
+ld      (0FF27h), a     ; AddrLo = $00
 
-### 5. Interrupt Vectoring: Direct Autovectors vs Polled IRQ
-* **68000 (Direct Autovectors)**:
-  * Level 6 (`$00000078`, Autovector 30): 60Hz System Timer tick. Direct vector to clock scheduler with highest priority; requires no status polling.
-  * Level 4 (`$00000070`, Autovector 28): Console UART receive ready. Direct vector to input handler.
-* **6809**: Single maskable `IRQ` (vector at `$FFF8`) or `FIRQ` (`$FFF6`). ISR polls `Reg.Stat` to distinguish timer from keyboard.
-* **Z80**: Single maskable `INT` using Interrupt Mode 1 (`IM 1`, vector at `$0038`). ISR polls `Reg.Stat` to distinguish interrupt causes.
+; Set DMA.Dst: Task 4, Addr $004000 (Big-Endian: $04, $00, $40, $00)
+ld      hl, 0400h
+ld      a, h
+ld      (0FF28h), a     ; Task = 4
+ld      a, l
+ld      (0FF29h), a     ; AddrHi = 0
+ld      hl, 4000h
+ld      a, h
+ld      (0FF2Ah), a     ; AddrMid = $40
+ld      a, l
+ld      (0FF2Bh), a     ; AddrLo = $00
 
-### 6. Task Switch Execution Trigger
-* **68000**: Armed `TaskFuse` triggers on the execution of the **`RTE`** (Return from Exception) instruction.
-* **6809**: Armed `TaskFuse` triggers on the execution of the **`RTI`** (Return from Interrupt) instruction.
-* **Z80**: Armed `TaskFuse` triggers on the execution of the **`RETN`** (Return from NMI) instruction.
+; Set DMA.Count = 4096 (Big-Endian: $00, $00, $10, $00)
+xor     a
+ld      (0FF2Ch), a
+ld      (0FF2Dh), a
+ld      hl, 1000h
+ld      a, h
+ld      (0FF2Eh), a
+ld      a, l
+ld      (0FF2Fh), a
 
----
-
-## 5. Architecture-Specific Differences for 6809 and Z80 Outside `$FF00..$FF2F`
-
-1. **Z80 Syscall Port 60h Trap Latch (`$FF60`)**:
-   - The Z80 lacks a native syscall instruction with inline argument bytes like 6809's `SWI2 <call_num>`.
-   - Instead, Z80 user code executes `OUT (0x60), A; DEFB <call_num>`. Port `0x60` latches the accumulator and triggers an immediate Non-Maskable Interrupt (`NMI`) entering Task 0.
-   - In `gepz`, memory address **`$FF60`** is mapped to read this latched syscall value.
-2. **6809 Vintage NitrOS-9 EMUDSK Compatibility (`$FF80..$FF86`)**:
-   - `gep9` contains optional hardware decoding for the legacy NitrOS-9 `flat65280v2` / `deep65280v2` emulator disk registers at `$FF80..$FF86` to run vintage OS-9 disks.
-   - `gepz` and `gepk` are pure Hatvan systems and omit this legacy peripheral.
-3. **Hardware Interrupt Vector Locations**:
-   - **6809**: High memory: `$FFF0..$FFFF` (stored in Task 0 RAM).
-   - **Z80**: Low memory: `$0000` (Reset), `$0038` (IM 1 IRQ), `$0066` (NMI).
-   - **68000**: Vector table in Task 0 low RAM: `$00000000..$000003FF` (Vectors 0..255).
+; Trigger DMA
+ld      a, 1
+ld      (0FF21h), a     ; DMA.CmdSt = 1
+.wait_dma:
+ld      a, (0FF21h)
+or      a
+jr      z, .wait_dma
+```

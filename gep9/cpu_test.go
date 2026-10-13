@@ -251,13 +251,14 @@ func TestHatvanDMACopyAndTaskFuse(t *testing.T) {
 
 	// Program in Task 0: copy 4 bytes from Task 1 (0x0200) to Task 0 (0x0300)
 	bus.CurrentTask = 0
-	bus.WriteByte(0xFF21, 1)      // src task
-	bus.WriteByte(0xFF22, 0)      // src page
-	bus.WriteWord(0xFF23, 0x0200) // src addr
-	bus.WriteByte(0xFF25, 0)      // dst task
-	bus.WriteByte(0xFF26, 0)      // dst page
-	bus.WriteWord(0xFF27, 0x0300) // dst addr
-	bus.WriteByte(0xFF29, 4)      // copy 4 bytes
+	bus.WriteByte(0xFF24, 1)      // src task
+	bus.WriteByte(0xFF25, 0)      // src page
+	bus.WriteWord(0xFF26, 0x0200) // src addr
+	bus.WriteByte(0xFF28, 0)      // dst task
+	bus.WriteByte(0xFF29, 0)      // dst page
+	bus.WriteWord(0xFF2A, 0x0300) // dst addr
+	bus.WriteWord(0xFF2E, 4)      // count
+	bus.WriteByte(0xFF21, 1)      // DMA.CmdSt = 1
 
 	if bus.DmaStatus != 1 {
 		t.Fatalf("expected DMA status 1, got %d", bus.DmaStatus)
@@ -319,11 +320,11 @@ func TestTaskFlagsIOBlessing(t *testing.T) {
 		bus.ReadByte(0xFF00)
 	}()
 
-	// 2. Task 0 blesses Task 1 via $FF2E = 0x01
+	// 2. Task 0 blesses Task 1 via $FF35 = 0x01
 	bus.CurrentTask = 0
-	bus.WriteByte(0xFF2E, 0x01)
-	if got := bus.ReadByte(0xFF2E); got != 0x01 {
-		t.Fatalf("ReadByte(0xFF2E) = 0x%02X, want 0x01", got)
+	bus.WriteByte(0xFF35, 0x01)
+	if got := bus.ReadByte(0xFF35); got != 0x01 {
+		t.Fatalf("ReadByte(0xFF35) = 0x%02X, want 0x01", got)
 	}
 
 	// 3. Task 1 now has I/O privileges: reading and writing $FF00..$FFFF succeeds without panic
@@ -345,22 +346,22 @@ func TestTaskFlagsIOBlessing(t *testing.T) {
 		bus.ReadByte(0xFF00)
 	}()
 
-	// 4b. Task 0 blesses Task 2 via $FF2D = 2, $FF2E = 0x01
+	// 4b. Task 0 blesses Task 2 via $FF34 = 2, $FF35 = 0x01
 	bus.CurrentTask = 0
-	bus.WriteByte(0xFF2D, 2)
-	bus.WriteByte(0xFF2E, 0x01)
+	bus.WriteByte(0xFF34, 2)
+	bus.WriteByte(0xFF35, 0x01)
 	bus.CurrentTask = 2
 	bus.WriteByte(0xFF10, 1) // Access succeeds
 	if bus.DiskDrive != 1 {
 		t.Fatalf("expected DiskDrive=1 from blessed Task 2, got %d", bus.DiskDrive)
 	}
 
-	// 5. Purging Task 1 via $FF2F revokes blessing
+	// 5. Purging Task 1 via $FF36 revokes blessing
 	bus.CurrentTask = 0
-	bus.WriteByte(0xFF2D, 1)
-	bus.WriteByte(0xFF2F, 1) // Purge Task 1
-	if got := bus.ReadByte(0xFF2E); got != 0x00 {
-		t.Fatalf("ReadByte(0xFF2E) after purge = 0x%02X, want 0x00", got)
+	bus.WriteByte(0xFF34, 1)
+	bus.WriteByte(0xFF36, 1) // Purge Task 1
+	if got := bus.ReadByte(0xFF35); got != 0x00 {
+		t.Fatalf("ReadByte(0xFF35) after purge = 0x%02X, want 0x00", got)
 	}
 
 	// Task 1 access now panics again
@@ -1598,13 +1599,14 @@ func TestEmbiggenDMACopyAndPurge(t *testing.T) {
 	}
 
 	// Task 0 performs DMA copy: Task 0 $0100 -> Task 1 $4000 (16 bytes)
-	bus.WriteByte(0xFF21, 0)      // src task
-	bus.WriteByte(0xFF22, 0)      // src page
-	bus.WriteWord(0xFF23, 0x0100) // src addr
-	bus.WriteByte(0xFF25, 1)      // dst task
-	bus.WriteByte(0xFF26, 0)      // dst page
-	bus.WriteWord(0xFF27, 0x4000) // dst addr
-	bus.WriteByte(0xFF29, 16)     // count
+	bus.WriteByte(0xFF24, 0)      // src task
+	bus.WriteByte(0xFF25, 0)      // src page
+	bus.WriteWord(0xFF26, 0x0100) // src addr
+	bus.WriteByte(0xFF28, 1)      // dst task
+	bus.WriteByte(0xFF29, 0)      // dst page
+	bus.WriteWord(0xFF2A, 0x4000) // dst addr
+	bus.WriteWord(0xFF2E, 16)     // count
+	bus.WriteByte(0xFF21, 1)      // DMA.CmdSt = 1
 
 	if bus.DmaStatus != 1 {
 		t.Fatalf("expected DMA status 1, got %d", bus.DmaStatus)
@@ -1620,13 +1622,14 @@ func TestEmbiggenDMACopyAndPurge(t *testing.T) {
 
 	// Task 0 performs DMA copy directly into Task 1 Page 1 $0000 (which is physical block 8)
 	bus.CurrentTask = 0
-	bus.WriteByte(0xFF21, 0)      // src task
-	bus.WriteByte(0xFF22, 0)      // src page
-	bus.WriteWord(0xFF23, 0x0100) // src addr
-	bus.WriteByte(0xFF25, 1)      // dst task
-	bus.WriteByte(0xFF26, 1)      // dst page 1
-	bus.WriteWord(0xFF27, 0x0000) // dst addr 0x0000 -> Block 8 offset 0
-	bus.WriteByte(0xFF29, 16)     // count
+	bus.WriteByte(0xFF24, 0)      // src task
+	bus.WriteByte(0xFF25, 0)      // src page
+	bus.WriteWord(0xFF26, 0x0100) // src addr
+	bus.WriteByte(0xFF28, 1)      // dst task
+	bus.WriteByte(0xFF29, 1)      // dst page 1
+	bus.WriteWord(0xFF2A, 0x0000) // dst addr 0x0000 -> Block 8 offset 0
+	bus.WriteWord(0xFF2E, 16)     // count
+	bus.WriteByte(0xFF21, 1)      // DMA.CmdSt = 1
 
 	if bus.DmaStatus != 1 {
 		t.Fatalf("expected DMA status 1, got %d", bus.DmaStatus)
@@ -1643,7 +1646,7 @@ func TestEmbiggenDMACopyAndPurge(t *testing.T) {
 
 	// Purge Task 1
 	bus.CurrentTask = 0
-	bus.WriteByte(0xFF2F, 1) // Purge task 1
+	bus.WriteByte(0xFF36, 1) // Purge task 1
 
 	// MMAP vector should be reset to 0..7 and block 12 cleared
 	bus.CurrentTask = 1

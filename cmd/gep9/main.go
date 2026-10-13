@@ -102,8 +102,8 @@ func main() {
 	if bus.Engine == gep9.EngineHatvan && *sharedCurtainFlag != "" {
 		s := strings.TrimPrefix(*sharedCurtainFlag, "0x")
 		s = strings.TrimPrefix(s, "$")
-		if v, err := strconv.ParseUint(s, 16, 16); err == nil {
-			bus.SharedMemoryCurtain = uint16(v)
+		if v, err := strconv.ParseUint(s, 16, 32); err == nil {
+			bus.SharedMemoryCurtain = uint32(v)
 		}
 	}
 	if *embiggenFlag {

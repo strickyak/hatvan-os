@@ -40,32 +40,33 @@ type Bus struct {
 	ExitCode int
 	Halted   bool
 
-	// Hatvan Disk I/O ($FF10..$FF17)
-	DiskDrive   byte      // $FF10
-	DiskSector  uint32    // $FF11..$FF13 (24-bit LSN)
-	DiskMemTask byte      // $FF14
-	DiskMemAddr uint16    // $FF15..$FF16
-	DiskStatus  byte      // $FF17 (0 = busy, 1 = OKAY, >1 = error)
-	Disks       [4][]byte // Up to 4 disk images
+	// Hatvan Disk I/O ($FF10..$FF1B)
+	DiskDrive      byte      // $FF10: Drive selector
+	DiskStatus     byte      // $FF11: Disk.CmdSt (0 = busy, 1 = OKAY, >1 = error)
+	DiskSector     uint32    // $FF14..$FF17: 32-bit LSN (Big-Endian)
+	DiskTargetTask byte      // $FF18: Target task
+	DiskTargetAddr uint32    // $FF19..$FF1B: 24-bit task address (Big-Endian)
+	Disks          [4][]byte // Up to 4 disk images
 
 	// Hatvan TaskFuse ($FF20)
 	TaskFuseArmed  bool
 	TaskFuseTarget uint8
 
-	// Hatvan DMA Copy ($FF21..$FF27)
-	DmaSrcTask byte   // $FF21
-	DmaSrcAddr uint16 // $FF22..$FF23
-	DmaDstTask byte   // $FF24
-	DmaDstAddr uint16 // $FF25..$FF26
-	DmaStatus  byte   // $FF27 (0 = busy, 1 = OKAY, >1 = error)
+	// Hatvan DMA Copy ($FF21..$FF2F)
+	DmaStatus  byte   // $FF21: DMA.CmdSt (0 = busy, 1 = OKAY, >1 = error)
+	DmaSrcTask byte   // $FF24: Source task
+	DmaSrcAddr uint32 // $FF25..$FF27: 24-bit source address (Big-Endian)
+	DmaDstTask byte   // $FF28: Destination task
+	DmaDstAddr uint32 // $FF29..$FF2B: 24-bit destination address (Big-Endian)
+	DmaCount   uint32 // $FF2C..$FF2F: 32-bit transfer count (Big-Endian)
 	LastPC     uint16
 
-	// Hatvan TaskFlags ($FF2D..$FF2E)
-	TaskFlagsTarget byte // $FF2D: target task to configure (default: 1)
-	TaskFlags       [256]byte
+	// Hatvan Shared Curtain ($FF30..$FF33)
+	SharedMemoryCurtain uint32 // $FF30..$FF33 (default 0x0000E000)
 
-	// Tunable shared memory curtain ($E000 by default) for Tasks 0, 1, 2
-	SharedMemoryCurtain uint16
+	// Hatvan TaskFlags ($FF34..$FF36)
+	TaskFlagsTarget byte // $FF34: target task to configure (default: 1)
+	TaskFlags       [256]byte
 
 	// Trap State via I/O Port 60h
 	TrapPending bool
@@ -80,10 +81,10 @@ type Bus struct {
 
 // NewBus constructs an initialized Bus with Task 0 allocated.
 func NewBus() *Bus {
-	curtain := uint16(0xE000)
+	curtain := uint32(0x0000E000)
 	if s := os.Getenv("HATVAN_SHARED_CURTAIN"); s != "" {
-		if v, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "$"), 16, 16); err == nil {
-			curtain = uint16(v)
+		if v, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "$"), 16, 32); err == nil {
+			curtain = uint32(v)
 		}
 	}
 	b := &Bus{
@@ -133,7 +134,8 @@ func (b *Bus) readByteLocked(addr uint16) byte {
 		panic(fmt.Errorf("%w: read at 0x%04X in task %d", ErrUserAccessTrap, addr, b.CurrentTask))
 	}
 
-	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && b.CurrentTask <= 2 {
+	curtain := uint16(b.SharedMemoryCurtain & 0xFFFF)
+	if curtain > 0 && addr >= curtain && b.CurrentTask <= 2 {
 		return b.Memory[0][addr]
 	}
 
@@ -149,7 +151,8 @@ func (b *Bus) writeByteLocked(addr uint16, val byte) {
 		panic(fmt.Errorf("%w: write at 0x%04X in task %d", ErrUserAccessTrap, addr, b.CurrentTask))
 	}
 
-	if b.SharedMemoryCurtain > 0 && addr >= b.SharedMemoryCurtain && b.CurrentTask <= 2 {
+	curtain := uint16(b.SharedMemoryCurtain & 0xFFFF)
+	if curtain > 0 && addr >= curtain && b.CurrentTask <= 2 {
 		b.Memory[0][addr] = val
 		return
 	}
@@ -186,50 +189,82 @@ func (b *Bus) readIOLocked(addr uint16) byte {
 	case 0xFF10:
 		return b.DiskDrive
 	case 0xFF11:
-		return byte(b.DiskSector >> 16)
-	case 0xFF12:
-		return byte(b.DiskSector >> 8)
-	case 0xFF13:
-		return byte(b.DiskSector)
-	case 0xFF14:
-		return b.DiskMemTask
-	case 0xFF15:
-		return byte(b.DiskMemAddr >> 8)
-	case 0xFF16:
-		return byte(b.DiskMemAddr)
-	case 0xFF17:
 		st := b.DiskStatus
 		if st != 0 {
 			b.DiskStatus = 0
 		}
 		return st
+	case 0xFF12, 0xFF13:
+		return 0
+	case 0xFF14:
+		return byte(b.DiskSector >> 24)
+	case 0xFF15:
+		return byte(b.DiskSector >> 16)
+	case 0xFF16:
+		return byte(b.DiskSector >> 8)
+	case 0xFF17:
+		return byte(b.DiskSector)
+	case 0xFF18:
+		return b.DiskTargetTask
+	case 0xFF19:
+		return byte(b.DiskTargetAddr >> 16)
+	case 0xFF1A:
+		return byte(b.DiskTargetAddr >> 8)
+	case 0xFF1B:
+		return byte(b.DiskTargetAddr)
+
 	case 0xFF20:
 		if b.TaskFuseArmed {
 			return b.TaskFuseTarget
 		}
 		return b.CurrentTask
 	case 0xFF21:
-		return b.DmaSrcTask
-	case 0xFF22:
-		return byte(b.DmaSrcAddr >> 8)
-	case 0xFF23:
-		return byte(b.DmaSrcAddr)
-	case 0xFF24:
-		return b.DmaDstTask
-	case 0xFF25:
-		return byte(b.DmaDstAddr >> 8)
-	case 0xFF26:
-		return byte(b.DmaDstAddr)
-	case 0xFF27:
 		st := b.DmaStatus
 		if st != 0 {
 			b.DmaStatus = 0
 		}
 		return st
+	case 0xFF22, 0xFF23:
+		return 0
+	case 0xFF24:
+		return b.DmaSrcTask
+	case 0xFF25:
+		return byte(b.DmaSrcAddr >> 16)
+	case 0xFF26:
+		return byte(b.DmaSrcAddr >> 8)
+	case 0xFF27:
+		return byte(b.DmaSrcAddr)
+	case 0xFF28:
+		return b.DmaDstTask
+	case 0xFF29:
+		return byte(b.DmaDstAddr >> 16)
+	case 0xFF2A:
+		return byte(b.DmaDstAddr >> 8)
+	case 0xFF2B:
+		return byte(b.DmaDstAddr)
+	case 0xFF2C:
+		return byte(b.DmaCount >> 24)
 	case 0xFF2D:
-		return b.TaskFlagsTarget
+		return byte(b.DmaCount >> 16)
 	case 0xFF2E:
+		return byte(b.DmaCount >> 8)
+	case 0xFF2F:
+		return byte(b.DmaCount)
+
+	case 0xFF30:
+		return byte(b.SharedMemoryCurtain >> 24)
+	case 0xFF31:
+		return byte(b.SharedMemoryCurtain >> 16)
+	case 0xFF32:
+		return byte(b.SharedMemoryCurtain >> 8)
+	case 0xFF33:
+		return byte(b.SharedMemoryCurtain)
+	case 0xFF34:
+		return b.TaskFlagsTarget
+	case 0xFF35:
 		return b.TaskFlags[b.TaskFlagsTarget]
+	case 0xFF36:
+		return 0
 	case 0xFF60:
 		return b.TrapVal
 	default:
@@ -262,42 +297,75 @@ func (b *Bus) writeIOLocked(addr uint16, val byte) {
 		}
 	case 0xFF10:
 		b.DiskDrive = val
-	case 0xFF11:
-		b.DiskSector = (b.DiskSector & 0x0000FFFF) | (uint32(val) << 16)
-	case 0xFF12:
-		b.DiskSector = (b.DiskSector & 0x00FF00FF) | (uint32(val) << 8)
-	case 0xFF13:
-		b.DiskSector = (b.DiskSector & 0x00FFFF00) | uint32(val)
-	case 0xFF14:
-		b.DiskMemTask = val
-	case 0xFF15:
-		b.DiskMemAddr = (b.DiskMemAddr & 0x00FF) | (uint16(val) << 8)
-	case 0xFF16:
-		b.DiskMemAddr = (b.DiskMemAddr & 0xFF00) | uint16(val)
-	case 0xFF17:
+	case 0xFF11: // Disk.CmdSt: 1=Read, 2=Write
 		b.executeDiskCommandLocked(val)
+	case 0xFF12, 0xFF13:
+		// Reserved
+	case 0xFF14:
+		b.DiskSector = (b.DiskSector & 0x00FFFFFF) | (uint32(val) << 24)
+	case 0xFF15:
+		b.DiskSector = (b.DiskSector & 0xFF00FFFF) | (uint32(val) << 16)
+	case 0xFF16:
+		b.DiskSector = (b.DiskSector & 0xFFFF00FF) | (uint32(val) << 8)
+	case 0xFF17:
+		b.DiskSector = (b.DiskSector & 0xFFFFFF00) | uint32(val)
+	case 0xFF18:
+		b.DiskTargetTask = val
+	case 0xFF19:
+		b.DiskTargetAddr = (b.DiskTargetAddr & 0x00FFFF) | (uint32(val) << 16)
+	case 0xFF1A:
+		b.DiskTargetAddr = (b.DiskTargetAddr & 0xFF00FF) | (uint32(val) << 8)
+	case 0xFF1B:
+		b.DiskTargetAddr = (b.DiskTargetAddr & 0xFFFF00) | uint32(val)
+
 	case 0xFF20:
 		b.TaskFuseArmed = true
 		b.TaskFuseTarget = val
-	case 0xFF21:
-		b.DmaSrcTask = val
-	case 0xFF22:
-		b.DmaSrcAddr = (b.DmaSrcAddr & 0x00FF) | (uint16(val) << 8)
-	case 0xFF23:
-		b.DmaSrcAddr = (b.DmaSrcAddr & 0xFF00) | uint16(val)
+	case 0xFF21: // DMA.CmdSt
+		if val == 1 {
+			b.executeDmaCopyLocked()
+		}
+	case 0xFF22, 0xFF23:
+		// Reserved
 	case 0xFF24:
-		b.DmaDstTask = val
+		b.DmaSrcTask = val
 	case 0xFF25:
-		b.DmaDstAddr = (b.DmaDstAddr & 0x00FF) | (uint16(val) << 8)
+		b.DmaSrcAddr = (b.DmaSrcAddr & 0x00FFFF) | (uint32(val) << 16)
 	case 0xFF26:
-		b.DmaDstAddr = (b.DmaDstAddr & 0xFF00) | uint16(val)
+		b.DmaSrcAddr = (b.DmaSrcAddr & 0xFF00FF) | (uint32(val) << 8)
 	case 0xFF27:
-		b.executeDmaCopyLocked(val)
+		b.DmaSrcAddr = (b.DmaSrcAddr & 0xFFFF00) | uint32(val)
+	case 0xFF28:
+		b.DmaDstTask = val
+	case 0xFF29:
+		b.DmaDstAddr = (b.DmaDstAddr & 0x00FFFF) | (uint32(val) << 16)
+	case 0xFF2A:
+		b.DmaDstAddr = (b.DmaDstAddr & 0xFF00FF) | (uint32(val) << 8)
+	case 0xFF2B:
+		b.DmaDstAddr = (b.DmaDstAddr & 0xFFFF00) | uint32(val)
+	case 0xFF2C:
+		b.DmaCount = (b.DmaCount & 0x00FFFFFF) | (uint32(val) << 24)
 	case 0xFF2D:
-		b.TaskFlagsTarget = val
+		b.DmaCount = (b.DmaCount & 0xFF00FFFF) | (uint32(val) << 16)
 	case 0xFF2E:
-		b.TaskFlags[b.TaskFlagsTarget] = val
+		b.DmaCount = (b.DmaCount & 0xFFFF00FF) | (uint32(val) << 8)
 	case 0xFF2F:
+		b.DmaCount = (b.DmaCount & 0xFFFFFF00) | uint32(val)
+
+	case 0xFF30:
+		b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0x00FFFFFF) | (uint32(val) << 24)
+	case 0xFF31:
+		b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0xFF00FFFF) | (uint32(val) << 16)
+	case 0xFF32:
+		b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0xFFFF00FF) | (uint32(val) << 8)
+	case 0xFF33:
+		b.SharedMemoryCurtain = (b.SharedMemoryCurtain & 0xFFFFFF00) | uint32(val)
+
+	case 0xFF34:
+		b.TaskFlagsTarget = val
+	case 0xFF35:
+		b.TaskFlags[b.TaskFlagsTarget] = val
+	case 0xFF36:
 		if val > 0 {
 			b.Memory[val] = [65536]byte{}
 			b.TaskFlags[val] = 0
@@ -317,14 +385,15 @@ func (b *Bus) executeDiskCommandLocked(cmd byte) {
 		return
 	}
 
-	task := b.DiskMemTask
-	addr := b.DiskMemAddr
+	task := b.DiskTargetTask
+	addr := uint16(b.DiskTargetAddr & 0xFFFF)
+	curtain := uint16(b.SharedMemoryCurtain & 0xFFFF)
 
 	switch cmd {
 	case 1: // Read Sector
 		for i := 0; i < 256; i++ {
 			tgtAddr := addr + uint16(i)
-			if b.SharedMemoryCurtain > 0 && tgtAddr >= b.SharedMemoryCurtain && task <= 2 {
+			if curtain > 0 && tgtAddr >= curtain && task <= 2 {
 				b.Memory[0][tgtAddr] = disk[offset+int64(i)]
 			} else {
 				b.Memory[task][tgtAddr] = disk[offset+int64(i)]
@@ -334,7 +403,7 @@ func (b *Bus) executeDiskCommandLocked(cmd byte) {
 	case 2: // Write Sector
 		for i := 0; i < 256; i++ {
 			srcAddr := addr + uint16(i)
-			if b.SharedMemoryCurtain > 0 && srcAddr >= b.SharedMemoryCurtain && task <= 2 {
+			if curtain > 0 && srcAddr >= curtain && task <= 2 {
 				disk[offset+int64(i)] = b.Memory[0][srcAddr]
 			} else {
 				disk[offset+int64(i)] = b.Memory[task][srcAddr]
@@ -350,28 +419,30 @@ func (b *Bus) executeDiskCommandLocked(cmd byte) {
 	}
 }
 
-func (b *Bus) executeDmaCopyLocked(count byte) {
-	n := int(count)
-	if n == 0 {
-		n = 256
+func (b *Bus) executeDmaCopyLocked() {
+	count := b.DmaCount
+	if count == 0 {
+		b.DmaStatus = 1
+		return
 	}
 	srcTask := b.DmaSrcTask
-	srcAddr := b.DmaSrcAddr
+	srcAddr := uint16(b.DmaSrcAddr & 0xFFFF)
 	dstTask := b.DmaDstTask
-	dstAddr := b.DmaDstAddr
+	dstAddr := uint16(b.DmaDstAddr & 0xFFFF)
+	curtain := uint16(b.SharedMemoryCurtain & 0xFFFF)
 
-	for i := 0; i < n; i++ {
+	for i := uint32(0); i < count; i++ {
 		sAddr := srcAddr + uint16(i)
 		dAddr := dstAddr + uint16(i)
 
 		var val byte
-		if b.SharedMemoryCurtain > 0 && sAddr >= b.SharedMemoryCurtain && srcTask <= 2 {
+		if curtain > 0 && sAddr >= curtain && srcTask <= 2 {
 			val = b.Memory[0][sAddr]
 		} else {
 			val = b.Memory[srcTask][sAddr]
 		}
 
-		if b.SharedMemoryCurtain > 0 && dAddr >= b.SharedMemoryCurtain && dstTask <= 2 {
+		if curtain > 0 && dAddr >= curtain && dstTask <= 2 {
 			b.Memory[0][dAddr] = val
 		} else {
 			b.Memory[dstTask][dAddr] = val

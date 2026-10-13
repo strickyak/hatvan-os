@@ -74,37 +74,45 @@ trap_swi2:
     ; 3. Copy 12-byte user frame from user task RAM into v_syscall.UserFrame
     ; DMA: srcTask = CurrentPID, srcAddr = user_sp_table[CurrentPID], dstTask = 0, dstAddr = UserFrame, count = 12
     ldb v_proc.CurrentPID
-    stb $FF21
-    clr $FF22
+    stb $FF24
+    clr $FF25
     lslb
     ldy #user_sp_table
     ldd b,y
-    std $FF23
-    clr $FF25           ; dstTask = 0
-    clr $FF26
+    std $FF26
+    clr $FF28           ; dstTask = 0
+    clr $FF29
     ldd #v_syscall.UserFrame
-    std $FF27
-    ldb #12             ; 12 bytes
-    stb $FF29
+    std $FF2A
+    ldd #0
+    std $FF2C
+    ldd #12             ; 12 bytes
+    std $FF2E
+    ldb #1
+    stb $FF21
 .wait_dma1:
-    ldb $FF29
+    ldb $FF21
     beq .wait_dma1
 
     ; 4. Fetch inline syscall opcode byte from user task RAM at user PC
     ; User PC is at UserFrame + 10 (big-endian word)
     ldb v_proc.CurrentPID
-    stb $FF21
-    clr $FF22
-    ldd >v_syscall.UserFrame+10
-    std $FF23
+    stb $FF24
     clr $FF25
-    clr $FF26
+    ldd >v_syscall.UserFrame+10
+    std $FF26
+    clr $FF28
+    clr $FF29
     ldd #call_num
-    std $FF27
+    std $FF2A
+    ldd #0
+    std $FF2C
+    ldd #1
+    std $FF2E
     ldb #1
-    stb $FF29
+    stb $FF21
 .wait_dma2:
-    ldb $FF29
+    ldb $FF21
     beq .wait_dma2
 
     ; Increment user PC past the inline call_num byte
@@ -113,22 +121,26 @@ trap_swi2:
     std >v_syscall.UserFrame+10
 
     ; Write updated PC back to user stack frame so user task memory always has the return PC
-    clr $FF21           ; srcTask = 0
-    clr $FF22
+    clr $FF24           ; srcTask = 0
+    clr $FF25
     ldd #v_syscall.UserFrame+10
-    std $FF23           ; srcAddr = &UserFrame.PC
+    std $FF26           ; srcAddr = &UserFrame.PC
     ldb v_proc.CurrentPID
-    stb $FF25           ; dstTask = CurrentPID
-    clr $FF26
+    stb $FF28           ; dstTask = CurrentPID
+    clr $FF29
     lslb
     ldy #user_sp_table
     ldd b,y
     addd #10            ; dstAddr = user_sp + 10 (PC field in RTI frame)
-    std $FF27
-    ldb #2
-    stb $FF29           ; count = 2 bytes
+    std $FF2A
+    ldd #0
+    std $FF2C
+    ldd #2
+    std $FF2E           ; count = 2 bytes
+    ldb #1
+    stb $FF21
 .wait_dma_pc:
-    ldb $FF29
+    ldb $FF21
     beq .wait_dma_pc
 
     ; 5. Dispatch system call in MiniGolf
@@ -142,21 +154,25 @@ trap_swi2:
     beq .process_exited
 
     ; 6. Copy updated UserFrame (12 bytes) back to user task stack
-    clr $FF21           ; srcTask = 0
-    clr $FF22
+    clr $FF24           ; srcTask = 0
+    clr $FF25
     ldd #v_syscall.UserFrame
-    std $FF23
+    std $FF26
     ldb v_proc.CurrentPID
-    stb $FF25
-    clr $FF26
+    stb $FF28
+    clr $FF29
     lslb
     ldy #user_sp_table
     ldd b,y
-    std $FF27
-    ldb #12
-    stb $FF29
+    std $FF2A
+    ldd #0
+    std $FF2C
+    ldd #12
+    std $FF2E
+    ldb #1
+    stb $FF21
 .wait_dma3:
-    ldb $FF29
+    ldb $FF21
     beq .wait_dma3
 
     ; 7. Restore user stack pointer and arm TaskFuse
@@ -225,39 +241,47 @@ trap_swi2:
     ; Register S is driver task SP. PC on driver stack is at S + 10.
     ; Advance PC past the $0A inline opcode byte:
     ldb v_proc.CurrentPID
-    stb $FF21           ; srcTask = CurrentPID
-    clr $FF22           ; srcPage = 0
+    stb $FF24           ; srcTask = CurrentPID
+    clr $FF25           ; srcPage = 0
     tfr s,d
     addd #10
-    std $FF23           ; srcAddr = S + 10
-    clr $FF25           ; dstTask = 0
-    clr $FF26           ; dstPage = 0
+    std $FF26           ; srcAddr = S + 10
+    clr $FF28           ; dstTask = 0
+    clr $FF29           ; dstPage = 0
     ldd #rbf_temp_pc
-    std $FF27           ; dstAddr = rbf_temp_pc
-    ldb #2
-    stb $FF29           ; DMA read 2 bytes
+    std $FF2A           ; dstAddr = rbf_temp_pc
+    ldd #0
+    std $FF2C
+    ldd #2
+    std $FF2E           ; count = 2 bytes
+    ldb #1
+    stb $FF21           ; DMA trigger
 .driver_ret_dma1:
-    ldb $FF29
+    ldb $FF21
     beq .driver_ret_dma1
 
     ldd rbf_temp_pc
     addd #1
     std rbf_temp_pc
 
-    clr $FF21           ; srcTask = 0
-    clr $FF22           ; srcPage = 0
+    clr $FF24           ; srcTask = 0
+    clr $FF25           ; srcPage = 0
     ldd #rbf_temp_pc
-    std $FF23           ; srcAddr = rbf_temp_pc
+    std $FF26           ; srcAddr = rbf_temp_pc
     ldb v_proc.CurrentPID
-    stb $FF25           ; dstTask = CurrentPID
-    clr $FF26           ; dstPage = 0
+    stb $FF28           ; dstTask = CurrentPID
+    clr $FF29           ; dstPage = 0
     tfr s,d
     addd #10
-    std $FF27           ; dstAddr = S + 10
-    ldb #2
-    stb $FF29           ; DMA write 2 bytes
+    std $FF2A           ; dstAddr = S + 10
+    ldd #0
+    std $FF2C
+    ldd #2
+    std $FF2E           ; count = 2 bytes
+    ldb #1
+    stb $FF21           ; DMA trigger
 .driver_ret_dma2:
-    ldb $FF29
+    ldb $FF21
     beq .driver_ret_dma2
 
     ; Save driver Task SP in user_sp_table[CurrentPID]
@@ -310,19 +334,23 @@ f_hal__InitRBF:
     std rbf_init_frame+10
 
     ; DMA initial 12-byte RTI frame to Task 1 at $3EF4
-    clr $FF21
-    clr $FF22
+    clr $FF24
+    clr $FF25
     ldd #rbf_init_frame
-    std $FF23
+    std $FF26
     lda #1
-    sta $FF25
-    clr $FF26
+    sta $FF28
+    clr $FF29
     ldd #$3EF4
-    std $FF27
-    ldb #12
-    stb $FF29
+    std $FF2A
+    ldd #0
+    std $FF2C
+    ldd #12
+    std $FF2E
+    ldb #1
+    stb $FF21
 .rbf_init_dma:
-    ldb $FF29
+    ldb $FF21
     beq .rbf_init_dma
 
     ; user_sp_table[1] = $3EF4
@@ -376,19 +404,23 @@ f_hal__InitProcfs:
     std procfs_init_frame+10
 
     ; DMA initial 12-byte RTI frame to Task 2 at $3EF4
-    clr $FF21
-    clr $FF22
+    clr $FF24
+    clr $FF25
     ldd #procfs_init_frame
-    std $FF23
+    std $FF26
     lda #2
-    sta $FF25
-    clr $FF26
+    sta $FF28
+    clr $FF29
     ldd #$3EF4
-    std $FF27
-    ldb #12
-    stb $FF29
+    std $FF2A
+    ldd #0
+    std $FF2C
+    ldd #12
+    std $FF2E
+    ldb #1
+    stb $FF21
 .procfs_init_dma:
-    ldb $FF29
+    ldb $FF21
     beq .procfs_init_dma
 
     ; user_sp_table[2] = $3EF4

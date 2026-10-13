@@ -12,32 +12,25 @@ const PORT_LOGCHAR = 0xFF04
 const PORT_EXIT = 0xFF05
 
 const PORT_DISKDRV = 0xFF10
-const PORT_DISKSEC0 = 0xFF11
-const PORT_DISKSEC1 = 0xFF12
-const PORT_DISKSEC2 = 0xFF13
-const PORT_DISKTASK = 0xFF14
-const PORT_DISKADDR = 0xFF15 // 2 bytes (Hi, Lo)
-const PORT_DISKCMD = 0xFF17
+const PORT_DISKCMD = 0xFF11
+const PORT_DISKSEC = 0xFF14 // 4 bytes ($FF14..$FF17, Big-Endian)
+const PORT_DISKTARGET = 0xFF18 // 4 bytes ($FF18..$FF1B, [Task:8][Addr:24])
 
 const PORT_TASKFUSE = 0xFF20
+const PORT_DMACMD = 0xFF21
 
-const PORT_DMASRCTASK = 0xFF21
-const PORT_DMASRCPAGE = 0xFF22
-const PORT_DMASRCADDR = 0xFF23 // 2 bytes (Hi, Lo)
-const PORT_DMADSTTASK = 0xFF25
-const PORT_DMADSTPAGE = 0xFF26
-const PORT_DMADSTADDR = 0xFF27 // 2 bytes (Hi, Lo)
-const PORT_DMACNT = 0xFF29
-const PORT_DMASTATUS = 0xFF2A
-const PORT_SHAREDCURTAIN = 0xFF2B // 2 bytes (Hi, Lo)
+const PORT_DMASRC = 0xFF24 // 4 bytes ($FF24..$FF27, [Task:8][Addr:24])
+const PORT_DMADST = 0xFF28 // 4 bytes ($FF28..$FF2B, [Task:8][Addr:24])
+const PORT_DMACNT = 0xFF2C // 4 bytes ($FF2C..$FF2F, 32-bit count)
+const PORT_SHAREDCURTAIN = 0xFF30 // 4 bytes ($FF30..$FF33, 32-bit curtain)
 
-const PORT_TASKFLAGSTASK = 0xFF2D
-const PORT_TASKFLAGS = 0xFF2E
-const PORT_PURGETASKMEM = 0xFF2F
+const PORT_TASKFLAGSTASK = 0xFF34
+const PORT_TASKFLAGS = 0xFF35
+const PORT_PURGETASKMEM = 0xFF36
 
 func GetSharedCurtain() word {
-	hi := word(vpeekb(PORT_SHAREDCURTAIN))
-	lo := word(vpeekb(PORT_SHAREDCURTAIN + 1))
+	hi := word(vpeekb(PORT_SHAREDCURTAIN + 2))
+	lo := word(vpeekb(PORT_SHAREDCURTAIN + 3))
 	return (hi << 8) | lo
 }
 
@@ -69,11 +62,12 @@ func Exit(code byte) {
 
 func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte {
 	vpokeb(PORT_DISKDRV, drive)
-	vpokeb(PORT_DISKSEC0, 0)
-	vpokeb(PORT_DISKSEC1, byte(lsn>>8))
-	vpokeb(PORT_DISKSEC2, byte(lsn))
-	vpokeb(PORT_DISKTASK, task)
-	vpokew(PORT_DISKADDR, addr)
+	vpokeb(PORT_DISKSEC, 0)
+	vpokeb(PORT_DISKSEC + 1, 0)
+	vpokew(PORT_DISKSEC + 2, lsn)
+	vpokeb(PORT_DISKTARGET, task)
+	vpokeb(PORT_DISKTARGET + 1, 0)
+	vpokew(PORT_DISKTARGET + 2, addr)
 
 	cmd := byte(1) // 1 = Read
 	if isWrite != 0 {
@@ -91,32 +85,24 @@ func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte
 }
 
 func DMACopyPage(srcTask byte, srcPage byte, srcAddr word, dstTask byte, dstPage byte, dstAddr word, count word) {
-	for count > 0 {
-		chunk := count
-		if chunk > 256 {
-			chunk = 256
-		}
+	if count == 0 {
+		return
+	}
+	vpokeb(PORT_DMASRC, srcTask)
+	vpokeb(PORT_DMASRC + 1, srcPage)
+	vpokew(PORT_DMASRC + 2, srcAddr)
 
-		vpokeb(PORT_DMASRCTASK, srcTask)
-		vpokeb(PORT_DMASRCPAGE, srcPage)
-		vpokew(PORT_DMASRCADDR, srcAddr)
-		vpokeb(PORT_DMADSTTASK, dstTask)
-		vpokeb(PORT_DMADSTPAGE, dstPage)
-		vpokew(PORT_DMADSTADDR, dstAddr)
+	vpokeb(PORT_DMADST, dstTask)
+	vpokeb(PORT_DMADST + 1, dstPage)
+	vpokew(PORT_DMADST + 2, dstAddr)
 
-		cntByte := byte(chunk)
-		if chunk == 256 {
-			cntByte = 0
-		}
-		vpokeb(PORT_DMACNT, cntByte)
+	vpokew(PORT_DMACNT, 0)
+	vpokew(PORT_DMACNT + 2, count)
 
-		// Wait for completion
-		for vpeekb(PORT_DMACNT) == 0 {
-		}
+	vpokeb(PORT_DMACMD, 1)
 
-		count -= chunk
-		srcAddr += chunk
-		dstAddr += chunk
+	// Wait for completion
+	for vpeekb(PORT_DMACMD) == 0 {
 	}
 }
 

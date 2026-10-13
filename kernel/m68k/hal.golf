@@ -4,33 +4,30 @@ const ARCH = 'k'
 const SHARED_MEM_CURTAIN = 0x00FE0000
 
 // Hardware ports for M68000 Hatvan VM/K ($00FF0000 page in Task 0)
-// Port number = 0x00FF0000 + 16 * offset_6809
+// Direct 1:1 offsets with 6809/Z80 (no * 16 spacing)
 const PORT_TERMOUT = 0x00FF0000
-const PORT_TERMIN = 0x00FF0010
-const PORT_REGSTAT = 0x00FF0020
-const PORT_REGCTRL = 0x00FF0030
-const PORT_LOGCHAR = 0x00FF0040
-const PORT_EXIT = 0x00FF0050
+const PORT_TERMIN = 0x00FF0001
+const PORT_REGSTAT = 0x00FF0002
+const PORT_REGCTRL = 0x00FF0003
+const PORT_LOGCHAR = 0x00FF0004
+const PORT_EXIT = 0x00FF0005
 
-const PORT_DISKDRV = 0x00FF0100
-const PORT_DISKSEC = 0x00FF0110 // 32-bit LSN
-const PORT_DISKTASK = 0x00FF0140
-const PORT_DISKADDR = 0x00FF0150 // 32-bit Address
-const PORT_DISKCMD = 0x00FF0170
+const PORT_DISKDRV = 0x00FF0010
+const PORT_DISKCMD = 0x00FF0011
+const PORT_DISKSEC = 0x00FF0014 // 32-bit LSN
+const PORT_DISKTARGET = 0x00FF0018 // 32-bit [Task:8][Addr:24]
 
-const PORT_TASKREG = 0x00FF0200
+const PORT_TASKREG = 0x00FF0020
+const PORT_DMACMD = 0x00FF0021
 
-const PORT_DMASRCTASK = 0x00FF0210
-const PORT_DMASRCADDR = 0x00FF0220 // 32-bit Address
-const PORT_DMADSTTASK = 0x00FF0240
-const PORT_DMADSTADDR = 0x00FF0250 // 32-bit Address
-const PORT_DMACNT = 0x00FF0270     // 32-bit Count
-const PORT_DMACMD = 0x00FF0274
-const PORT_SHAREDCURTAIN = 0x00FF0280 // 4 bytes
+const PORT_DMASRC = 0x00FF0024 // 32-bit [Task:8][Addr:24]
+const PORT_DMADST = 0x00FF0028 // 32-bit [Task:8][Addr:24]
+const PORT_DMACNT = 0x00FF002C // 32-bit Count
+const PORT_SHAREDCURTAIN = 0x00FF0030 // 4 bytes
 
-const PORT_TASKFLAGSTASK = 0x00FF02D0
-const PORT_TASKFLAGS = 0x00FF02E0
-const PORT_PURGETASKMEM = 0x00FF02F0
+const PORT_TASKFLAGSTASK = 0x00FF0034
+const PORT_TASKFLAGS = 0x00FF0035
+const PORT_PURGETASKMEM = 0x00FF0036
 
 func GetSharedCurtain() word {
 	b0 := word(vpeekb(PORT_SHAREDCURTAIN))
@@ -53,11 +50,11 @@ func LogChar(b byte) {
 }
 
 func EnableTimer() {
-	vpokew(PORT_REGCTRL, 3)
+	vpokeb(PORT_REGCTRL, 3)
 }
 
 func DisableTimer() {
-	vpokew(PORT_REGCTRL, 0)
+	vpokeb(PORT_REGCTRL, 0)
 }
 
 func Exit(code byte) {
@@ -69,8 +66,7 @@ func Exit(code byte) {
 func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte {
 	vpokeb(PORT_DISKDRV, drive)
 	vpokew(PORT_DISKSEC, lsn)
-	vpokeb(PORT_DISKTASK, task)
-	vpokew(PORT_DISKADDR, addr)
+	vpokew(PORT_DISKTARGET, (word(task) << 24) | (addr & 0x00FFFFFF))
 
 	cmd := byte(1) // 1 = Read
 	if isWrite != 0 {
@@ -80,7 +76,7 @@ func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte
 
 	// Busy-wait for completion
 	for {
-		st := vpeekb(PORT_DISKCMD + 1)
+		st := vpeekb(PORT_DISKCMD)
 		if st > 0 {
 			return st
 		}
@@ -92,16 +88,20 @@ func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word)
 }
 
 func DMACopyPage(srcTask byte, srcPage byte, srcAddr word, dstTask byte, dstPage byte, dstAddr word, count word) {
-	vpokeb(PORT_DMASRCTASK, srcTask)
-	vpokew(PORT_DMASRCADDR, srcAddr)
-	vpokeb(PORT_DMADSTTASK, dstTask)
-	vpokew(PORT_DMADSTADDR, dstAddr)
+	if count == 0 {
+		return
+	}
+	src24 := (srcAddr & 0x00FFFFFF) | (word(srcPage) << 16)
+	dst24 := (dstAddr & 0x00FFFFFF) | (word(dstPage) << 16)
+
+	vpokew(PORT_DMASRC, (word(srcTask) << 24) | src24)
+	vpokew(PORT_DMADST, (word(dstTask) << 24) | dst24)
 	vpokew(PORT_DMACNT, count)
 
 	vpokeb(PORT_DMACMD, 1)
 
 	// Wait for completion
-	for vpeekb(PORT_DMACMD + 1) == 0 {
+	for vpeekb(PORT_DMACMD) == 0 {
 	}
 }
 
@@ -112,7 +112,7 @@ func SwitchTask(task byte) {
 func LaunchProcess(pid byte, sp word, pc word)
 
 func HasInput() bool {
-	return (vpeekb(PORT_REGSTAT+1) & 2) != 0
+	return (vpeekb(PORT_REGSTAT) & 2) != 0
 }
 
 func PurgeTaskMem(task byte) {
