@@ -1,0 +1,42 @@
+#!/usr/bin/expect -f
+set timeout 10
+set send_slow {1 0.05}
+
+# Spawn 6809 kernel
+spawn sh run9.sh
+
+expect {
+    "$ " { }
+    timeout { puts "\nTIMEOUT waiting for initial prompt\n"; exit 1 }
+}
+
+# 1. Test echo
+send -s "echo hello from 6809\r"
+expect {
+    "hello from 6809" { }
+    timeout { puts "\nTIMEOUT waiting for echo output\n"; exit 1 }
+}
+expect "$ "
+
+# 2. Test dir
+send -s "dir\r"
+expect {
+    "Cmds9" { }
+    timeout { puts "\nTIMEOUT waiting for dir output\n"; exit 1 }
+}
+expect "$ "
+
+# 3. Test cat /proc/p
+send -s "cat /proc/p\r"
+expect {
+    "hatvan-kernel" { }
+    timeout { puts "\nTIMEOUT waiting for cat /proc/p output\n"; exit 1 }
+}
+expect "$ "
+
+# 4. Exit shell cleanly
+send -s "exit\r"
+expect eof
+
+puts "\n=== TEST_RUN9: PASS ===\n"
+exit 0

@@ -1,0 +1,42 @@
+#!/usr/bin/expect -f
+set timeout 10
+set send_slow {1 0.05}
+
+# Spawn Z80 kernel
+spawn sh runz.sh
+
+expect {
+    "$ " { }
+    timeout { puts "\nTIMEOUT waiting for initial prompt\n"; exit 1 }
+}
+
+# 1. Test echo
+send -s "echo hello from z80\r"
+expect {
+    "hello from z80" { }
+    timeout { puts "\nTIMEOUT waiting for echo output\n"; exit 1 }
+}
+expect "$ "
+
+# 2. Test dir
+send -s "dir\r"
+expect {
+    "CmdsZ" { }
+    timeout { puts "\nTIMEOUT waiting for dir output\n"; exit 1 }
+}
+expect "$ "
+
+# 3. Test cat /proc/p
+send -s "cat /proc/p\r"
+expect {
+    "hatvan-kernel" { }
+    timeout { puts "\nTIMEOUT waiting for cat /proc/p output\n"; exit 1 }
+}
+expect "$ "
+
+# 4. Exit shell cleanly
+send -s "exit\r"
+expect eof
+
+puts "\n=== TEST_RUNZ: PASS ===\n"
+exit 0
