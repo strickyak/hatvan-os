@@ -287,9 +287,17 @@ func LogWrite(task byte, srcAddr word, count word) word {
 	return count
 }
 
+// VERBOSE controls whether kernel diagnostic messages continue after boot-up (0 = quiet after boot, 1 = verbose).
+const VERBOSE = 0
+
+var Quiet bool
+
 // KLog prints a message from the kernel to the log port (stderr)
 // prefixed with "    --  ". If the message does not end in a newline, one is added.
 func KLog(msg *byte) {
+	if Quiet && VERBOSE == 0 {
+		return
+	}
 	prefix := (*byte)("    --  ")
 	pPre := word(prefix)
 	for {
@@ -328,3 +336,39 @@ func KLog(msg *byte) {
 		hal.LogChar('\n')
 	}
 }
+
+// KLogDec prints a message followed by a space and a decimal byte value on the same line.
+func KLogDec(msg *byte, val byte) {
+	if Quiet && VERBOSE == 0 {
+		return
+	}
+	prefix := (*byte)("    --  ")
+	pPre := word(prefix)
+	for {
+		c := peekb(pPre)
+		if c == 0 {
+			break
+		}
+		hal.LogChar(c)
+		pPre++
+	}
+	p := word(msg)
+	for {
+		c := peekb(p)
+		if c == 0 {
+			break
+		}
+		hal.LogChar(c)
+		p++
+	}
+	hal.LogChar(' ')
+	if val >= 100 {
+		hal.LogChar('0' + val/100)
+	}
+	if val >= 10 {
+		hal.LogChar('0' + (val/10)%10)
+	}
+	hal.LogChar('0' + val%10)
+	hal.LogChar('\n')
+}
+

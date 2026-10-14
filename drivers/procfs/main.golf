@@ -186,6 +186,25 @@ func formatProcesses(curPID byte) word {
 	return pos
 }
 
+func formatInfo() word {
+	buf := &procfsBuf[0]
+	pos := word(0)
+	if hal.ARCH == '9' {
+		bufAppendStr(buf, &pos, (*byte)("M6809\n"))
+	} else if hal.ARCH == 'k' {
+		bufAppendStr(buf, &pos, (*byte)("M68000\n"))
+	} else if hal.ARCH == 'z' {
+		bufAppendStr(buf, &pos, (*byte)("Z80\n"))
+	} else if hal.ARCH == 'c' {
+		bufAppendStr(buf, &pos, (*byte)("CDP1802\n"))
+	} else {
+		bufAppendByte(buf, &pos, hal.ARCH)
+		bufAppendByte(buf, &pos, '\n')
+	}
+	pokeb(word(buf)+pos, 0)
+	return pos
+}
+
 func dispatch() {
 	cmd := peekb(MB_CMD)
 
@@ -196,18 +215,24 @@ func dispatch() {
 
 	if cmd == PROCFS_CMD_OPEN {
 		subpath := word(MB_PATH_STR)
-		if peekb(subpath) != 'p' || peekb(subpath+1) != 0 {
-			pokeb(MB_STATUS, 216) // E_PNNF
-			writeW32(MB_OUT_SIZE, 0)
+		c0 := peekb(subpath)
+		c1 := peekb(subpath + 1)
+		if c0 == 'p' && c1 == 0 {
+			curPID := peekb(MB_CURRENT_PID)
+			// Read ProcTable directly from shared memory (no DMA copy required!)
+			procfsSize = formatProcesses(curPID)
+			writeW32(MB_OUT_SIZE, procfsSize)
+			pokeb(MB_STATUS, 0)
 			return
 		}
-
-		curPID := peekb(MB_CURRENT_PID)
-
-		// Read ProcTable directly from shared memory (no DMA copy required!)
-		procfsSize = formatProcesses(curPID)
-		writeW32(MB_OUT_SIZE, procfsSize)
-		pokeb(MB_STATUS, 0)
+		if c0 == 'i' && c1 == 0 {
+			procfsSize = formatInfo()
+			writeW32(MB_OUT_SIZE, procfsSize)
+			pokeb(MB_STATUS, 0)
+			return
+		}
+		pokeb(MB_STATUS, 216) // E_PNNF
+		writeW32(MB_OUT_SIZE, 0)
 		return
 	}
 

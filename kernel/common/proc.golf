@@ -359,9 +359,7 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) byte {
 		ForkedChildPID = 0xFF
 		return E_PROCFUL
 	}
-	dev.KLog((*byte)("FORK:PID"))
-	hal.LogChar('0' + childPID)
-	hal.LogChar('\n')
+	dev.KLogDec((*byte)("FORK:PID"), childPID)
 	childProc := &tables.Shared.ProcTable[childPID]
 	extractCmdName(cmdPath, &childProc.CmdName[0])
 

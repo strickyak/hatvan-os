@@ -1,0 +1,384 @@
+package main
+
+import "sys"
+
+var dstack [128]word
+var dsp word
+
+var lstackLimit [16]word
+var lstackIndex [16]word
+var lstackPtr [16]word
+var lsp word
+
+var inPtr word
+var tokBuf [32]byte
+
+var outBuf [80]byte
+var outCount word
+var outTotal word
+var digitBuf [8]byte
+
+func flushOut() {
+	if outCount > 0 {
+		sys.Write(sys.STDOUT, &outBuf[0], outCount)
+		outCount = 0
+	}
+}
+
+func emitChar(c byte) {
+	outBuf[outCount] = c
+	outCount++
+	outTotal++
+	if outCount >= 64 || c == '\n' {
+		flushOut()
+	}
+}
+
+func finish() {
+	if outTotal > 0 {
+		emitChar('\n')
+		flushOut()
+	}
+	sys.Exit(0)
+}
+
+func push(v word) {
+	if dsp < 128 {
+		dstack[dsp] = v
+		dsp++
+	}
+}
+
+func pop() word {
+	if dsp > 0 {
+		dsp--
+		return dstack[dsp]
+	}
+	return 0
+}
+
+func printDot(v word) {
+	if v == 0x8000 {
+		emitChar('-')
+		emitChar('3')
+		emitChar('2')
+		emitChar('7')
+		emitChar('6')
+		emitChar('8')
+		emitChar(' ')
+		return
+	}
+	if (v & 0x8000) != 0 {
+		emitChar('-')
+		v = 0 - v
+	}
+	if v == 0 {
+		emitChar('0')
+		emitChar(' ')
+		return
+	}
+	n := word(0)
+	for v > 0 {
+		digitBuf[n] = byte('0' + (v % 10))
+		n++
+		v = v / 10
+	}
+	for n > 0 {
+		n--
+		emitChar(digitBuf[n])
+	}
+	emitChar(' ')
+}
+
+func isDelim(c byte) bool {
+	return c == ' ' || c == '\t' || c == '"' || c == '\''
+}
+
+func isEnd(c byte) bool {
+	return c == 0 || c == '\r' || c == '\n'
+}
+
+func nextToken() bool {
+	for {
+		c := peekb(inPtr)
+		if isEnd(c) {
+			return false
+		}
+		if !isDelim(c) {
+			break
+		}
+		inPtr++
+	}
+	tlen := word(0)
+	for {
+		c := peekb(inPtr)
+		if isEnd(c) || isDelim(c) {
+			break
+		}
+		inPtr++
+		if c >= 'a' && c <= 'z' {
+			c = c - 32
+		}
+		if tlen < 30 {
+			tokBuf[tlen] = c
+			tlen++
+		}
+	}
+	tokBuf[tlen] = 0
+	return true
+}
+
+func tokEq(s *byte) bool {
+	p := word(s)
+	i := word(0)
+	for {
+		ca := tokBuf[i]
+		cb := peekb(p + i)
+		if ca != cb {
+			return false
+		}
+		if ca == 0 {
+			return true
+		}
+		i++
+	}
+}
+
+func parseNum() bool {
+	idx := word(0)
+	neg := false
+	if tokBuf[idx] == '-' {
+		neg = true
+		idx++
+	}
+	if tokBuf[idx] == 0 {
+		return false
+	}
+	base := word(10)
+	if tokBuf[idx] == '$' {
+		base = 16
+		idx++
+		if tokBuf[idx] == 0 {
+			return false
+		}
+	} else if tokBuf[idx] == '0' && tokBuf[idx+1] == 'X' {
+		base = 16
+		idx += 2
+		if tokBuf[idx] == 0 {
+			return false
+		}
+	}
+	acc := word(0)
+	for tokBuf[idx] != 0 {
+		c := tokBuf[idx]
+		var d word
+		if c >= '0' && c <= '9' {
+			d = word(c - '0')
+		} else if c >= 'A' && c <= 'F' {
+			d = word(c - 'A' + 10)
+		} else {
+			return false
+		}
+		if d >= base {
+			return false
+		}
+		acc = acc*base + d
+		idx++
+	}
+	if neg {
+		acc = 0 - acc
+	}
+	push(acc)
+	return true
+}
+
+func execWord() bool {
+	if tokEq((*byte)(".")) {
+		printDot(pop())
+		return true
+	}
+	if tokEq((*byte)("+")) {
+		b := pop()
+		a := pop()
+		push(a + b)
+		return true
+	}
+	if tokEq((*byte)("-")) {
+		b := pop()
+		a := pop()
+		push(a - b)
+		return true
+	}
+	if tokEq((*byte)("*")) || tokEq((*byte)("MUL")) {
+		b := pop()
+		a := pop()
+		push(a * b)
+		return true
+	}
+	if tokEq((*byte)("AND")) {
+		b := pop()
+		a := pop()
+		push(a & b)
+		return true
+	}
+	if tokEq((*byte)("OR")) {
+		b := pop()
+		a := pop()
+		push(a | b)
+		return true
+	}
+	if tokEq((*byte)("XOR")) {
+		b := pop()
+		a := pop()
+		push(a ^ b)
+		return true
+	}
+	if tokEq((*byte)("DUP")) {
+		a := pop()
+		push(a)
+		push(a)
+		return true
+	}
+	if tokEq((*byte)("DROP")) {
+		pop()
+		return true
+	}
+	if tokEq((*byte)("SWAP")) {
+		b := pop()
+		a := pop()
+		push(b)
+		push(a)
+		return true
+	}
+	if tokEq((*byte)("OVER")) {
+		b := pop()
+		a := pop()
+		push(a)
+		push(b)
+		push(a)
+		return true
+	}
+	if tokEq((*byte)("ROT")) {
+		c := pop()
+		b := pop()
+		a := pop()
+		push(b)
+		push(c)
+		push(a)
+		return true
+	}
+	if tokEq((*byte)("!")) || tokEq((*byte)("POKE")) || tokEq((*byte)("STORE")) || tokEq((*byte)("W!")) {
+		addr := pop()
+		val := pop()
+		pokeb(addr, byte(val>>8))
+		pokeb(addr+1, byte(val))
+		return true
+	}
+	if tokEq((*byte)("@")) || tokEq((*byte)("PEEK")) || tokEq((*byte)("FETCH")) || tokEq((*byte)("W@")) {
+		addr := pop()
+		hi := word(peekb(addr))
+		lo := word(peekb(addr + 1))
+		push((hi << 8) | lo)
+		return true
+	}
+	if tokEq((*byte)("C!")) || tokEq((*byte)("CPOKE")) {
+		addr := pop()
+		val := pop()
+		pokeb(addr, byte(val))
+		return true
+	}
+	if tokEq((*byte)("C@")) || tokEq((*byte)("CPEEK")) {
+		addr := pop()
+		push(word(peekb(addr)))
+		return true
+	}
+	if tokEq((*byte)("?")) {
+		addr := pop()
+		hi := word(peekb(addr))
+		lo := word(peekb(addr + 1))
+		printDot((hi << 8) | lo)
+		return true
+	}
+	if tokEq((*byte)("EMIT")) {
+		emitChar(byte(pop()))
+		return true
+	}
+	if tokEq((*byte)("SPACE")) {
+		emitChar(' ')
+		return true
+	}
+	if tokEq((*byte)("CR")) {
+		emitChar('\n')
+		return true
+	}
+	if tokEq((*byte)("DO")) {
+		idx := pop()
+		lim := pop()
+		if lsp < 16 {
+			lstackLimit[lsp] = lim
+			lstackIndex[lsp] = idx
+			lstackPtr[lsp] = inPtr
+			lsp++
+		}
+		return true
+	}
+	if tokEq((*byte)("LOOP")) {
+		if lsp > 0 {
+			top := lsp - 1
+			lstackIndex[top] = lstackIndex[top] + 1
+			if lstackIndex[top] != lstackLimit[top] {
+				inPtr = lstackPtr[top]
+			} else {
+				lsp--
+			}
+		}
+		return true
+	}
+	if tokEq((*byte)("I")) {
+		if lsp > 0 {
+			push(lstackIndex[lsp-1])
+		} else {
+			push(0)
+		}
+		return true
+	}
+	if tokEq((*byte)("BYE")) {
+		finish()
+		return true
+	}
+	return false
+}
+
+func main() {
+	args := sys.Args()
+	if args == (*byte)(0) {
+		sys.Exit(0)
+		return
+	}
+	inPtr = word(args)
+	dsp = 0
+	lsp = 0
+	outCount = 0
+	outTotal = 0
+
+	for nextToken() {
+		if !execWord() {
+			if !parseNum() {
+				flushOut()
+				emitChar('?')
+				emitChar(' ')
+				i := word(0)
+				for tokBuf[i] != 0 {
+					emitChar(tokBuf[i])
+					i++
+				}
+				emitChar('\n')
+				flushOut()
+				sys.Exit(1)
+				return
+			}
+		}
+	}
+
+	finish()
+}

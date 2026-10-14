@@ -2,7 +2,6 @@ package gepc
 
 import (
 	"fmt"
-	"os"
 )
 
 // CPU implements the RCA COSMAC CDP1802 8-bit microprocessor.
@@ -44,20 +43,6 @@ type CPU struct {
 func NewCPU(bus *Bus) *CPU {
 	c := &CPU{
 		Bus: bus,
-	}
-	bus.OnLogChar = func(val byte) {
-		vtp := (uint16(bus.Memory[0][0x006A]) << 8) | uint16(bus.Memory[0][0x006B])
-		fmt.Fprintf(bus.LogOut, "[LOGCHAR %02X R5=%04X R7=%04X vtp=%04X M(vtp..+4)=%02X%02X%02X M(R7..+8)=%02X%02X %02X%02X %02X%02X %02X%02X]\n",
-			val, c.R[5], c.R[7], vtp,
-			bus.Memory[0][vtp], bus.Memory[0][vtp+1], bus.Memory[0][vtp+2],
-			bus.Memory[0][c.R[7]], bus.Memory[0][c.R[7]+1],
-			bus.Memory[0][c.R[7]+2], bus.Memory[0][c.R[7]+3],
-			bus.Memory[0][c.R[7]+4], bus.Memory[0][c.R[7]+5],
-			bus.Memory[0][c.R[7]+6], bus.Memory[0][c.R[7]+7])
-	}
-	bus.OnWatchWrite = func(addr uint16, val byte) {
-		fmt.Fprintf(os.Stderr, "[WATCH 0xE133 WRITE Task=%d val=%02X P=%d PC=%04X R5=%04X R7=%04X]\n",
-			c.Bus.CurrentTask, val, c.P, c.R[c.P], c.R[5], c.R[7])
 	}
 	c.Reset()
 	return c

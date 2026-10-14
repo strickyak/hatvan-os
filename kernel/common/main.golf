@@ -34,11 +34,7 @@ func launchShell() {
 		cxdErr = proc.SysChgDir((*byte)("/d0/Cmds9"), path.MODE_EXEC)
 	}
 	if cxdErr != 0 {
-		dev.KLog((*byte)("CHGDIR:FAIL"))
-		hal.LogChar('0' + cxdErr / 100)
-		hal.LogChar('0' + (cxdErr / 10) % 10)
-		hal.LogChar('0' + cxdErr % 10)
-		hal.LogChar('\n')
+		dev.KLogDec((*byte)("CHGDIR:FAIL"), cxdErr)
 	} else {
 		dev.KLog((*byte)("CHGDIR:OK"))
 	}
@@ -49,6 +45,7 @@ func launchShell() {
 	shPID := proc.ForkedChildPID
 	if shErr == 0 && shPID > 0 {
 		dev.KLog((*byte)("SHELL:FORK:OK"))
+		dev.Quiet = true
 		for {
 			werr := proc.SysWait()
 			if werr != 0 || proc.WaitChildPID == shPID {

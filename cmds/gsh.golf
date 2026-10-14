@@ -1826,9 +1826,6 @@ func main() {
 			n--
 		}
 		lineBuf[n] = 0
-		sys.Print((*byte)("[GSH LINE="))
-		sys.Print(&lineBuf[0])
-		sys.Println((*byte)("]"))
 
 		// If line starts a "for" or "while" without "done", keep reading until "done"
 		sp := word(&lineBuf[0])

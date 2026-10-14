@@ -1,10 +1,5 @@
 package gepc
 
-import (
-	"fmt"
-	"os"
-)
-
 func (c *CPU) fetchByte() byte {
 	val := c.Bus.ReadByte(c.R[c.P])
 	c.R[c.P]++
@@ -84,10 +79,6 @@ func (c *CPU) executeOp(op byte) {
 		c.Cycles += 16
 
 	case 0x5: // 0x50..0x5F: STR Rn
-		if c.R[loNibble] == 0x0004 {
-			fmt.Fprintf(os.Stderr, "[STR Rn=%d addr=%04X PC=%04X P=%d D=%02X R5=%04X R7=%04X Task=%d]\n",
-				loNibble, c.R[loNibble], c.R[c.P]-1, c.P, c.D, c.R[5], c.R[7], c.Bus.CurrentTask)
-		}
 		c.Bus.WriteByte(c.R[loNibble], c.D)
 		c.Cycles += 16
 

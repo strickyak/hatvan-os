@@ -185,11 +185,9 @@ func (b *Bus) readIOLocked(addr uint16) byte {
 				b.RegStat |= 0x02
 			}
 			b.evalInterrupts()
-			fmt.Fprintf(os.Stderr, "[GETCHAR 0x%02X '%c']\n", ch, ch)
 			return ch
 		}
 		if b.StdinChan == nil {
-			fmt.Fprintf(os.Stderr, "[GETCHAR EOF: StdinChan==nil]\n")
 			return 0x04 // EOF
 		}
 		return 0
@@ -306,11 +304,9 @@ func (b *Bus) writeIOLocked(addr uint16, val byte) {
 		if b.LogOut != nil {
 			b.LogOut.Write([]byte{val})
 		}
-		os.Stderr.Write([]byte{val})
 	case 0xFF05: // ExitCode
 		b.ExitCode = int(val)
 		b.Halted = true
-		fmt.Fprintf(os.Stderr, "=== EXIT task=%d val=%d ===\n", b.CurrentTask, val)
 		if b.OnHalt != nil {
 			b.OnHalt(b.ExitCode)
 		}
@@ -342,12 +338,6 @@ func (b *Bus) writeIOLocked(addr uint16, val byte) {
 	case 0xFF20:
 		b.TaskFuseArmed = true
 		b.TaskFuseTarget = val
-		retY := (uint16(b.Memory[0][0x50]) << 8) | uint16(b.Memory[0][0x51])
-		userX := (uint16(b.Memory[0][0x44]) << 8) | uint16(b.Memory[0][0x45])
-		userY := (uint16(b.Memory[0][0x46]) << 8) | uint16(b.Memory[0][0x47])
-		fmt.Fprintf(os.Stderr, "[UNTRAP to Task=%d: call=0x%02X a=0x%02X x=0x%04X y=0x%04X -> retA=0x%02X retB=0x%02X retY=0x%04X retErr=0x%02X]\n",
-			val, b.Memory[0][0x40], b.Memory[0][0x41], userX, userY,
-			b.Memory[0][0x4C], b.Memory[0][0x4D], retY, b.Memory[0][0x4E])
 	case 0xFF21: // DMA.CmdSt
 		if val == 1 {
 			b.executeDmaCopyLocked()
@@ -459,16 +449,6 @@ func (b *Bus) executeDmaCopyLocked() {
 	dstTask := b.DmaDstTask
 	dstAddr := uint16(b.DmaDstAddr & 0xFFFF)
 	curtain := uint16(b.SharedMemoryCurtain & 0xFFFF)
-	var preview []byte
-	for i := uint32(0); i < count && (i < 16 || count <= 64); i++ {
-		sAddr := srcAddr + uint16(i)
-		if curtain > 0 && sAddr >= curtain && srcTask <= 2 {
-			preview = append(preview, b.Memory[0][sAddr])
-		} else {
-			preview = append(preview, b.Memory[srcTask][sAddr])
-		}
-	}
-	fmt.Fprintf(os.Stderr, "[DMA: srcT=%d src=0x%04X dstT=%d dst=0x%04X count=%d bytes=%X]\n", srcTask, srcAddr, dstTask, dstAddr, count, preview)
 
 	for i := uint32(0); i < count; i++ {
 		sAddr := srcAddr + uint16(i)
@@ -489,13 +469,6 @@ func (b *Bus) executeDmaCopyLocked() {
 			}
 			b.Memory[dstTask][dAddr] = val
 		}
-	}
-	if dstTask == 3 && count != 8 {
-		var preview []byte
-		for i := uint32(0); i < count; i++ {
-			preview = append(preview, b.Memory[dstTask][dstAddr+uint16(i)])
-		}
-		fmt.Fprintf(os.Stderr, "[DMA to Task 3: dst=0x%04X count=%d bytes=%q]\n", dstAddr, count, string(preview))
 	}
 	b.DmaStatus = 1 // OKAY
 
@@ -535,7 +508,6 @@ func (b *Bus) WritePort(port byte, val byte) {
 	case 6: // OUT 6: Syscall Trap Fuse!
 		b.TrapSyscallNum = val
 		b.TrapSourceTask = b.CurrentTask
-		fmt.Fprintf(os.Stderr, "[TRAP val=0x%02X from Task=%d]\n", val, b.TrapSourceTask)
 		b.CurrentTask = 0 // Flip to Task 0 immediately!
 	case 7: // OUT 7: Syscall Untrap Fuse!
 		b.TaskFuseTarget = val

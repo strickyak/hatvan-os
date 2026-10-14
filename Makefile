@@ -43,11 +43,11 @@ PROCFS_1802 := $(BUILD_DIR)/procfs_1802.decb
 CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod $(BUILD_DIR)/sh.mod
 CMDS_68K    := $(BUILD_DIR)/echok.decb $(BUILD_DIR)/dirk.decb $(BUILD_DIR)/dumpk.decb $(BUILD_DIR)/catk.decb $(BUILD_DIR)/shk.decb
 CMDS_Z80    := $(BUILD_DIR)/shz.decb
-GOLF_CMDS   := gecho gcat gdir gdump gsh gsh2 gtest gexpr gtrue gfalse gseektest
+GOLF_CMDS   := gecho gcat gdir gdump gsh gsh2 gtest gexpr gtrue gfalse gseektest clif
 CMDS_GOLF_9 := $(patsubst %,$(REPO_DIR)/cmds/%.9.decb,$(GOLF_CMDS))
 CMDS_GOLF_K := $(patsubst %,$(REPO_DIR)/cmds/%.k.decb,$(GOLF_CMDS))
 CMDS_GOLF_Z := $(patsubst %,$(REPO_DIR)/cmds/%.z.decb,$(GOLF_CMDS))
-GOLF_CMDS_C := gecho gcat gdir gdump gsh gtrue gfalse gseektest
+GOLF_CMDS_C := gecho gcat gdir gdump gsh gtrue gfalse gseektest clif
 CMDS_GOLF_C := $(patsubst %,$(REPO_DIR)/cmds/%.c.decb,$(GOLF_CMDS_C))
 
 # Disk Images
@@ -398,6 +398,7 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtrue.9.decb $@,Cmds9/GTRUE
 	$(OS9) copy -r $(REPO_DIR)/cmds/gfalse.9.decb $@,Cmds9/GFALSE
 	$(OS9) copy -r $(REPO_DIR)/cmds/gseektest.9.decb $@,Cmds9/GSEEKTEST
+	$(OS9) copy -r $(REPO_DIR)/cmds/clif.9.decb $@,Cmds9/CLIF
 	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/ECHO
 	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/CAT
 	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/SH
@@ -416,6 +417,7 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K
 	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GTRUE
 	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GFALSE
 	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/GSEEKTEST
+	$(OS9) attr -r -w -e -pr -pe $@,Cmds9/CLIF
 	$(OS9) makdir $@,CmdsK
 	$(OS9) copy -r $(BUILD_DIR)/echok.decb $@,CmdsK/ECHO
 	$(OS9) copy -r $(BUILD_DIR)/dirk.decb $@,CmdsK/DIR
@@ -435,6 +437,7 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtrue.k.decb $@,CmdsK/GTRUE
 	$(OS9) copy -r $(REPO_DIR)/cmds/gfalse.k.decb $@,CmdsK/GFALSE
 	$(OS9) copy -r $(REPO_DIR)/cmds/gseektest.k.decb $@,CmdsK/GSEEKTEST
+	$(OS9) copy -r $(REPO_DIR)/cmds/clif.k.decb $@,CmdsK/CLIF
 	$(OS9) makdir $@,CmdsZ
 	$(OS9) copy -r $(BUILD_DIR)/shz.decb $@,CmdsZ/SH
 	$(OS9) copy -r $(REPO_DIR)/cmds/gecho.z.decb $@,CmdsZ/ECHO
@@ -454,6 +457,7 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtrue.z.decb $@,CmdsZ/GTRUE
 	$(OS9) copy -r $(REPO_DIR)/cmds/gfalse.z.decb $@,CmdsZ/GFALSE
 	$(OS9) copy -r $(REPO_DIR)/cmds/gseektest.z.decb $@,CmdsZ/GSEEKTEST
+	$(OS9) copy -r $(REPO_DIR)/cmds/clif.z.decb $@,CmdsZ/CLIF
 	$(OS9) makdir $@,CmdsC
 	$(OS9) copy -r $(REPO_DIR)/cmds/gsh.c.decb $@,CmdsC/SH
 	$(OS9) copy -r $(REPO_DIR)/cmds/gecho.c.decb $@,CmdsC/ECHO
@@ -470,6 +474,7 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K
 	$(OS9) copy -r $(REPO_DIR)/cmds/gseektest.c.decb $@,CmdsC/GSEEKTEST
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtrue.c.decb $@,CmdsC/TRUE
 	$(OS9) copy -r $(REPO_DIR)/cmds/gfalse.c.decb $@,CmdsC/FALSE
+	$(OS9) copy -r $(REPO_DIR)/cmds/clif.c.decb $@,CmdsC/CLIF
 	$(OS9) copy -r $(REPO_DIR)/testdata/test_expr.sh $@,test_expr.sh
 	$(OS9) copy -r $(REPO_DIR)/testdata/test_while.sh $@,test_while.sh
 	$(OS9) copy -r $(REPO_DIR)/testdata/triangle.sh $@,triangle.sh
