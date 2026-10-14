@@ -359,6 +359,9 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) byte {
 		ForkedChildPID = 0xFF
 		return E_PROCFUL
 	}
+	dev.KLog((*byte)("FORK:PID"))
+	hal.LogChar('0' + childPID)
+	hal.LogChar('\n')
 	childProc := &tables.Shared.ProcTable[childPID]
 	extractCmdName(cmdPath, &childProc.CmdName[0])
 
@@ -384,7 +387,13 @@ func SysFork(cmdPath *byte, paramStr *byte, paramLen word) byte {
 	lerr := loader.LoadBinary(binPathId, childProc.TaskID, 0x0200)
 	path.SysClose(binPathId)
 	if lerr != 0 {
-		dev.KLog((*byte)("FORK:LOAD:FAIL"))
+		if lerr == loader.E_FORMAT {
+			dev.KLog((*byte)("FORK:LOAD:FAIL:FORMAT"))
+		} else if lerr == path.E_READ {
+			dev.KLog((*byte)("FORK:LOAD:FAIL:READ"))
+		} else {
+			dev.KLog((*byte)("FORK:LOAD:FAIL:OTHER"))
+		}
 		ProcFree(childPID)
 		ForkedChildPID = 0xFF
 		return lerr
@@ -442,7 +451,9 @@ func SysWait() byte {
 				}
 				if p.State == PROC_READY || p.State == PROC_RUNNING {
 					SetProcState(CurrentPID, PROC_WAITING)
+					prevPID := CurrentPID
 					hal.LaunchProcess(byte(i), p.SavedSP, p.SavedPC)
+					CurrentPID = prevPID
 					if p.State == PROC_ZOMBIE {
 						return reapChild(p, byte(i))
 					}
@@ -531,6 +542,8 @@ func SysChgDir(pathStr *byte, mode byte) byte {
 
 // ==================== /proc Filesystem ====================
 
+var procComp [16]byte
+
 // ProcfsOpen dispatches /proc subpaths via Task 2 IPC
 func ProcfsOpen(pathId byte, pathStr *byte) byte {
 	devType := dev.ParsePathDevice(pathStr, 0)
@@ -544,19 +557,18 @@ func ProcfsOpen(pathId byte, pathStr *byte) byte {
 		p++
 	}
 
-	var comp [16]byte
 	idx := word(0)
 	for idx < 15 {
 		c := peekb(p + idx)
 		if c == 0 || c == ' ' || c == '\r' || c == '\n' || c == '/' {
 			break
 		}
-		comp[idx] = c
+		procComp[idx] = c
 		idx++
 	}
-	comp[idx] = 0
+	procComp[idx] = 0
 
-	err := procfs_ipc.Open(&comp[0], CurrentPID)
+	err := procfs_ipc.Open(&procComp[0], CurrentPID)
 	if err != 0 {
 		return err
 	}
@@ -591,7 +603,9 @@ func Yield() {
 	for i := word(3); i < MAX_PROCS; i++ {
 		p := GetProc(byte(i))
 		if byte(i) != CurrentPID && !IsAncestor(byte(i), CurrentPID) && (p.State == PROC_READY || p.State == PROC_RUNNING) {
+			prevPID := CurrentPID
 			hal.LaunchProcess(byte(i), p.SavedSP, p.SavedPC)
+			CurrentPID = prevPID
 			return
 		}
 	}

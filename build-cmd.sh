@@ -56,6 +56,17 @@ if [ ! -x "$ASMZ80" ]; then
         exit 1
     fi
 fi
+# 5. Ensure par4asm and par4bundle are built
+PAR4ASM="$BUILD_DIR/par4asm"
+if [ ! -x "$PAR4ASM" ]; then
+    echo "==> Building par4asm..."
+    (cd "$MINIGOLF_DIR" && go build -o "$PAR4ASM" ./cmd/par4asm)
+fi
+PAR4BUNDLE="$BUILD_DIR/par4bundle"
+if [ ! -x "$PAR4BUNDLE" ]; then
+    echo "==> Building par4bundle..."
+    (cd "$REPO_DIR" && go build -o "$PAR4BUNDLE" ./cmd/par4bundle)
+fi
 
 SREC2DECB="$REPO_DIR/scripts/srec2decb.py"
 
@@ -93,6 +104,7 @@ for TARGET in $TARGETS; do
     MANAGED_FLAG_9=""
     MANAGED_FLAG_K=""
     MANAGED_FLAG_Z=""
+    MANAGED_FLAG_C=""
     OPT_FLAGS_9=""
     OPT_FLAGS_K=""
     OPT_FLAGS_Z=""
@@ -101,6 +113,7 @@ for TARGET in $TARGETS; do
         MANAGED_FLAG_9="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=8000"
         MANAGED_FLAG_K="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=64000"
         MANAGED_FLAG_Z="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=8000"
+        MANAGED_FLAG_C="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=8000"
         #yak# OPT_FLAGS_9="-no-slotsharing6809 -no-stackalloc -no-inline -no-leaf-opt6809"
         #yak# OPT_FLAGS_K="-no-stackalloc -no-inline"
         GLOBAL_OFFSET=48128
@@ -158,10 +171,36 @@ for TARGET in $TARGETS; do
     "$ASMZ80" -l "$BUILD_DIR/$BASE.z.list" -o "$BUILD_DIR/$BASE.z.decb" "$BUILD_DIR/full_$BASE.z.asm"
     cp -f "$BUILD_DIR/$BASE.z.decb" "$DIR/$BASE.z.decb"
 
+    # --- RCA CDP1802 Target (*.c.decb) ---
+    echo "  [1802] Compiling with MiniGolf (par4)..."
+    C_MSG=""
+    if "$MINIGOLF" -m par4 \
+        $MANAGED_FLAG_C \
+        -I "$MINIGOLF_DIR/par4-lib" \
+        -I "$CMDS_DIR/lib_c" \
+        -I "$REPO_DIR/kernel/common" \
+        -o "$BUILD_DIR/$BASE.c.p4s" \
+        "$SRC" 2>/dev/null; then
+        echo "  [1802] Assembling with par4asm..."
+        "$PAR4ASM" -o "$BUILD_DIR/$BASE.c.p4p" "$BUILD_DIR/$BASE.c.p4s"
+
+        echo "  [1802] Bundling with par4bundle..."
+        "$PAR4BUNDLE" -vm "$BUILD_DIR/par4vmc.bin" \
+            -p4p "$BUILD_DIR/$BASE.c.p4p" \
+            -o "$BUILD_DIR/$BASE.c.decb" \
+            -entry 0x0020 -base 0x2000
+        cp -f "$BUILD_DIR/$BASE.c.decb" "$DIR/$BASE.c.decb"
+
+        SIZE_C=$(wc -c < "$DIR/$BASE.c.decb" | tr -d ' ')
+        C_MSG=", and $DIR/$BASE.c.decb ($SIZE_C bytes)"
+    else
+        echo "  [1802] Note: skipped for 1802 (unsupported syntax in par4)"
+    fi
+
     SIZE_9=$(wc -c < "$DIR/$BASE.9.decb" | tr -d ' ')
     SIZE_K=$(wc -c < "$DIR/$BASE.k.decb" | tr -d ' ')
     SIZE_Z=$(wc -c < "$DIR/$BASE.z.decb" | tr -d ' ')
-    echo "  -> Created $DIR/$BASE.9.decb ($SIZE_9 bytes), $DIR/$BASE.k.decb ($SIZE_K bytes), and $DIR/$BASE.z.decb ($SIZE_Z bytes)"
+    echo "  -> Created $DIR/$BASE.9.decb ($SIZE_9 bytes), $DIR/$BASE.k.decb ($SIZE_K bytes), $DIR/$BASE.z.decb ($SIZE_Z bytes)$C_MSG"
 done
 
 echo "Done."

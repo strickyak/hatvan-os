@@ -1,0 +1,295 @@
+package sys
+
+const STDIN = 0
+const STDOUT = 1
+const STDERR = 2
+
+const MODE_READ = 1
+const MODE_WRITE = 2
+const MODE_DIR = 0x80
+const MODE_EXEC = 0x40
+
+var ArgsPtr *byte
+var LastErr byte
+var printBuf [256]byte
+
+func Args() *byte {
+	if ArgsPtr == (*byte)(0) {
+		hi := word(peekb(0x006C))
+		lo := word(peekb(0x006D))
+		ArgsPtr = (*byte)((hi << 8) | lo)
+	}
+	return ArgsPtr
+}
+
+func LastError() byte {
+	return LastErr
+}
+
+// Low-level syscall primitives implemented via 1802 hatvan_trap:
+
+func SysOpen(path *byte, mode byte) byte {
+	res_A, res_B, res_Y, err := hatvan_trap(word(mode), 0, word(path), 0, 0, 0x84)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0xFF
+	}
+	return byte(res_A)
+}
+
+func SysCreate(path *byte, mode byte, attrs byte) byte {
+	res_A, res_B, res_Y, err := hatvan_trap(word(mode), word(attrs), word(path), 0, 0, 0x83)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0xFF
+	}
+	return byte(res_A)
+}
+
+func SysRead(path byte, buf *byte, maxLen word) word {
+	res_A, res_B, res_Y, err := hatvan_trap(word(path), 0, word(buf), maxLen, 0, 0x89)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0
+	}
+	return res_Y
+}
+
+func SysReadLn(path byte, buf *byte, maxLen word) word {
+	res_A, res_B, res_Y, err := hatvan_trap(word(path), 0, word(buf), maxLen, 0, 0x8B)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0
+	}
+	return res_Y
+}
+
+func SysWrite(path byte, buf *byte, count word) word {
+	res_A, res_B, res_Y, err := hatvan_trap(word(path), 0, word(buf), count, 0, 0x8A)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0
+	}
+	return res_Y
+}
+
+func SysWritLn(path byte, buf *byte, count word) word {
+	res_A, res_B, res_Y, err := hatvan_trap(word(path), 0, word(buf), count, 0, 0x8C)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0
+	}
+	return res_Y
+}
+
+func SysClose(path byte) byte {
+	res_A, res_B, res_Y, err := hatvan_trap(word(path), 0, 0, 0, 0, 0x8F)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0xFF
+	}
+	return byte(res_A)
+}
+
+func SysDup(path byte) byte {
+	res_A, res_B, res_Y, err := hatvan_trap(word(path), 0, 0, 0, 0, 0x82)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0xFF
+	}
+	return byte(res_A)
+}
+
+func SysDelete(path *byte) byte {
+	res_A, res_B, res_Y, err := hatvan_trap(0, 0, word(path), 0, 0, 0x87)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0xFF
+	}
+	return byte(res_A)
+}
+
+func SysExit(status byte) {
+	hatvan_trap(0, word(status), 0, 0, 0, 0x06)
+}
+
+func SysFork(cmd *byte, params *byte, paramLen word) byte {
+	res_A, res_B, res_Y, err := hatvan_trap(0, 0, word(cmd), paramLen, word(params), 0x03)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0
+	}
+	return byte(res_A)
+}
+
+func SysWait() word {
+	res_A, res_B, res_Y, err := hatvan_trap(0, 0, 0, 0, 0, 0x04)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0
+	}
+	return (word(res_A) << 8) | word(res_B)
+}
+
+func SysChgDir(path *byte, mode byte) byte {
+	res_A, res_B, res_Y, err := hatvan_trap(word(mode), 0, word(path), 0, 0, 0x86)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0xFF
+	}
+	return 0
+}
+
+func SysSeek(path byte, pos word) byte {
+	res_A, res_B, res_Y, err := hatvan_trap(word(path), 0, 0, pos, 0, 0x88)
+	if err != 0 {
+		LastErr = byte(res_A)
+		return 0xFF
+	}
+	return 0
+}
+
+func Open(path *byte, mode byte) byte {
+	return SysOpen(path, mode)
+}
+
+func Create(path *byte, mode byte, attrs byte) byte {
+	return SysCreate(path, mode, attrs)
+}
+
+func Dup(path byte) byte {
+	return SysDup(path)
+}
+
+func Delete(path *byte) byte {
+	return SysDelete(path)
+}
+
+func Seek(path byte, pos word) byte {
+	return SysSeek(path, pos)
+}
+
+func Read(path byte, buf *byte, maxLen word) word {
+	return SysRead(path, buf, maxLen)
+}
+
+func ReadLn(path byte, buf *byte, maxLen word) word {
+	return SysReadLn(path, buf, maxLen)
+}
+
+func Write(path byte, buf *byte, count word) word {
+	return SysWrite(path, buf, count)
+}
+
+func WritLn(path byte, buf *byte, count word) word {
+	return SysWritLn(path, buf, count)
+}
+
+func Close(path byte) byte {
+	return SysClose(path)
+}
+
+func Exit(status byte) {
+	SysExit(status)
+}
+
+func Fork(cmd *byte, params *byte, paramLen word) byte {
+	return SysFork(cmd, params, paramLen)
+}
+
+func Wait() (byte, byte) {
+	w := SysWait()
+	return byte(w >> 8), byte(w)
+}
+
+func ChgDir(path *byte, mode byte) byte {
+	return SysChgDir(path, mode)
+}
+
+func Spawn(cmd *byte, params *byte, paramLen word) byte {
+	cpid := Fork(cmd, params, paramLen)
+	if cpid == 0 {
+		return 127
+	}
+	for {
+		reaped, st := Wait()
+		if reaped == 0 {
+			return 1
+		}
+		if reaped == cpid {
+			return st
+		}
+	}
+}
+
+func StrLen(s *byte) word {
+	p := word(s)
+	count := word(0)
+	for peekb(p+count) != 0 {
+		count++
+	}
+	return count
+}
+
+func Print(s *byte) word {
+	return Write(STDOUT, s, StrLen(s))
+}
+
+func Println(s *byte) word {
+	n := word(0)
+	p := word(s)
+	for n < 254 {
+		c := peekb(p + n)
+		if c == 0 || c == '\r' || c == '\n' {
+			break
+		}
+		printBuf[n] = c
+		n++
+	}
+	printBuf[n] = '\n'
+	n++
+	printBuf[n] = 0
+	return WritLn(STDOUT, &printBuf[0], n)
+}
+
+func PrintErr(s *byte) word {
+	n := word(0)
+	p := word(s)
+	for n < 254 {
+		c := peekb(p + n)
+		if c == 0 || c == '\r' || c == '\n' {
+			break
+		}
+		printBuf[n] = c
+		n++
+	}
+	printBuf[n] = '\n'
+	n++
+	printBuf[n] = 0
+	return WritLn(STDERR, &printBuf[0], n)
+}
+
+func CopyArg(dst *byte, maxLen word) word {
+	args := Args()
+	if args == (*byte)(0) {
+		pokeb(word(dst), 0)
+		return 0
+	}
+	p := word(args)
+	for peekb(p) == ' ' || peekb(p) == ',' {
+		p++
+	}
+	d := word(dst)
+	cnt := word(0)
+	for cnt < maxLen-1 {
+		c := peekb(p)
+		if c == 0 || c == ' ' || c == ',' || c == '\r' || c == '\n' {
+			break
+		}
+		pokeb(d+cnt, c)
+		cnt++
+		p++
+	}
+	pokeb(d+cnt, 0)
+	return cnt
+}

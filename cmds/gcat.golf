@@ -17,9 +17,9 @@ func main() {
 		}
 	}
 
-	var buf [256]byte
+	var buf [240]byte
 	for {
-		n := sys.ReadLn(fd, &buf[0], 255)
+		n := sys.ReadLn(fd, &buf[0], 239)
 		if n == 0 {
 			break
 		}

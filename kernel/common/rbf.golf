@@ -536,6 +536,7 @@ func ParsePathDrive(path *byte) byte {
 
 var ResolvedDrive byte
 var ResolvedFDLSN word
+var rbfCompBuf [32]byte
 
 // RBFResolvePath resolves a full or relative path string to a (drive, fdLSN).
 // Sets ResolvedDrive and ResolvedFDLSN. Returns ResolvedFDLSN (0 on failure).
@@ -579,7 +580,6 @@ func RBFResolvePath(path *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isE
 		}
 	}
 
-	var compBuf [32]byte
 	var dirFD RBFFileDescriptor
 
 	for {
@@ -595,11 +595,11 @@ func RBFResolvePath(path *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isE
 			if ch == 0 || ch == '/' || ch == '\r' || ch == '\n' || ch == ' ' {
 				break
 			}
-			compBuf[idx] = ch
+			rbfCompBuf[idx] = ch
 			idx++
 			p++
 		}
-		compBuf[idx] = 0
+		rbfCompBuf[idx] = 0
 
 		if peekb(p) == '/' {
 			p++
@@ -613,7 +613,7 @@ func RBFResolvePath(path *byte, defaultDrive byte, cwdLSN word, cxdLSN word, isE
 				return 0
 			}
 
-			nextLSN := RBFScanDirectory(drive, &dirFD, &compBuf[0])
+			nextLSN := RBFScanDirectory(drive, &dirFD, &rbfCompBuf[0])
 			if nextLSN == 0 {
 				ResolvedDrive = 0xFF
 				ResolvedFDLSN = 0

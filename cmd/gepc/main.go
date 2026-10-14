@@ -232,6 +232,13 @@ func main() {
 			cpu.Step()
 			if *maxCyclesFlag > 0 && cpu.Cycles >= *maxCyclesFlag {
 				fmt.Fprintf(os.Stderr, "gepc: reached maximum cycles (%d) at %s\n", *maxCyclesFlag, cpu.DumpState())
+				sp := cpu.R[2]
+				fmt.Fprintf(os.Stderr, "R2 stack [0x%04X]:", sp)
+				for k := sp; k < 0xDFFE && k < sp+128; k += 2 {
+					w := (uint16(bus.Memory[0][k]) << 8) | uint16(bus.Memory[0][k+1])
+					fmt.Fprintf(os.Stderr, " %04X", w)
+				}
+				fmt.Fprintf(os.Stderr, "\n")
 				cpu.Halted = true
 				break
 			}
@@ -266,7 +273,7 @@ func main() {
 		if timeoutChan != nil {
 			select {
 			case <-timeoutChan:
-				fmt.Fprintf(os.Stderr, "gepc: reached maximum execution time (%.1fs)\n", *maxSecondsFlag)
+				fmt.Fprintf(os.Stderr, "gepc: reached maximum execution time (%.1fs) at %s (R5=%04X R7=%04X)\n", *maxSecondsFlag, cpu.DumpState(), cpu.R[5], cpu.R[7])
 				cpu.Halted = true
 			default:
 			}
@@ -285,6 +292,10 @@ func main() {
 	if *printCyclesFlag {
 		mhz := float64(cpu.Cycles) / elapsed.Seconds() / 1e6
 		fmt.Fprintf(os.Stderr, "Total cycles: %d in %.2fs (%.2f MHz)\n", cpu.Cycles, elapsed.Seconds(), mhz)
+	}
+
+	if bus.Halted {
+		fmt.Fprintf(os.Stderr, "gepc: halted with code %d at %s (R5=%04X R7=%04X)\n", bus.ExitCode, cpu.DumpState(), cpu.R[5], cpu.R[7])
 	}
 
 	os.Exit(bus.ExitCode)

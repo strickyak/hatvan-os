@@ -538,13 +538,33 @@ func Dispatch(callNum byte) {
 	UserFrame.CC |= 1
 }
 
+func HandleSyscall(callNum byte, a byte, b byte, x word, y word, u word, pc word) (byte, byte, word, byte) {
+	UserFrame.A = a
+	UserFrame.B = b
+	UserFrame.X = x
+	UserFrame.Y = y
+	UserFrame.U = u
+	UserFrame.PC = pc
+	UserFrame.CC = 0
+	if hal.ARCH == 'c' {
+		trapPID := peekb(0x0043)
+		if trapPID != 0 {
+			proc.CurrentPID = trapPID
+		}
+	}
+	Dispatch(callNum)
+	return UserFrame.A, UserFrame.B, UserFrame.Y, (UserFrame.CC & 1)
+}
+
 func SyscallInit() {
 	klib.memcpy(&perrMsg[0], (*byte)("ERROR #000\n"), 11)
 	if peekb(0) == 255 {
 		Dispatch(0)
 		Dispatch(1)
+		HandleSyscall(0, 0, 0, 0, 0, 0, 0)
 	}
 }
+
 
 
 

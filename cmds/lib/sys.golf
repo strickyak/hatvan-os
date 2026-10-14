@@ -125,10 +125,10 @@ func Print(s *byte) word {
 }
 
 func Println(s *byte) word {
-	var buf [256]byte
+	var buf [240]byte
 	n := word(0)
 	p := word(s)
-	for n < 254 {
+	for n < 238 {
 		c := peekb(p + n)
 		if c == 0 || c == '\r' || c == '\n' {
 			break
@@ -143,10 +143,10 @@ func Println(s *byte) word {
 }
 
 func PrintErr(s *byte) word {
-	var buf [256]byte
+	var buf [240]byte
 	n := word(0)
 	p := word(s)
-	for n < 254 {
+	for n < 238 {
 		c := peekb(p + n)
 		if c == 0 || c == '\r' || c == '\n' {
 			break

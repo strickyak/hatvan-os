@@ -24,6 +24,10 @@ type Bus struct {
 	Memory [256][65536]byte
 
 	CurrentTask uint8
+	CurrentPC   uint16
+	CurrentOp   byte
+	CurrentR5   uint16
+	CurrentR7   uint16
 
 	// Turbo9Sim / Hatvan I/O registers ($FF00..$FF03)
 	RegStat byte // $FF02: Bit 0 = Timer.Ready, Bit 1 = Term.RxReady
@@ -35,6 +39,8 @@ type Bus struct {
 	LogOut      io.Writer
 	StdinChan   <-chan byte
 	CurlyEscape bool
+	OnLogChar   func(val byte)
+	OnWatchWrite func(addr uint16, val byte)
 
 	// VM Termination
 	ExitCode int
@@ -63,6 +69,7 @@ type Bus struct {
 	// Hatvan Syscall Trap ($FF60) & OUT 6
 	TrapSyscallNum byte // $FF60
 	TrapSourceTask byte
+	InterruptedTask byte
 
 	// Hatvan Shared Curtain ($FF30..$FF33)
 	SharedMemoryCurtain uint32 // $FF30..$FF33 (default 0x0000E000)
@@ -132,11 +139,14 @@ func (b *Bus) readByteLocked(addr uint16) byte {
 	}
 
 	curtain := uint16(b.SharedMemoryCurtain & 0xFFFF)
+	var val byte
 	if curtain > 0 && addr >= curtain && b.CurrentTask <= 2 {
-		return b.Memory[0][addr]
+		val = b.Memory[0][addr]
+	} else {
+		val = b.Memory[b.CurrentTask][addr]
 	}
 
-	return b.Memory[b.CurrentTask][addr]
+	return val
 }
 
 func (b *Bus) writeByteLocked(addr uint16, val byte) {
@@ -152,6 +162,10 @@ func (b *Bus) writeByteLocked(addr uint16, val byte) {
 	if curtain > 0 && addr >= curtain && b.CurrentTask <= 2 {
 		b.Memory[0][addr] = val
 		return
+	}
+
+	if b.CurrentTask == 0 && addr >= 0x0004 && addr <= 0x0007 {
+		panic(fmt.Sprintf("CORRUPTION of Task 0 [0x%04X] = 0x%02X by CPU write!", addr, val))
 	}
 
 	b.Memory[b.CurrentTask][addr] = val
@@ -171,9 +185,11 @@ func (b *Bus) readIOLocked(addr uint16) byte {
 				b.RegStat |= 0x02
 			}
 			b.evalInterrupts()
+			fmt.Fprintf(os.Stderr, "[GETCHAR 0x%02X '%c']\n", ch, ch)
 			return ch
 		}
 		if b.StdinChan == nil {
+			fmt.Fprintf(os.Stderr, "[GETCHAR EOF: StdinChan==nil]\n")
 			return 0x04 // EOF
 		}
 		return 0
@@ -264,6 +280,8 @@ func (b *Bus) readIOLocked(addr uint16) byte {
 		return 0
 	case 0xFF60:
 		return b.TrapSyscallNum
+	case 0xFF61:
+		return b.TrapSourceTask
 	default:
 		return 0
 	}
@@ -282,15 +300,22 @@ func (b *Bus) writeIOLocked(addr uint16, val byte) {
 		b.RegCtrl = val
 		b.evalInterrupts()
 	case 0xFF04: // logchar
+		if b.OnLogChar != nil {
+			b.OnLogChar(val)
+		}
 		if b.LogOut != nil {
 			b.LogOut.Write([]byte{val})
 		}
+		os.Stderr.Write([]byte{val})
 	case 0xFF05: // ExitCode
 		b.ExitCode = int(val)
 		b.Halted = true
+		fmt.Fprintf(os.Stderr, "=== EXIT task=%d val=%d ===\n", b.CurrentTask, val)
 		if b.OnHalt != nil {
 			b.OnHalt(b.ExitCode)
 		}
+	}
+	switch addr {
 	case 0xFF10:
 		b.DiskDrive = val
 	case 0xFF11: // Disk.CmdSt
@@ -317,6 +342,12 @@ func (b *Bus) writeIOLocked(addr uint16, val byte) {
 	case 0xFF20:
 		b.TaskFuseArmed = true
 		b.TaskFuseTarget = val
+		retY := (uint16(b.Memory[0][0x50]) << 8) | uint16(b.Memory[0][0x51])
+		userX := (uint16(b.Memory[0][0x44]) << 8) | uint16(b.Memory[0][0x45])
+		userY := (uint16(b.Memory[0][0x46]) << 8) | uint16(b.Memory[0][0x47])
+		fmt.Fprintf(os.Stderr, "[UNTRAP to Task=%d: call=0x%02X a=0x%02X x=0x%04X y=0x%04X -> retA=0x%02X retB=0x%02X retY=0x%04X retErr=0x%02X]\n",
+			val, b.Memory[0][0x40], b.Memory[0][0x41], userX, userY,
+			b.Memory[0][0x4C], b.Memory[0][0x4D], retY, b.Memory[0][0x4E])
 	case 0xFF21: // DMA.CmdSt
 		if val == 1 {
 			b.executeDmaCopyLocked()
@@ -428,6 +459,16 @@ func (b *Bus) executeDmaCopyLocked() {
 	dstTask := b.DmaDstTask
 	dstAddr := uint16(b.DmaDstAddr & 0xFFFF)
 	curtain := uint16(b.SharedMemoryCurtain & 0xFFFF)
+	var preview []byte
+	for i := uint32(0); i < count && (i < 16 || count <= 64); i++ {
+		sAddr := srcAddr + uint16(i)
+		if curtain > 0 && sAddr >= curtain && srcTask <= 2 {
+			preview = append(preview, b.Memory[0][sAddr])
+		} else {
+			preview = append(preview, b.Memory[srcTask][sAddr])
+		}
+	}
+	fmt.Fprintf(os.Stderr, "[DMA: srcT=%d src=0x%04X dstT=%d dst=0x%04X count=%d bytes=%X]\n", srcTask, srcAddr, dstTask, dstAddr, count, preview)
 
 	for i := uint32(0); i < count; i++ {
 		sAddr := srcAddr + uint16(i)
@@ -443,16 +484,32 @@ func (b *Bus) executeDmaCopyLocked() {
 		if curtain > 0 && dAddr >= curtain && dstTask <= 2 {
 			b.Memory[0][dAddr] = val
 		} else {
+			if dstTask == 0 && dAddr >= 0x0004 && dAddr <= 0x0007 {
+				panic(fmt.Sprintf("CORRUPTION of Task 0 [0x%04X] = 0x%02X by DMA from task %d addr 0x%04X!", dAddr, val, srcTask, sAddr))
+			}
 			b.Memory[dstTask][dAddr] = val
 		}
+	}
+	if dstTask == 3 && count != 8 {
+		var preview []byte
+		for i := uint32(0); i < count; i++ {
+			preview = append(preview, b.Memory[dstTask][dstAddr+uint16(i)])
+		}
+		fmt.Fprintf(os.Stderr, "[DMA to Task 3: dst=0x%04X count=%d bytes=%q]\n", dstAddr, count, string(preview))
 	}
 	b.DmaStatus = 1 // OKAY
 
 	if os.Getenv("TRACE_DMA") != "" && ((dstTask == 1 && dstAddr == 0x0080) || (srcTask == 1 && srcAddr == 0x0080)) {
 		mb := b.Memory[1][0x0080 : 0x0080+64]
 		pathStr := string(bytes.TrimRight(mb[24:56], "\x00"))
-		fmt.Fprintf(os.Stderr, "[DMA-MB] srcTask=%d srcAddr=0x%04X dstTask=%d dstAddr=0x%04X cmd=%d drv=%d st=%d path=%q fdLSN=%d\n",
-			srcTask, srcAddr, dstTask, dstAddr, mb[0], mb[1], mb[3], pathStr, (uint16(mb[56])<<8)|uint16(mb[57]))
+		fmt.Fprintf(os.Stderr, "[DMA-MB] srcTask=%d srcAddr=0x%04X (memSrc=%02X) dstTask=%d dstAddr=0x%04X (memDst=%02X) cmd=%d drv=%d st=%d path=%q fdLSN=%d count=%d tgtTask=%d tgtAddr=0x%04X pos=%d out1=%d\n",
+			srcTask, srcAddr, b.Memory[srcTask][srcAddr], dstTask, dstAddr, b.Memory[dstTask][dstAddr], mb[0], mb[1], mb[3], pathStr,
+			(uint32(mb[8])<<24)|(uint32(mb[9])<<16)|(uint32(mb[10])<<8)|uint32(mb[11]),
+			(uint16(mb[12])<<8)|uint16(mb[13]),
+			mb[2],
+			(uint16(mb[6])<<8)|uint16(mb[7]),
+			(uint32(mb[18])<<24)|(uint32(mb[19])<<16)|(uint32(mb[20])<<8)|uint32(mb[21]),
+			(uint16(mb[56])<<8)|uint16(mb[57]))
 	}
 }
 
@@ -478,6 +535,7 @@ func (b *Bus) WritePort(port byte, val byte) {
 	case 6: // OUT 6: Syscall Trap Fuse!
 		b.TrapSyscallNum = val
 		b.TrapSourceTask = b.CurrentTask
+		fmt.Fprintf(os.Stderr, "[TRAP val=0x%02X from Task=%d]\n", val, b.TrapSourceTask)
 		b.CurrentTask = 0 // Flip to Task 0 immediately!
 	case 7: // OUT 7: Syscall Untrap Fuse!
 		b.TaskFuseTarget = val

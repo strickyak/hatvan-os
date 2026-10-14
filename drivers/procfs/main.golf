@@ -86,17 +86,18 @@ func bufAppendStr(buf *byte, pos *word, s *byte) {
 	}
 }
 
+var decTmp [4]byte
+
 func bufAppendDec(buf *byte, pos *word, val byte, width byte) {
-	var tmp [4]byte
 	n := word(0)
 	v := val
 	if v == 0 {
-		tmp[0] = '0'
+		decTmp[0] = '0'
 		n = 1
 	} else {
 		for v > 0 {
 			rem := v % 10
-			tmp[n] = '0' + rem
+			decTmp[n] = '0' + rem
 			n++
 			v = v / 10
 		}
@@ -107,7 +108,7 @@ func bufAppendDec(buf *byte, pos *word, val byte, width byte) {
 	}
 	for n > 0 {
 		n--
-		bufAppendByte(buf, pos, tmp[n])
+		bufAppendByte(buf, pos, decTmp[n])
 	}
 }
 
@@ -194,8 +195,8 @@ func dispatch() {
 	}
 
 	if cmd == PROCFS_CMD_OPEN {
-		subpath := (*byte)(MB_PATH_STR)
-		if !klib.streq(subpath, (*byte)("p")) {
+		subpath := word(MB_PATH_STR)
+		if peekb(subpath) != 'p' || peekb(subpath+1) != 0 {
 			pokeb(MB_STATUS, 216) // E_PNNF
 			writeW32(MB_OUT_SIZE, 0)
 			return

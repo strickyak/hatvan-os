@@ -12,34 +12,35 @@ var LoadedSize word
 
 // LoadOS9Module reads an OS-9 machine language module from open pathId
 // and loads it into targetTask starting at baseAddr.
+var os9Hdr [13]byte
+
 // On 6809, the module is placed high in memory so its end abuts the redpage $FF00.
 // Returns errCode.
 func LoadOS9Module(pathId byte, targetTask byte, baseAddr word) byte {
-	var hdr [13]byte
-	err := path.SysRead(pathId, 0, &hdr[0], 13)
+	err := path.SysRead(pathId, 0, &os9Hdr[0], 13)
 	if path.TransferredBytes < 13 || err != 0 {
 		return path.E_READ
 	}
 
 	// Verify OS-9 magic ID: $87 $CD
-	if hdr[0] != 0x87 || hdr[1] != 0xCD {
+	if os9Hdr[0] != 0x87 || os9Hdr[1] != 0xCD {
 		return E_FORMAT
 	}
 
 	// Header parity check: XOR of all header bytes 0..8 must equal $FF
 	xorVal := byte(0)
 	for i := word(0); i < 9; i++ {
-		xorVal ^= hdr[i]
+		xorVal ^= os9Hdr[i]
 	}
 	if xorVal != 0xFF {
 		return E_FORMAT
 	}
 
-	modSize := (word(hdr[2]) << 8) | word(hdr[3])
+	modSize := (word(os9Hdr[2]) << 8) | word(os9Hdr[3])
 	if modSize < 13 {
 		return E_FORMAT
 	}
-	execOff := (word(hdr[9]) << 8) | word(hdr[10])
+	execOff := (word(os9Hdr[9]) << 8) | word(os9Hdr[10])
 
 	loadAddr := baseAddr
 	if hal.ARCH == '9' || hal.ARCH == 'z' {
@@ -47,7 +48,7 @@ func LoadOS9Module(pathId byte, targetTask byte, baseAddr word) byte {
 	}
 
 	// Copy 13-byte header into targetTask at loadAddr
-	hal.DMACopy(0, word(&hdr[0]), targetTask, loadAddr, 13)
+	hal.DMACopy(0, word(&os9Hdr[0]), targetTask, loadAddr, 13)
 
 	// Stream remainder of module into targetTask starting at loadAddr + 13
 	rem := modSize - 13

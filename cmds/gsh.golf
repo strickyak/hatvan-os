@@ -627,16 +627,16 @@ func ExecuteSimpleCommand(cmdStr *byte) byte {
 
 	// Builtin: echo / gecho
 	if strEq(firstWord, (*byte)("echo")) || strEq(firstWord, (*byte)("gecho")) {
-		var outBuf [256]byte
+		var outBuf [240]byte
 		olen := word(0)
 		for i := word(1); i < numWords; i++ {
-			if i > 1 && olen < 254 {
+			if i > 1 && olen < 238 {
 				outBuf[olen] = ' '
 				olen++
 			}
 			wptr := (*byte)(word(&words[0]) + i*MAX_WORD_LEN)
 			wlen := strLen(wptr)
-			for k := word(0); k < wlen && olen < 254; k++ {
+			for k := word(0); k < wlen && olen < 238; k++ {
 				outBuf[olen] = peekb(word(wptr) + k)
 				olen++
 			}
@@ -922,7 +922,7 @@ func ExpandCmdSub(src *byte, dst *byte, maxDst word) {
 
 		if !inSingle && c == '$' && peekb(p+1) == '(' {
 			p += 2 // skip "$("
-			var subCmd [256]byte
+			var subCmd [240]byte
 			subLen := word(0)
 			parenNesting := word(1)
 			subSingle := false
@@ -931,13 +931,13 @@ func ExpandCmdSub(src *byte, dst *byte, maxDst word) {
 			for peekb(p) != 0 {
 				sc := peekb(p)
 				if sc == '\\' {
-					if subLen < 255 {
+					if subLen < 238 {
 						subCmd[subLen] = sc
 						subLen++
 					}
 					p++
 					if peekb(p) != 0 {
-						if subLen < 255 {
+						if subLen < 238 {
 							subCmd[subLen] = peekb(p)
 							subLen++
 						}
@@ -960,7 +960,7 @@ func ExpandCmdSub(src *byte, dst *byte, maxDst word) {
 						}
 					}
 				}
-				if subLen < 255 {
+				if subLen < 238 {
 					subCmd[subLen] = sc
 					subLen++
 				}
@@ -968,8 +968,8 @@ func ExpandCmdSub(src *byte, dst *byte, maxDst word) {
 			}
 			subCmd[subLen] = 0
 
-			var subOut [256]byte
-			outLen := EvalSubCmd(&subCmd[0], &subOut[0], 255)
+			var subOut [240]byte
+			outLen := EvalSubCmd(&subCmd[0], &subOut[0], 238)
 			for i := word(0); i < outLen && dlen < maxDst-1; i++ {
 				pokeb(d+dlen, subOut[i])
 				dlen++
@@ -1087,7 +1087,7 @@ func ExecuteFor(forStr *byte) byte {
 		p += 2
 	}
 
-	var itemsStr [256]byte
+	var itemsStr [240]byte
 	ilen := word(0)
 	inSingle := false
 	inDouble := false
@@ -1122,7 +1122,7 @@ func ExecuteFor(forStr *byte) byte {
 				inDouble = !inDouble
 			}
 
-			if ilen < 255 {
+			if ilen < 238 {
 				itemsStr[ilen] = c
 				ilen++
 			}
@@ -1157,7 +1157,7 @@ func ExecuteFor(forStr *byte) byte {
 	}
 
 	// 4. Extract body up to "done"
-	var bodyStr [256]byte
+	var bodyStr [240]byte
 	blen := word(0)
 	inSingle = false
 	inDouble = false
@@ -1200,7 +1200,7 @@ func ExecuteFor(forStr *byte) byte {
 			inDouble = !inDouble
 		}
 
-		if blen < 255 {
+		if blen < 238 {
 			bodyStr[blen] = c
 			blen++
 		}
@@ -1214,8 +1214,8 @@ func ExecuteFor(forStr *byte) byte {
 
 	if hasIn {
 		if hasCmdSub(&itemsStr[0]) {
-			var expItems [256]byte
-			ExpandCmdSub(&itemsStr[0], &expItems[0], 255)
+			var expItems [240]byte
+			ExpandCmdSub(&itemsStr[0], &expItems[0], 238)
 			TokenizeWords(&expItems[0])
 		} else {
 			TokenizeWords(&itemsStr[0])
@@ -1268,7 +1268,7 @@ func ExecuteWhile(whileStr *byte) byte {
 	p += 5 // skip "while"
 
 	// 1. Extract condition up to "do"
-	var condStr [256]byte
+	var condStr [240]byte
 	clen := word(0)
 	inSingle := false
 	inDouble := false
@@ -1315,7 +1315,7 @@ func ExecuteWhile(whileStr *byte) byte {
 			inDouble = !inDouble
 		}
 
-		if clen < 255 {
+		if clen < 238 {
 			condStr[clen] = c
 			clen++
 		}
@@ -1324,7 +1324,7 @@ func ExecuteWhile(whileStr *byte) byte {
 	condStr[clen] = 0
 
 	// 2. Extract body up to "done"
-	var bodyStr [256]byte
+	var bodyStr [240]byte
 	blen := word(0)
 	inSingle = false
 	inDouble = false
@@ -1367,7 +1367,7 @@ func ExecuteWhile(whileStr *byte) byte {
 			inDouble = !inDouble
 		}
 
-		if blen < 255 {
+		if blen < 238 {
 			bodyStr[blen] = c
 			blen++
 		}
@@ -1433,7 +1433,7 @@ const OP_OR = 3
 
 func ExecuteScript(script *byte) byte {
 	p := word(script)
-	var segBuf [256]byte
+	var segBuf [240]byte
 	segLen := word(0)
 	nextOp := byte(OP_FIRST)
 	curOp := byte(OP_FIRST)
@@ -1464,7 +1464,7 @@ func ExecuteScript(script *byte) byte {
 					isLoop = true
 				}
 				if isLoop {
-					for p < q && segLen < 255 {
+					for p < q && segLen < 238 {
 						segBuf[segLen] = peekb(p)
 						segLen++
 						p++
@@ -1495,12 +1495,12 @@ func ExecuteScript(script *byte) byte {
 										loopNesting--
 									} else {
 										// Copy any characters from p up to fq
-										for ; p < fq && segLen < 255; p++ {
+										for ; p < fq && segLen < 238; p++ {
 											segBuf[segLen] = peekb(p)
 											segLen++
 										}
 										// Copy "done"
-										for k := word(0); k < 4 && segLen < 255; k++ {
+										for k := word(0); k < 4 && segLen < 238; k++ {
 											segBuf[segLen] = peekb(fq + k)
 											segLen++
 										}
@@ -1510,7 +1510,7 @@ func ExecuteScript(script *byte) byte {
 								}
 							}
 						}
-						if segLen < 255 {
+						if segLen < 238 {
 							segBuf[segLen] = fc
 							segLen++
 						}
@@ -1544,7 +1544,7 @@ func ExecuteScript(script *byte) byte {
 			inDouble = !inDouble
 		}
 
-		if segLen < 255 {
+		if segLen < 238 {
 			segBuf[segLen] = c
 			segLen++
 		}
@@ -1578,8 +1578,8 @@ func ExecuteScript(script *byte) byte {
 					prevStatus = ExecuteWhile((*byte)(sp))
 				} else {
 					if hasCmdSub((*byte)(sp)) {
-						var expBuf [256]byte
-						ExpandCmdSub((*byte)(sp), &expBuf[0], 255)
+						var expBuf [240]byte
+						ExpandCmdSub((*byte)(sp), &expBuf[0], 238)
 						prevStatus = ExecuteSimpleCommand(&expBuf[0])
 					} else {
 						prevStatus = ExecuteSimpleCommand((*byte)(sp))
@@ -1626,8 +1626,8 @@ func ExecuteScript(script *byte) byte {
 				prevStatus = ExecuteWhile((*byte)(sp))
 			} else {
 				if hasCmdSub((*byte)(sp)) {
-					var expBuf [256]byte
-					ExpandCmdSub((*byte)(sp), &expBuf[0], 255)
+					var expBuf [240]byte
+					ExpandCmdSub((*byte)(sp), &expBuf[0], 238)
 					prevStatus = ExecuteSimpleCommand(&expBuf[0])
 				} else {
 					prevStatus = ExecuteSimpleCommand((*byte)(sp))
@@ -1786,8 +1786,8 @@ func main() {
 			if isForLoop((*byte)(sp)) || isWhileLoop((*byte)(sp)) {
 				curTotal := n
 				for !checkHasDone(&lineBuf[0]) {
-					var contBuf [256]byte
-					cn := sys.ReadLn(fd, &contBuf[0], 255)
+					var contBuf [240]byte
+					cn := sys.ReadLn(fd, &contBuf[0], 238)
 					if cn == 0 {
 						break
 					}
@@ -1826,6 +1826,9 @@ func main() {
 			n--
 		}
 		lineBuf[n] = 0
+		sys.Print((*byte)("[GSH LINE="))
+		sys.Print(&lineBuf[0])
+		sys.Println((*byte)("]"))
 
 		// If line starts a "for" or "while" without "done", keep reading until "done"
 		sp := word(&lineBuf[0])
@@ -1836,8 +1839,8 @@ func main() {
 			curTotal := n
 			for !checkHasDone(&lineBuf[0]) {
 				sys.Print((*byte)("> "))
-				var contBuf [256]byte
-				cn := sys.ReadLn(sys.STDIN, &contBuf[0], 255)
+				var contBuf [240]byte
+				cn := sys.ReadLn(sys.STDIN, &contBuf[0], 238)
 				if cn == 0 {
 					break
 				}

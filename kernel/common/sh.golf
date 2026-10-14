@@ -31,22 +31,23 @@ func printHexWord(val word) {
 	}
 }
 
+var printDecBuf [4]byte
+
 func printDec(val byte) {
 	if val == 0 {
 		hal.PutChar('0')
 		return
 	}
-	var buf [4]byte
 	n := word(0)
 	v := val
 	for v > 0 {
-		buf[n] = '0' + (v % 10)
+		printDecBuf[n] = '0' + (v % 10)
 		n++
 		v = v / 10
 	}
 	for n > 0 {
 		n--
-		hal.PutChar(buf[n])
+		hal.PutChar(printDecBuf[n])
 	}
 }
 

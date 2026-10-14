@@ -1,5 +1,10 @@
 package gepc
 
+import (
+	"fmt"
+	"os"
+)
+
 func (c *CPU) fetchByte() byte {
 	val := c.Bus.ReadByte(c.R[c.P])
 	c.R[c.P]++
@@ -79,6 +84,10 @@ func (c *CPU) executeOp(op byte) {
 		c.Cycles += 16
 
 	case 0x5: // 0x50..0x5F: STR Rn
+		if c.R[loNibble] == 0x0004 {
+			fmt.Fprintf(os.Stderr, "[STR Rn=%d addr=%04X PC=%04X P=%d D=%02X R5=%04X R7=%04X Task=%d]\n",
+				loNibble, c.R[loNibble], c.R[c.P]-1, c.P, c.D, c.R[5], c.R[7], c.Bus.CurrentTask)
+		}
 		c.Bus.WriteByte(c.R[loNibble], c.D)
 		c.Cycles += 16
 
@@ -105,28 +114,38 @@ func (c *CPU) executeOp(op byte) {
 	case 0x7: // 0x70..0x7F: Control, Stack, and ALU operations
 		switch op {
 		case 0x70: // RET
-			if c.Bus.TaskFuseArmed {
-				c.Bus.CurrentTask = c.Bus.TaskFuseTarget
-				c.Bus.TaskFuseArmed = false
-			}
-			b := c.Bus.ReadByte(c.R[c.X])
+			oldX := c.X
+			oldP := c.P
+			b := c.Bus.ReadByte(c.R[oldX])
+			c.R[oldX]++
 			c.P = b & 0x0F
 			c.X = b >> 4
-			c.R[c.X]++
 			c.IE = 1
 			c.Cycles += 16
 
-		case 0x71: // DIS
 			if c.Bus.TaskFuseArmed {
 				c.Bus.CurrentTask = c.Bus.TaskFuseTarget
 				c.Bus.TaskFuseArmed = false
+			} else if oldP == 1 {
+				c.Bus.CurrentTask = c.Bus.InterruptedTask
 			}
-			b := c.Bus.ReadByte(c.R[c.X])
+
+		case 0x71: // DIS
+			oldX := c.X
+			oldP := c.P
+			b := c.Bus.ReadByte(c.R[oldX])
+			c.R[oldX]++
 			c.P = b & 0x0F
 			c.X = b >> 4
-			c.R[c.X]++
 			c.IE = 0
 			c.Cycles += 16
+
+			if c.Bus.TaskFuseArmed {
+				c.Bus.CurrentTask = c.Bus.TaskFuseTarget
+				c.Bus.TaskFuseArmed = false
+			} else if oldP == 1 {
+				c.Bus.CurrentTask = c.Bus.InterruptedTask
+			}
 
 		case 0x72: // LDXA
 			c.D = c.Bus.ReadByte(c.R[c.X])

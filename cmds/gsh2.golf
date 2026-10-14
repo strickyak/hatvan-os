@@ -1670,11 +1670,11 @@ func main() {
 		}
 
 		lineBuf.Init()
-		var chunk [256]byte
+		var chunk [240]byte
 
 		for {
 			lineBuf.Clear()
-			n := sys.ReadLn(fd, &chunk[0], 255)
+			n := sys.ReadLn(fd, &chunk[0], 239)
 			if n == 0 {
 				break
 			}
@@ -1689,7 +1689,7 @@ func main() {
 
 			// Check for multi-line block
 			for hasUnclosedBlocks(lineBuf.String()) {
-				cn := sys.ReadLn(fd, &chunk[0], 255)
+				cn := sys.ReadLn(fd, &chunk[0], 239)
 				if cn == 0 {
 					break
 				}
@@ -1714,12 +1714,12 @@ func main() {
 
 	// Interactive REPL loop
 	inputBuf.Init()
-	var lineChunk [256]byte
+	var lineChunk [240]byte
 
 	for {
 		sys.Print((*byte)("gsh2% "))
 		inputBuf.Clear()
-		n := sys.ReadLn(sys.STDIN, &lineChunk[0], 255)
+		n := sys.ReadLn(sys.STDIN, &lineChunk[0], 239)
 		if n == 0 {
 			break
 		}

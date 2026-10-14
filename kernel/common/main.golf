@@ -28,11 +28,17 @@ func launchShell() {
 		cxdErr = proc.SysChgDir((*byte)("/d0/CmdsK"), path.MODE_EXEC)
 	} else if hal.ARCH == 'z' {
 		cxdErr = proc.SysChgDir((*byte)("/d0/CmdsZ"), path.MODE_EXEC)
+	} else if hal.ARCH == 'c' {
+		cxdErr = proc.SysChgDir((*byte)("/d0/CmdsC"), path.MODE_EXEC)
 	} else {
 		cxdErr = proc.SysChgDir((*byte)("/d0/Cmds9"), path.MODE_EXEC)
 	}
 	if cxdErr != 0 {
 		dev.KLog((*byte)("CHGDIR:FAIL"))
+		hal.LogChar('0' + cxdErr / 100)
+		hal.LogChar('0' + (cxdErr / 10) % 10)
+		hal.LogChar('0' + cxdErr % 10)
+		hal.LogChar('\n')
 	} else {
 		dev.KLog((*byte)("CHGDIR:OK"))
 	}

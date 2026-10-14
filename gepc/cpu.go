@@ -1,6 +1,9 @@
 package gepc
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 // CPU implements the RCA COSMAC CDP1802 8-bit microprocessor.
 type CPU struct {
@@ -41,6 +44,20 @@ type CPU struct {
 func NewCPU(bus *Bus) *CPU {
 	c := &CPU{
 		Bus: bus,
+	}
+	bus.OnLogChar = func(val byte) {
+		vtp := (uint16(bus.Memory[0][0x006A]) << 8) | uint16(bus.Memory[0][0x006B])
+		fmt.Fprintf(bus.LogOut, "[LOGCHAR %02X R5=%04X R7=%04X vtp=%04X M(vtp..+4)=%02X%02X%02X M(R7..+8)=%02X%02X %02X%02X %02X%02X %02X%02X]\n",
+			val, c.R[5], c.R[7], vtp,
+			bus.Memory[0][vtp], bus.Memory[0][vtp+1], bus.Memory[0][vtp+2],
+			bus.Memory[0][c.R[7]], bus.Memory[0][c.R[7]+1],
+			bus.Memory[0][c.R[7]+2], bus.Memory[0][c.R[7]+3],
+			bus.Memory[0][c.R[7]+4], bus.Memory[0][c.R[7]+5],
+			bus.Memory[0][c.R[7]+6], bus.Memory[0][c.R[7]+7])
+	}
+	bus.OnWatchWrite = func(addr uint16, val byte) {
+		fmt.Fprintf(os.Stderr, "[WATCH 0xE133 WRITE Task=%d val=%02X P=%d PC=%04X R5=%04X R7=%04X]\n",
+			c.Bus.CurrentTask, val, c.P, c.R[c.P], c.R[5], c.R[7])
 	}
 	c.Reset()
 	return c
@@ -88,6 +105,7 @@ func (c *CPU) Step() {
 		c.P = 1
 		c.X = 2
 		c.IE = 0
+		c.Bus.InterruptedTask = c.Bus.CurrentTask
 		c.Bus.CurrentTask = 0 // MMU forces Task 0 on interrupt response!
 		c.Cycles += 16
 		return
@@ -100,20 +118,25 @@ func (c *CPU) Step() {
 
 	pc := c.R[c.P]
 	op := c.Bus.ReadByte(pc)
+	c.Bus.CurrentPC = pc
+	c.Bus.CurrentOp = op
+	c.Bus.CurrentR5 = c.R[5]
+	c.Bus.CurrentR7 = c.R[7]
 	c.R[c.P]++
 
-	if c.OnInstruction != nil {
-		c.OnInstruction(pc, op)
-	}
-
 	c.executeOp(op)
+
+	if c.R[2] != 0 && c.R[2] < 0x0100 && !c.Halted {
+		panic(fmt.Sprintf("R2 underflow: Task=%d P=%d PC=%04X op=%02X R2=%04X R7=%04X R5=%04X",
+			c.Bus.CurrentTask, c.P, pc, op, c.R[2], c.R[7], c.R[5]))
+	}
 }
 
 // DumpState returns a concise single-line representation of CPU register state.
 func (c *CPU) DumpState() string {
-	return fmt.Sprintf("P=%X X=%X D=%02X DF=%d Q=%d T=%02X IE=%d R0=%04X R1=%04X R2=%04X R3=%04X R7=%04X R8=%04X R9=%04X RE=%04X RF=%04X",
-		c.P, c.X, c.D, c.DF, c.Q, c.T, c.IE,
-		c.R[0], c.R[1], c.R[2], c.R[3], c.R[7], c.R[8], c.R[9], c.R[14], c.R[15])
+	return fmt.Sprintf("Task=%d P=%X X=%X D=%02X DF=%d Q=%d T=%02X IE=%d R0=%04X R1=%04X R2=%04X R3=%04X R4=%04X R5=%04X R6=%04X R7=%04X R8=%04X R9=%04X RE=%04X RF=%04X",
+		c.Bus.CurrentTask, c.P, c.X, c.D, c.DF, c.Q, c.T, c.IE,
+		c.R[0], c.R[1], c.R[2], c.R[3], c.R[4], c.R[5], c.R[6], c.R[7], c.R[8], c.R[9], c.R[14], c.R[15])
 }
 
 // DumpAllRegs returns all 16 scratchpad registers.

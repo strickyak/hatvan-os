@@ -151,13 +151,23 @@ func ParsePathDevice(path *byte, defaultDrive byte) byte {
 
 // TermRead reads raw binary bytes from the console
 func TermRead(task byte, dstAddr word, count word) word {
-	for i := word(0); i < count; i++ {
-		c := TermReadChar()
-
-		if task == 0 {
-			pokeb(dstAddr+i, c)
-		} else {
-			hal.DMACopy(0, word(&c), task, dstAddr+i, 1)
+	if task == 0 {
+		for i := word(0); i < count; i++ {
+			pokeb(dstAddr+i, TermReadChar())
+		}
+	} else {
+		var readBuf [64]byte
+		offset := word(0)
+		for offset < count {
+			chunk := count - offset
+			if chunk > 64 {
+				chunk = 64
+			}
+			for j := word(0); j < chunk; j++ {
+				readBuf[j] = TermReadChar()
+			}
+			hal.DMACopy(0, word(&readBuf[0]), task, dstAddr+offset, chunk)
+			offset += chunk
 		}
 	}
 	return count
@@ -170,10 +180,18 @@ func TermWrite(task byte, srcAddr word, count word) word {
 			hal.PutChar(peekb(srcAddr + i))
 		}
 	} else {
-		for i := word(0); i < count; i++ {
-			c := byte(0)
-			hal.DMACopy(task, srcAddr+i, 0, word(&c), 1)
-			hal.PutChar(c)
+		var writeBuf [64]byte
+		offset := word(0)
+		for offset < count {
+			chunk := count - offset
+			if chunk > 64 {
+				chunk = 64
+			}
+			hal.DMACopy(task, srcAddr+offset, 0, word(&writeBuf[0]), chunk)
+			for j := word(0); j < chunk; j++ {
+				hal.PutChar(writeBuf[j])
+			}
+			offset += chunk
 		}
 	}
 	return count
@@ -252,10 +270,18 @@ func LogWrite(task byte, srcAddr word, count word) word {
 			hal.LogChar(peekb(srcAddr + i))
 		}
 	} else {
-		for i := word(0); i < count; i++ {
-			c := byte(0)
-			hal.DMACopy(task, srcAddr+i, 0, word(&c), 1)
-			hal.LogChar(c)
+		var writeBuf [64]byte
+		offset := word(0)
+		for offset < count {
+			chunk := count - offset
+			if chunk > 64 {
+				chunk = 64
+			}
+			hal.DMACopy(task, srcAddr+offset, 0, word(&writeBuf[0]), chunk)
+			for j := word(0); j < chunk; j++ {
+				hal.LogChar(writeBuf[j])
+			}
+			offset += chunk
 		}
 	}
 	return count

@@ -47,8 +47,9 @@ func LogChar(b byte) {
 }
 
 func EnableTimer() {
-	vpokeb(PORT_REGCTRL, 3)
+	vpokeb(PORT_REGCTRL, 1)
 }
+
 
 func DisableTimer() {
 	vpokeb(PORT_REGCTRL, 0)
@@ -120,8 +121,6 @@ func SwitchTask(task byte) {
 	vpokeb(PORT_TASKFUSE, task)
 }
 
-func LaunchProcess(pid byte, sp word, pc word)
-
 func HasInput() bool {
 	return (vpeekb(PORT_REGSTAT) & 2) != 0
 }
@@ -137,33 +136,84 @@ func SetTaskFlags(task byte, flags byte) {
 	vpokeb(PORT_TASKFLAGS, flags)
 }
 
-func RBFCall()
-func Sleep()
-func InitRBF(entryPC word)
-func ProcfsCall()
-func InitProcfs(entryPC word)
-func InitUserContext(pid byte, sp word, pc word)
-func FreeUserContext(pid byte)
+const TASK_R2_BASE = 0x0080
+const TASK_R5_BASE = 0x00A0
+const TASK_R6_BASE = 0x00C0
+const TASK_R7_BASE = 0x00E0
+
+func LaunchProcess(pid byte, sp word, pc word) {
+	hatvan_trap(word(pid), 0, pc, sp, 0, 0xF0)
+}
+
+func RBFCall() {
+	hatvan_trap(0, 0, 0, 0, 0, 0xF1)
+}
+
+func ProcfsCall() {
+	hatvan_trap(0, 0, 0, 0, 0, 0xF2)
+}
+
+func InitRBF(entryPC word) {
+	hatvan_trap(0, 0, entryPC, 0, 0, 0xF3)
+}
+
+func InitProcfs(entryPC word) {
+	hatvan_trap(0, 0, entryPC, 0, 0, 0xF4)
+}
+
+func Sleep() {
+	hatvan_trap(0, 0, 0, 0, 0, 0x0A)
+}
+
+func InitUserContext(pid byte, sp word, pc word) {
+	idx := word(pid) * 2
+	vpokew(TASK_R2_BASE + idx, sp)
+	vpokew(TASK_R5_BASE + idx, pc)
+	vpokew(TASK_R6_BASE + idx, 0xB000)
+	vpokew(TASK_R7_BASE + idx, 0x0000)
+}
+
+func FreeUserContext(pid byte) {
+	idx := word(pid) * 2
+	vpokew(TASK_R2_BASE + idx, 0)
+	vpokew(TASK_R5_BASE + idx, 0)
+	vpokew(TASK_R6_BASE + idx, 0)
+	vpokew(TASK_R7_BASE + idx, 0)
+}
 
 var ChildCodeStart word
+var initPCBuf [2]byte
+var paramCR byte
+var argsPtrBuf [2]byte
 
 func SetupChildTask(taskID byte, lineMode byte, entryPC word, binSize word, paramStr *byte, paramLen word) word {
+	// Clone common low-memory runtime template ($0000..$1FFF) from Task 0 into child task
+	DMACopy(0, 0, taskID, 0, 0x2000)
+
 	paramEnd := word(0xFE00)
 	sp := paramEnd
 	if paramStr != (*byte)(0) && paramLen > 0 {
 		sp -= (paramLen + 1)
 		sp &^= 1
 		DMACopy(0, word(paramStr), taskID, sp, paramLen)
-		cr := byte('\r')
-		DMACopy(0, word(&cr), taskID, sp+paramLen, 1)
+		paramCR = '\r'
+		DMACopy(0, word(&paramCR), taskID, sp+paramLen, 1)
 	}
 
 	userSP := sp - 2
-	var initPC [2]byte
-	initPC[0] = byte(entryPC >> 8)
-	initPC[1] = byte(entryPC)
-	DMACopy(0, word(&initPC[0]), taskID, userSP, 2)
+	initPCBuf[0] = byte(entryPC >> 8)
+	initPCBuf[1] = byte(entryPC)
+	DMACopy(0, word(&initPCBuf[0]), taskID, userSP, 2)
 
-	ChildCodeStart = 0x0200
+	if paramStr != (*byte)(0) && paramLen > 0 {
+		argsPtrBuf[0] = byte(sp >> 8)
+		argsPtrBuf[1] = byte(sp)
+	} else {
+		argsPtrBuf[0] = 0
+		argsPtrBuf[1] = 0
+	}
+	DMACopy(0, word(&argsPtrBuf[0]), taskID, 0x006C, 2)
+
+	ChildCodeStart = 0x2000
 	return userSP
 }
