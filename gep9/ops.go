@@ -32,7 +32,7 @@ func (c *CPU) executePage0(op byte) int {
 		}
 		return 2
 	case 0x13: // SYNC
-		c.Waiting = true
+		c.SyncWaiting = true
 		return 4
 	case 0x19: // DAA
 		c.daa()

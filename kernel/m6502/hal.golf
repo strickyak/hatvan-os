@@ -1,0 +1,177 @@
+package hal
+
+const ARCH = '5'
+const SHARED_MEM_CURTAIN = 0xE000
+
+// Hardware ports for MOS 6502 Hatvan VM ($FF00 page in Task 0)
+const PORT_TERMOUT = 0xFF00
+const PORT_TERMIN = 0xFF01
+const PORT_REGSTAT = 0xFF02
+const PORT_REGCTRL = 0xFF03
+const PORT_LOGCHAR = 0xFF04
+const PORT_EXIT = 0xFF05
+
+const PORT_DISKDRV = 0xFF10
+const PORT_DISKCMD = 0xFF11
+const PORT_DISKSEC = 0xFF14    // 4 bytes ($FF14..$FF17, Big-Endian)
+const PORT_DISKTARGET = 0xFF18 // 4 bytes ($FF18..$FF1B, [Task:8][Addr:24])
+
+const PORT_TASKFUSE = 0xFF20
+const PORT_DMACMD = 0xFF21
+
+const PORT_DMASRC = 0xFF24        // 4 bytes ($FF24..$FF27, [Task:8][Addr:24])
+const PORT_DMADST = 0xFF28        // 4 bytes ($FF28..$FF2B, [Task:8][Addr:24])
+const PORT_DMACNT = 0xFF2C        // 4 bytes ($FF2C..$FF2F, 32-bit count)
+const PORT_SHAREDCURTAIN = 0xFF30 // 4 bytes ($FF30..$FF33, 32-bit curtain)
+
+const PORT_TASKFLAGSTASK = 0xFF34
+const PORT_TASKFLAGS = 0xFF35
+const PORT_PURGETASKMEM = 0xFF36
+
+func GetSharedCurtain() word {
+	hi := word(vpeekb(PORT_SHAREDCURTAIN + 2))
+	lo := word(vpeekb(PORT_SHAREDCURTAIN + 3))
+	return (hi << 8) | lo
+}
+
+func PutChar(b byte) {
+	vpokeb(PORT_TERMOUT, b)
+}
+
+func GetChar() byte {
+	return vpeekb(PORT_TERMIN)
+}
+
+func LogChar(b byte) {
+	vpokeb(PORT_LOGCHAR, b)
+}
+
+func EnableTimer() {
+	vpokeb(PORT_REGCTRL, 3)
+}
+
+func DisableTimer() {
+	vpokeb(PORT_REGCTRL, 0)
+}
+
+func Exit(code byte) {
+	vpokeb(PORT_EXIT, code)
+	for {
+	}
+}
+
+func DiskTransfer(drive byte, lsn word, task byte, addr word, isWrite byte) byte {
+	vpokeb(PORT_DISKDRV, drive)
+	vpokeb(PORT_DISKSEC, 0)
+	vpokeb(PORT_DISKSEC+1, 0)
+	vpokeb(PORT_DISKSEC+2, byte(lsn>>8))
+	vpokeb(PORT_DISKSEC+3, byte(lsn))
+	vpokeb(PORT_DISKTARGET, task)
+	vpokeb(PORT_DISKTARGET+1, 0)
+	vpokeb(PORT_DISKTARGET+2, byte(addr>>8))
+	vpokeb(PORT_DISKTARGET+3, byte(addr))
+
+	cmd := byte(1) // 1 = Read
+	if isWrite != 0 {
+		cmd = 2 // 2 = Write
+	}
+	vpokeb(PORT_DISKCMD, cmd)
+
+	// Busy-wait for completion
+	for {
+		st := vpeekb(PORT_DISKCMD)
+		if st > 0 {
+			return st
+		}
+	}
+}
+
+func DMACopy(srcTask byte, srcAddr word, dstTask byte, dstAddr word, count word) {
+	DMACopyPage(srcTask, 0, srcAddr, dstTask, 0, dstAddr, count)
+}
+
+func DMACopyPage(srcTask byte, srcPage byte, srcAddr word, dstTask byte, dstPage byte, dstAddr word, count word) {
+	if count == 0 {
+		return
+	}
+	vpokeb(PORT_DMASRC, srcTask)
+	vpokeb(PORT_DMASRC+1, srcPage)
+	vpokeb(PORT_DMASRC+2, byte(srcAddr>>8))
+	vpokeb(PORT_DMASRC+3, byte(srcAddr))
+
+	vpokeb(PORT_DMADST, dstTask)
+	vpokeb(PORT_DMADST+1, dstPage)
+	vpokeb(PORT_DMADST+2, byte(dstAddr>>8))
+	vpokeb(PORT_DMADST+3, byte(dstAddr))
+
+	vpokeb(PORT_DMACNT, 0)
+	vpokeb(PORT_DMACNT+1, 0)
+	vpokeb(PORT_DMACNT+2, byte(count>>8))
+	vpokeb(PORT_DMACNT+3, byte(count))
+
+	vpokeb(PORT_DMACMD, 1)
+
+	// Wait for completion
+	for vpeekb(PORT_DMACMD) == 0 {
+	}
+}
+
+func SwitchTask(task byte) {
+	vpokeb(PORT_TASKFUSE, task)
+}
+
+func LaunchProcess(pid byte, sp word, pc word)
+
+func HasInput() bool {
+	return (vpeekb(PORT_REGSTAT) & 2) != 0
+}
+
+func PurgeTaskMem(task byte) {
+	if task != 0 {
+		vpokeb(PORT_PURGETASKMEM, task)
+	}
+}
+
+func SetTaskFlags(task byte, flags byte) {
+	vpokeb(PORT_TASKFLAGSTASK, task)
+	vpokeb(PORT_TASKFLAGS, flags)
+}
+
+func RBFCall()
+func Sleep()
+func InitRBF(entryPC word)
+func ProcfsCall()
+func InitProcfs(entryPC word)
+func InitUserContext(pid byte, sp word, pc word)
+func FreeUserContext(pid byte)
+
+var ChildCodeStart word
+var paramCR byte
+var initStackBuf [3]byte
+var initZPBuf [2]byte
+
+func SetupChildTask(taskID byte, lineMode byte, entryPC word, binSize word, paramStr *byte, paramLen word) word {
+	paramEnd := word(0xFE00)
+	sp := paramEnd
+	if paramStr != (*byte)(0) && paramLen > 0 {
+		sp -= (paramLen + 1)
+		sp &^= 1
+		DMACopy(0, word(paramStr), taskID, sp, paramLen)
+		paramCR = '\r'
+		DMACopy(0, word(&paramCR), taskID, sp+paramLen, 1)
+	}
+
+	// Store argsPtr (sp) at $002A..$002B in child task zero page
+	initZPBuf[0] = byte(sp)
+	initZPBuf[1] = byte(sp >> 8)
+	DMACopy(0, word(&initZPBuf[0]), taskID, 0x002A, 2)
+
+	// Store initial RTI frame [P=$20, PC_lo, PC_hi] at $01FD..$01FF in child task
+	initStackBuf[0] = 0x20
+	initStackBuf[1] = byte(entryPC)
+	initStackBuf[2] = byte(entryPC >> 8)
+	DMACopy(0, word(&initStackBuf[0]), taskID, 0x01FD, 3)
+
+	ChildCodeStart = 0x0200
+	return sp
+}

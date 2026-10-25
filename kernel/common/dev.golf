@@ -292,6 +292,10 @@ const VERBOSE = 0
 
 var Quiet bool
 
+func SetQuiet() {
+	Quiet = true
+}
+
 // KLog prints a message from the kernel to the log port (stderr)
 // prefixed with "    --  ". If the message does not end in a newline, one is added.
 func KLog(msg *byte) {

@@ -2,16 +2,16 @@ package main
 
 import "sys"
 
-const MAX_WORDS = 48
+const MAX_WORDS = 24
 const MAX_WORD_LEN = 64
-var words [3072]byte // MAX_WORDS * MAX_WORD_LEN
+var words [1536]byte // MAX_WORDS * MAX_WORD_LEN
 var numWords word
 
-const MAX_VARS = 32
+const MAX_VARS = 16
 const MAX_VAR_NAME = 32
 const MAX_VAR_VAL = 128
-var varNames [1024]byte   // MAX_VARS * MAX_VAR_NAME
-var varValues [4096]byte  // MAX_VARS * MAX_VAR_VAL
+var varNames [512]byte    // MAX_VARS * MAX_VAR_NAME
+var varValues [2048]byte  // MAX_VARS * MAX_VAR_VAL
 var varCount word
 var lastStatus byte
 var statusBuf [8]byte
@@ -21,8 +21,8 @@ var scriptBuf [512]byte
 var cmdBuf [256]byte
 var paramBuf [256]byte
 
-const MAX_POS_ARGS = 32
-var posArgs [2048]byte // MAX_POS_ARGS * MAX_WORD_LEN
+const MAX_POS_ARGS = 16
+var posArgs [1024]byte // MAX_POS_ARGS * MAX_WORD_LEN
 var numPosArgs word
 var numBuf [8]byte
 var scriptName [64]byte
@@ -627,22 +627,21 @@ func ExecuteSimpleCommand(cmdStr *byte) byte {
 
 	// Builtin: echo / gecho
 	if strEq(firstWord, (*byte)("echo")) || strEq(firstWord, (*byte)("gecho")) {
-		var outBuf [240]byte
 		olen := word(0)
 		for i := word(1); i < numWords; i++ {
 			if i > 1 && olen < 238 {
-				outBuf[olen] = ' '
+				paramBuf[olen] = ' '
 				olen++
 			}
 			wptr := (*byte)(word(&words[0]) + i*MAX_WORD_LEN)
 			wlen := strLen(wptr)
 			for k := word(0); k < wlen && olen < 238; k++ {
-				outBuf[olen] = peekb(word(wptr) + k)
+				paramBuf[olen] = peekb(word(wptr) + k)
 				olen++
 			}
 		}
-		outBuf[olen] = 0
-		sys.Println(&outBuf[0])
+		paramBuf[olen] = 0
+		sys.Println(&paramBuf[0])
 		lastStatus = 0
 		return 0
 	}
@@ -1208,9 +1207,10 @@ func ExecuteFor(forStr *byte) byte {
 	}
 	bodyStr[blen] = 0
 
-	// 5. Expand items
-	var savedItems [MAX_WORDS * MAX_WORD_LEN]byte
+	// 5. Expand items into packed null-terminated strings in savedItems
+	var savedItems [240]byte
 	totalItems := word(0)
+	savedLen := word(0)
 
 	if hasIn {
 		if hasCmdSub(&itemsStr[0]) {
@@ -1220,20 +1220,36 @@ func ExecuteFor(forStr *byte) byte {
 		} else {
 			TokenizeWords(&itemsStr[0])
 		}
-		totalItems = numWords
-		for i := word(0); i < totalItems*MAX_WORD_LEN; i++ {
-			savedItems[i] = words[i]
+		for i := word(0); i < numWords; i++ {
+			src := (*byte)(word(&words[0]) + i*MAX_WORD_LEN)
+			slen := strLen(src)
+			if savedLen+slen+1 <= 240 {
+				for k := word(0); k <= slen; k++ {
+					savedItems[savedLen] = peekb(word(src) + k)
+					savedLen++
+				}
+				totalItems++
+			}
 		}
 	} else {
-		totalItems = numPosArgs
-		for i := word(0); i < totalItems*MAX_WORD_LEN; i++ {
-			savedItems[i] = posArgs[i]
+		for i := word(0); i < numPosArgs; i++ {
+			src := (*byte)(word(&posArgs[0]) + i*MAX_WORD_LEN)
+			slen := strLen(src)
+			if savedLen+slen+1 <= 240 {
+				for k := word(0); k <= slen; k++ {
+					savedItems[savedLen] = peekb(word(src) + k)
+					savedLen++
+				}
+				totalItems++
+			}
 		}
 	}
 
 	forStatus := byte(0)
+	itemOff := word(0)
 	for i := word(0); i < totalItems; i++ {
-		item := (*byte)(word(&savedItems[0]) + i*MAX_WORD_LEN)
+		item := (*byte)(word(&savedItems[0]) + itemOff)
+		itemOff += strLen(item) + 1
 		SetVar(&varName[0], item)
 		forStatus = ExecuteScript(&bodyStr[0])
 		if loopControl == LOOP_BREAK {
@@ -1434,6 +1450,7 @@ const OP_OR = 3
 func ExecuteScript(script *byte) byte {
 	p := word(script)
 	var segBuf [240]byte
+	var expBuf [240]byte
 	segLen := word(0)
 	nextOp := byte(OP_FIRST)
 	curOp := byte(OP_FIRST)
@@ -1578,7 +1595,6 @@ func ExecuteScript(script *byte) byte {
 					prevStatus = ExecuteWhile((*byte)(sp))
 				} else {
 					if hasCmdSub((*byte)(sp)) {
-						var expBuf [240]byte
 						ExpandCmdSub((*byte)(sp), &expBuf[0], 238)
 						prevStatus = ExecuteSimpleCommand(&expBuf[0])
 					} else {
@@ -1626,7 +1642,6 @@ func ExecuteScript(script *byte) byte {
 				prevStatus = ExecuteWhile((*byte)(sp))
 			} else {
 				if hasCmdSub((*byte)(sp)) {
-					var expBuf [240]byte
 					ExpandCmdSub((*byte)(sp), &expBuf[0], 238)
 					prevStatus = ExecuteSimpleCommand(&expBuf[0])
 				} else {
@@ -1725,15 +1740,14 @@ func main() {
 		}
 
 		// Script file execution
-		var filename [128]byte
 		flen := word(0)
 		for peekb(p) != ' ' && peekb(p) != '\t' && peekb(p) != '\r' && peekb(p) != '\n' && peekb(p) != 0 && flen < 127 {
-			filename[flen] = peekb(p)
+			cmdBuf[flen] = peekb(p)
 			flen++
 			p++
 		}
-		filename[flen] = 0
-		strCopy(&scriptName[0], &filename[0], 64)
+		cmdBuf[flen] = 0
+		strCopy(&scriptName[0], &cmdBuf[0], 64)
 
 		// Parse remaining arguments into $1, $2, $3...
 		for {
@@ -1761,7 +1775,7 @@ func main() {
 			}
 		}
 
-		fd := sys.Open(&filename[0], sys.MODE_READ)
+		fd := sys.Open(&cmdBuf[0], sys.MODE_READ)
 		if fd == 0xFF {
 			sys.PrintErr((*byte)("gsh: cannot open script"))
 			sys.Exit(1)
@@ -1786,20 +1800,19 @@ func main() {
 			if isForLoop((*byte)(sp)) || isWhileLoop((*byte)(sp)) {
 				curTotal := n
 				for !checkHasDone(&lineBuf[0]) {
-					var contBuf [240]byte
-					cn := sys.ReadLn(fd, &contBuf[0], 238)
+					cn := sys.ReadLn(fd, &cmdBuf[0], 238)
 					if cn == 0 {
 						break
 					}
-					for cn > 0 && (contBuf[cn-1] == '\r' || contBuf[cn-1] == '\n') {
+					for cn > 0 && (cmdBuf[cn-1] == '\r' || cmdBuf[cn-1] == '\n') {
 						cn--
 					}
-					contBuf[cn] = 0
+					cmdBuf[cn] = 0
 					if curTotal < 500 {
 						lineBuf[curTotal] = '\n'
 						curTotal++
 						for k := word(0); k < cn && curTotal < 510; k++ {
-							lineBuf[curTotal] = contBuf[k]
+							lineBuf[curTotal] = cmdBuf[k]
 							curTotal++
 						}
 						lineBuf[curTotal] = 0
@@ -1836,20 +1849,19 @@ func main() {
 			curTotal := n
 			for !checkHasDone(&lineBuf[0]) {
 				sys.Print((*byte)("> "))
-				var contBuf [240]byte
-				cn := sys.ReadLn(sys.STDIN, &contBuf[0], 238)
+				cn := sys.ReadLn(sys.STDIN, &cmdBuf[0], 238)
 				if cn == 0 {
 					break
 				}
-				for cn > 0 && (contBuf[cn-1] == '\r' || contBuf[cn-1] == '\n') {
+				for cn > 0 && (cmdBuf[cn-1] == '\r' || cmdBuf[cn-1] == '\n') {
 					cn--
 				}
-				contBuf[cn] = 0
+				cmdBuf[cn] = 0
 				if curTotal < 500 {
 					lineBuf[curTotal] = '\n'
 					curTotal++
 					for k := word(0); k < cn && curTotal < 510; k++ {
-						lineBuf[curTotal] = contBuf[k]
+						lineBuf[curTotal] = cmdBuf[k]
 						curTotal++
 					}
 					lineBuf[curTotal] = 0

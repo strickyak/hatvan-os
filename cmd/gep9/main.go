@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"os"
@@ -29,12 +30,14 @@ var (
 	task2Flag       = flag.String("task2", "", "optional binary (DECB) to load into Task 2")
 	hypercallsFlag  = flag.Bool("hypercalls", false, "enable GOMAR-compatible hypercall traps ($12,$21,<hop>)")
 	printCyclesFlag = flag.Bool("print-cycles", false, "print total CPU cycles executed on finish")
-	curlyEscapeFlag   = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
-	traceTrapFlag     = flag.Bool("trace-trap", false, "print system call trap trace to stderr")
-	sharedCurtainFlag = flag.String("shared-curtain", "0xE000", "shared memory curtain address for tasks 0, 1, and 2")
-	engineFlag        = flag.String("engine", "hatvan", "emulation engine: \"hatvan\" (default), \"flat65280v2\", or \"deep65280v2\"")
-	ramFlag           = flag.String("ram", "512k", "RAM size for deep65280v2: \"128k\", \"512k\", or \"2m\"")
-	embiggenFlag      = flag.Bool("embiggen", false, "enable EMBIGGEN 8KB page mapping at $FF40..$FF47")
+	curlyEscapeFlag      = flag.Bool("curly-escape", true, "escape unusual characters as '{%d}'")
+	traceTrapFlag        = flag.Bool("trace-trap", false, "print system call trap trace to stderr")
+	sharedCurtainFlag    = flag.String("shared-curtain", "0xE000", "shared memory curtain address for tasks 0, 1, and 2")
+	engineFlag           = flag.String("engine", "hatvan", "emulation engine: \"hatvan\" (default), \"flat65280v2\", or \"deep65280v2\"")
+	ramFlag              = flag.String("ram", "512k", "RAM size for deep65280v2: \"128k\", \"512k\", or \"2m\"")
+	embiggenFlag         = flag.Bool("embiggen", false, "enable EMBIGGEN 8KB page mapping at $FF40..$FF47")
+	coco6BitDacOutFlag   = flag.String("coco-6bit-dac-out", "", "write 8000 Hz 8-bit unsigned mono WAV from CoCo 6-bit DAC at $FF20 (assuming 2*0.89 MHz clock)")
+	coco3GimeTimerFlag   = flag.Bool("coco3-gime-timer", false, "enable CoCo 3 GIME programmable timer ($FF90..$FF95)")
 )
 
 func main() {
@@ -109,6 +112,12 @@ func main() {
 	if *embiggenFlag {
 		bus.Embiggen = true
 	}
+	if *coco6BitDacOutFlag != "" {
+		bus.Coco6BitDacEnabled = true
+	}
+	if *coco3GimeTimerFlag {
+		bus.Coco3GimeTimerEnabled = true
+	}
 	bus.CurlyEscape = *curlyEscapeFlag
 	cpu := gep9.NewCPU(bus)
 	cpu.EnableHypercalls = *hypercallsFlag
@@ -151,6 +160,18 @@ func main() {
 		cpu.Reset()
 		if decb.HasExec {
 			cpu.PC = decb.ExecAddr
+		}
+		if (*coco6BitDacOutFlag != "" || *coco3GimeTimerFlag) &&
+			(bus.Engine == gep9.EngineFlat65280v2 || bus.Engine == gep9.EngineDeep65280v2) &&
+			cpu.S == 0 {
+			// Install top-level RTS exit trampoline at $01FC: LDA #$FC; STA $FF87
+			bus.WriteByte(0x01FC, 0x86)
+			bus.WriteByte(0x01FD, 0xFC)
+			bus.WriteByte(0x01FE, 0xB7)
+			bus.WriteByte(0x01FF, 0xFF)
+			bus.WriteByte(0x0200, 0x87)
+			bus.WriteWord(0x01FA, 0x01FC)
+			cpu.S = 0x01FA
 		}
 	}
 
@@ -238,6 +259,11 @@ func main() {
 		bus.StdinChan = stdinCh
 	}
 
+	const cocoDacCpuHz = 1780000 // 2 * 0.89 MHz (CoCo 3)
+	const cocoDacSampleRate = 8000
+	var dacCycleAccum uint64
+	var dacSamples []byte
+
 	flushDisks := func() {
 		diskPaths := []string{*disk0Flag, *disk1Flag, *disk2Flag, *disk3Flag}
 		for i, p := range diskPaths {
@@ -245,6 +271,11 @@ func main() {
 				if err := os.WriteFile(p, bus.Disks[i], 0644); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to flush disk image %q: %v\n", p, err)
 				}
+			}
+		}
+		if *coco6BitDacOutFlag != "" {
+			if err := writeWavFile(*coco6BitDacOutFlag, dacSamples, cocoDacSampleRate); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to write WAV file %q: %v\n", *coco6BitDacOutFlag, err)
 			}
 		}
 	}
@@ -339,6 +370,18 @@ func main() {
 		c := cpu.Step()
 		if c == 0 {
 			break
+		}
+
+		if *coco3GimeTimerFlag {
+			bus.AdvanceGimeTimer(uint64(c))
+		}
+
+		if *coco6BitDacOutFlag != "" {
+			dacCycleAccum += uint64(c) * cocoDacSampleRate
+			for dacCycleAccum >= cocoDacCpuHz {
+				dacCycleAccum -= cocoDacCpuHz
+				dacSamples = append(dacSamples, bus.Dac6BitSample*4)
+			}
 		}
 
 		if cyclesPerTick > 0 && bus.Engine == gep9.EngineHatvan {
@@ -469,4 +512,24 @@ func formatCC(cc byte) string {
 func printRegisters(cpu *gep9.CPU) {
 	fmt.Fprintf(os.Stderr, "CPU State: PC=%04X A=%02X B=%02X X=%04X Y=%04X U=%04X S=%04X DP=%02X CC=%02X %s MD=%02X\n",
 		cpu.PC, cpu.A, cpu.B, cpu.X, cpu.Y, cpu.U, cpu.S, cpu.DP, cpu.CC, formatCC(cpu.CC), cpu.MD)
+}
+
+func writeWavFile(path string, samples []byte, sampleRate uint32) error {
+	dataLen := uint32(len(samples))
+	buf := make([]byte, 44+len(samples))
+	copy(buf[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(buf[4:8], 36+dataLen)
+	copy(buf[8:12], "WAVE")
+	copy(buf[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(buf[16:20], 16)         // PCM fmt chunk size
+	binary.LittleEndian.PutUint16(buf[20:22], 1)          // AudioFormat = 1 (PCM)
+	binary.LittleEndian.PutUint16(buf[22:24], 1)          // NumChannels = 1 (mono)
+	binary.LittleEndian.PutUint32(buf[24:28], sampleRate) // SampleRate = 8000
+	binary.LittleEndian.PutUint32(buf[28:32], sampleRate) // ByteRate = 8000 * 1 * 1
+	binary.LittleEndian.PutUint16(buf[32:34], 1)          // BlockAlign = 1
+	binary.LittleEndian.PutUint16(buf[34:36], 8)          // BitsPerSample = 8 (unsigned)
+	copy(buf[36:40], "data")
+	binary.LittleEndian.PutUint32(buf[40:44], dataLen)
+	copy(buf[44:], samples)
+	return os.WriteFile(path, buf, 0644)
 }

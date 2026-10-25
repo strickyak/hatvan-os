@@ -56,7 +56,20 @@ if [ ! -x "$ASMZ80" ]; then
         exit 1
     fi
 fi
-# 5. Ensure par4asm and par4bundle are built
+
+# 5. Ensure asm6502 assembler is built
+ASM6502="$BUILD_DIR/asm6502"
+if [ ! -x "$ASM6502" ]; then
+    echo "==> Building asm6502..."
+    if [ -n "$MINIGOLF_DIR" ] && [ -d "$MINIGOLF_DIR/cmd/asm6502" ]; then
+        (cd "$MINIGOLF_DIR" && go build -o "$ASM6502" ./cmd/asm6502)
+    else
+        echo "Error: Cannot locate asm6502 source in $MINIGOLF_DIR/cmd/asm6502" >&2
+        exit 1
+    fi
+fi
+
+# 6. Ensure par4asm and par4bundle are built
 PAR4ASM="$BUILD_DIR/par4asm"
 if [ ! -x "$PAR4ASM" ]; then
     echo "==> Building par4asm..."
@@ -105,6 +118,7 @@ for TARGET in $TARGETS; do
     MANAGED_FLAG_K=""
     MANAGED_FLAG_Z=""
     MANAGED_FLAG_C=""
+    MANAGED_FLAG_5=""
     OPT_FLAGS_9=""
     OPT_FLAGS_K=""
     OPT_FLAGS_Z=""
@@ -114,6 +128,7 @@ for TARGET in $TARGETS; do
         MANAGED_FLAG_K="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=64000"
         MANAGED_FLAG_Z="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=8000"
         MANAGED_FLAG_C="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=8000"
+        MANAGED_FLAG_5="-I $CMDS_DIR/managed -D prelude.HEAP_SIZE=8000"
         #yak# OPT_FLAGS_9="-no-slotsharing6809 -no-stackalloc -no-inline -no-leaf-opt6809"
         #yak# OPT_FLAGS_K="-no-stackalloc -no-inline"
         GLOBAL_OFFSET=48128
@@ -170,6 +185,22 @@ for TARGET in $TARGETS; do
     echo "  [Z80]  Assembling with asmz80..."
     "$ASMZ80" -l "$BUILD_DIR/$BASE.z.list" -o "$BUILD_DIR/$BASE.z.decb" "$BUILD_DIR/full_$BASE.z.asm"
     cp -f "$BUILD_DIR/$BASE.z.decb" "$DIR/$BASE.z.decb"
+
+    # --- MOS 6502 Target (*.5.decb) ---
+    echo "  [6502] Compiling with MiniGolf..."
+    "$MINIGOLF" -m=6502 \
+        -global_var_offset 512 \
+        $MANAGED_FLAG_5 \
+        -I "$CMDS_DIR/lib" \
+        -I "$REPO_DIR/kernel/common" \
+        -o "$BUILD_DIR/$BASE.5.asm" \
+        "$SRC"
+
+    cat "$BUILD_DIR/$BASE.5.asm" "$CMDS_DIR/lib/cstart_6502.asm" > "$BUILD_DIR/full_$BASE.5.asm"
+
+    echo "  [6502] Assembling with asm6502..."
+    "$ASM6502" -l "$BUILD_DIR/$BASE.5.list" -o "$BUILD_DIR/$BASE.5.decb" "$BUILD_DIR/full_$BASE.5.asm"
+    cp -f "$BUILD_DIR/$BASE.5.decb" "$DIR/$BASE.5.decb"
 
     # --- RCA CDP1802 Target (*.c.decb) ---
     echo "  [1802] Compiling with MiniGolf (par4)..."

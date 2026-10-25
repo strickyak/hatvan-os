@@ -65,6 +65,29 @@ type Bus struct {
 	TaskFuseArmed  bool
 	TaskFuseTarget uint8
 
+	// CoCo PIA1 & 6-bit DAC ($FF20..$FF23)
+	Coco6BitDacEnabled bool
+	Dac6BitSample      byte
+	Pia1DataA          byte
+	Pia1DdrA           byte
+	Pia1Cra            byte
+	Pia1DataB          byte
+	Pia1DdrB           byte
+	Pia1Crb            byte
+
+	// CoCo 3 GIME Programmable Timer ($FF90..$FF95)
+	Coco3GimeTimerEnabled bool
+	GimeInit0             byte
+	GimeInit1             byte
+	GimeIrqEn             byte
+	GimeIrqPending        byte
+	GimeFirqEn            byte
+	GimeFirqPending       byte
+	GimeTimerMSB          byte
+	GimeTimerLSB          byte
+	GimeTimerReload       uint16
+	GimeTimerCycleAccum   uint64
+
 	// Hatvan DMA Copy ($FF21..$FF2F)
 	DmaStatus  byte   // $FF21: DMA.CmdSt (0=busy, 1=OKAY, >1=error)
 	DmaSrcTask byte   // $FF24: Source task
@@ -121,8 +144,9 @@ type Bus struct {
 	McTimerEn      bool // bit 1: Timer enable
 	McTimerPending bool // bit 7: Interrupt pending
 
-	// Callback when IRQ line state changes
-	OnIRQChanged func(asserted bool)
+	// Callback when IRQ / FIRQ line state changes
+	OnIRQChanged  func(asserted bool)
+	OnFIRQChanged func(asserted bool)
 
 	// Exit / Halt ($FF05, $FF87)
 	ExitCode int
@@ -149,6 +173,7 @@ func NewBus() *Bus {
 		PhysRamMask:         0x7FFFF, // 512KB default
 		ConsoleOut:          os.Stdout,
 		LogOut:              os.Stderr,
+		Pia1Cra:             0x04,
 	}
 	if os.Getenv("HATVAN_EMBIGGEN") == "1" || strings.ToLower(os.Getenv("HATVAN_EMBIGGEN")) == "true" {
 		b.Embiggen = true
@@ -630,12 +655,135 @@ func (b *Bus) evalIRQ() {
 		rie := (b.AciaCtrl & 0x80) != 0
 		aciaIRQ := rdrf && rie
 		clockIRQ := (b.ClockAndStop&0x01 != 0) && (b.ClockAndStop&0x02 != 0)
-		asserted = aciaIRQ || clockIRQ
+		gimeIRQ := b.Coco3GimeTimerEnabled && (b.GimeIrqPending&b.GimeIrqEn) != 0
+		asserted = aciaIRQ || clockIRQ || gimeIRQ
 	} else {
 		asserted = (b.RegStat & b.RegCtrl & 0x03) != 0
 	}
 	if b.OnIRQChanged != nil {
 		b.OnIRQChanged(asserted)
+	}
+}
+
+func (b *Bus) evalFIRQ() {
+	asserted := (b.Engine == EngineFlat65280v2 || b.Engine == EngineDeep65280v2) &&
+		b.Coco3GimeTimerEnabled && (b.GimeFirqPending&b.GimeFirqEn) != 0
+	if b.OnFIRQChanged != nil {
+		b.OnFIRQChanged(asserted)
+	}
+}
+
+func (b *Bus) readPia1(addr uint16) byte {
+	switch addr {
+	case 0xFF20:
+		if (b.Pia1Cra & 0x04) == 0 {
+			return b.Pia1DdrA
+		}
+		return b.Pia1DataA & b.Pia1DdrA
+	case 0xFF21:
+		return b.Pia1Cra
+	case 0xFF22:
+		if (b.Pia1Crb & 0x04) == 0 {
+			return b.Pia1DdrB
+		}
+		return b.Pia1DataB & b.Pia1DdrB
+	case 0xFF23:
+		return b.Pia1Crb
+	}
+	return 0
+}
+
+func (b *Bus) writePia1(addr uint16, val byte) {
+	switch addr {
+	case 0xFF20:
+		if (b.Pia1Cra & 0x04) == 0 {
+			b.Pia1DdrA = val
+		} else {
+			b.Pia1DataA = val
+			b.Dac6BitSample = ((val & b.Pia1DdrA) >> 2) & 0x3F
+		}
+	case 0xFF21:
+		b.Pia1Cra = val
+	case 0xFF22:
+		if (b.Pia1Crb & 0x04) == 0 {
+			b.Pia1DdrB = val
+		} else {
+			b.Pia1DataB = val
+		}
+	case 0xFF23:
+		b.Pia1Crb = val
+	}
+}
+
+func (b *Bus) readGimeTimer(addr uint16) byte {
+	switch addr {
+	case 0xFF90:
+		return b.GimeInit0
+	case 0xFF91:
+		return b.GimeInit1
+	case 0xFF92:
+		v := b.GimeIrqPending & b.GimeIrqEn
+		b.GimeIrqPending = 0
+		b.evalIRQ()
+		return v
+	case 0xFF93:
+		v := b.GimeFirqPending & b.GimeFirqEn
+		b.GimeFirqPending = 0
+		b.evalFIRQ()
+		return v
+	case 0xFF94:
+		return b.GimeTimerMSB
+	case 0xFF95:
+		return b.GimeTimerLSB
+	}
+	return 0
+}
+
+func (b *Bus) writeGimeTimer(addr uint16, val byte) {
+	switch addr {
+	case 0xFF90:
+		b.GimeInit0 = val
+	case 0xFF91:
+		b.GimeInit1 = val
+		b.MmuTask = val & 0x01
+	case 0xFF92:
+		b.GimeIrqEn = val & 0x3F
+		b.evalIRQ()
+	case 0xFF93:
+		b.GimeFirqEn = val & 0x3F
+		b.evalFIRQ()
+	case 0xFF94:
+		b.GimeTimerMSB = val & 0x0F
+		b.GimeTimerReload = (uint16(b.GimeTimerMSB) << 8) | uint16(b.GimeTimerLSB)
+		b.GimeTimerCycleAccum = 0
+	case 0xFF95:
+		b.GimeTimerLSB = val
+		b.GimeTimerReload = (uint16(b.GimeTimerMSB) << 8) | uint16(b.GimeTimerLSB)
+		b.GimeTimerCycleAccum = 0
+	}
+}
+
+// AdvanceGimeTimer advances the CoCo 3 GIME programmable timer by cpuCycles (at 2*0.89 MHz CPU rate).
+func (b *Bus) AdvanceGimeTimer(cpuCycles uint64) {
+	if !b.Coco3GimeTimerEnabled {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	reload := uint64(b.GimeTimerReload)
+	if reload == 0 {
+		return
+	}
+	// At 2*0.89 MHz CPU clock, each 0.89 MHz timer count is 2 CPU cycles.
+	periodCycles := reload * 2
+	b.GimeTimerCycleAccum += cpuCycles
+	if b.GimeTimerCycleAccum >= periodCycles {
+		b.GimeTimerCycleAccum %= periodCycles
+		b.GimeIrqPending |= 0x20
+		b.GimeFirqPending |= 0x20
+		b.evalIRQ()
+		b.evalFIRQ()
 	}
 }
 
@@ -667,6 +815,10 @@ func (b *Bus) readIOFlat(addr uint16) byte {
 	}
 
 	switch {
+	case addr >= 0xFF20 && addr <= 0xFF23 && b.Coco6BitDacEnabled:
+		return b.readPia1(addr)
+	case addr >= 0xFF90 && addr <= 0xFF95 && b.Coco3GimeTimerEnabled:
+		return b.readGimeTimer(addr)
 	case addr >= 0xFF80 && addr <= 0xFF86:
 		return b.readEmuDsk(addr)
 	case addr == 0xFF87:
@@ -682,6 +834,10 @@ func (b *Bus) readIOFlat(addr uint16) byte {
 
 func (b *Bus) writeIOFlat(addr uint16, val byte) {
 	switch {
+	case addr >= 0xFF20 && addr <= 0xFF23 && b.Coco6BitDacEnabled:
+		b.writePia1(addr, val)
+	case addr >= 0xFF90 && addr <= 0xFF95 && b.Coco3GimeTimerEnabled:
+		b.writeGimeTimer(addr, val)
 	case addr >= 0xFF80 && addr <= 0xFF86:
 		b.writeEmuDsk(addr, val)
 	case addr == 0xFF87:
@@ -711,6 +867,10 @@ func (b *Bus) readIODeep(addr uint16) byte {
 		return b.readAciaData()
 	case addr >= 0xFF00 && addr <= 0xFF03:
 		return 0 // PIA0 dummy
+	case addr >= 0xFF20 && addr <= 0xFF23 && b.Coco6BitDacEnabled:
+		return b.readPia1(addr)
+	case addr >= 0xFF90 && addr <= 0xFF95 && b.Coco3GimeTimerEnabled:
+		return b.readGimeTimer(addr)
 	case addr == 0xFF90:
 		return 0 // GIME Init0
 	case addr == 0xFF92 || addr == 0xFF93:
@@ -737,6 +897,10 @@ func (b *Bus) writeIODeep(addr uint16, val byte) {
 	switch {
 	case addr >= 0xFF00 && addr <= 0xFF03:
 		// PIA0 dummy - ignored
+	case addr >= 0xFF20 && addr <= 0xFF23 && b.Coco6BitDacEnabled:
+		b.writePia1(addr, val)
+	case addr >= 0xFF90 && addr <= 0xFF95 && b.Coco3GimeTimerEnabled:
+		b.writeGimeTimer(addr, val)
 	case addr >= 0xFF80 && addr <= 0xFF86:
 		b.writeEmuDsk(addr, val)
 	case addr == 0xFF87:
@@ -1453,6 +1617,15 @@ func (b *Bus) LoadDECBIntoTask(task uint8, d *DECB) {
 	for i := range b.Memory[task] {
 		b.Memory[task][i] = 0
 	}
+	if task == 0 && b.Engine == EngineDeep65280v2 {
+		for i := range b.PhysRam {
+			b.PhysRam[i] = 0
+		}
+		for i := 0; i < 8; i++ {
+			b.MmuRegs[0][i] = byte(0x38 + i)
+			b.MmuRegs[1][i] = byte(0x38 + i)
+		}
+	}
 	for s := 0; s < 8; s++ {
 		b.EmbiggenMMap[task][s] = byte(s)
 	}
@@ -1466,6 +1639,13 @@ func (b *Bus) LoadDECBIntoTask(task uint8, d *DECB) {
 			if b.Engine == EngineMulticomp09Fuzix {
 				if physAddr < uint32(len(b.PhysRam)) {
 					b.PhysRam[physAddr] = v
+				}
+				b.Memory[task][uint16(physAddr)] = v
+			} else if b.Engine == EngineDeep65280v2 {
+				if physAddr < 0x10000 {
+					b.PhysRam[b.deepPhysAddr(uint16(physAddr))] = v
+				} else {
+					b.PhysRam[physAddr&b.PhysRamMask] = v
 				}
 				b.Memory[task][uint16(physAddr)] = v
 			} else if b.Embiggen && physAddr >= 0x10000 {
@@ -1483,6 +1663,9 @@ func (b *Bus) LoadDECBIntoTask(task uint8, d *DECB) {
 		binary.BigEndian.PutUint16(b.Memory[0][0xFFFE:0x10000], d.ExecAddr)
 		if b.Engine == EngineMulticomp09Fuzix {
 			binary.BigEndian.PutUint16(b.PhysRam[0xFFFE:0x10000], d.ExecAddr)
+		} else if b.Engine == EngineDeep65280v2 {
+			b.PhysRam[b.deepPhysAddr(0xFFFE)] = byte(d.ExecAddr >> 8)
+			b.PhysRam[b.deepPhysAddr(0xFFFF)] = byte(d.ExecAddr)
 		}
 	}
 }

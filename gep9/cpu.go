@@ -46,6 +46,7 @@ type CPU struct {
 
 	Halted           bool
 	Waiting          bool
+	SyncWaiting      bool
 	Cycles           uint64
 	ExitCode         int
 	EnableHypercalls bool
@@ -64,6 +65,9 @@ func NewCPU(bus *Bus) *CPU {
 	bus.OnIRQChanged = func(asserted bool) {
 		c.irqLine = asserted
 	}
+	bus.OnFIRQChanged = func(asserted bool) {
+		c.firqLine = asserted
+	}
 	bus.OnHalt = func(exitCode int) {
 		c.Halted = true
 		c.ExitCode = exitCode
@@ -79,6 +83,7 @@ func (c *CPU) Reset() {
 	c.Halted = false
 	c.ExitCode = 0
 	c.Waiting = false
+	c.SyncWaiting = false
 	c.PC = c.Bus.ReadWord(0xFFFE)
 }
 
@@ -128,6 +133,10 @@ func (c *CPU) Step() int {
 		return 0
 	}
 
+	if c.SyncWaiting && (c.firqLine || c.irqLine) {
+		c.SyncWaiting = false
+	}
+
 	// Check FIRQ
 	if c.firqLine && (c.CC&FlagF) == 0 {
 		wasWaiting := c.Waiting
@@ -154,7 +163,7 @@ func (c *CPU) Step() int {
 		return 19
 	}
 
-	if c.Waiting {
+	if c.Waiting || c.SyncWaiting {
 		c.Cycles++
 		return 1
 	}

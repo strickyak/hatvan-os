@@ -12,6 +12,7 @@ ASM68K      ?= $(BUILD_DIR)/asm68k
 ASM6809     ?= $(BUILD_DIR)/asm6809
 ASMZ80      ?= $(BUILD_DIR)/asmz80
 ASM1802     ?= $(BUILD_DIR)/asm1802
+ASM6502     ?= $(BUILD_DIR)/asm6502
 PAR4ASM     ?= $(BUILD_DIR)/par4asm
 PAR4BUNDLE  ?= $(BUILD_DIR)/par4bundle
 LWASM       ?= lwasm
@@ -24,20 +25,24 @@ VM_6809     := $(BUILD_DIR)/gep9
 VM_68K      := $(BUILD_DIR)/gepk
 VM_Z80      := $(BUILD_DIR)/gepz
 VM_1802     := $(BUILD_DIR)/gepc
+VM_6502     := $(BUILD_DIR)/gep5
 
 # Kernel Targets
 KERNEL_6809 := $(BUILD_DIR)/kernel_6809.decb
 KERNEL_68K  := $(BUILD_DIR)/kernel_68k.srec
 KERNEL_Z80  := $(BUILD_DIR)/kernel_z80.decb
 KERNEL_1802 := $(BUILD_DIR)/kernel_1802.decb
+KERNEL_6502 := $(BUILD_DIR)/kernel_6502.decb
 RBF_6809    := $(BUILD_DIR)/rbf_6809.decb
 RBF_68K     := $(BUILD_DIR)/rbf_68k.srec
 RBF_Z80     := $(BUILD_DIR)/rbf_z80.decb
 RBF_1802    := $(BUILD_DIR)/rbf_1802.decb
+RBF_6502    := $(BUILD_DIR)/rbf_6502.decb
 PROCFS_6809 := $(BUILD_DIR)/procfs_6809.decb
 PROCFS_68K  := $(BUILD_DIR)/procfs_68k.srec
 PROCFS_Z80  := $(BUILD_DIR)/procfs_z80.decb
 PROCFS_1802 := $(BUILD_DIR)/procfs_1802.decb
+PROCFS_6502 := $(BUILD_DIR)/procfs_6502.decb
 
 # Command Targets
 CMDS_6809   := $(BUILD_DIR)/echo.mod $(BUILD_DIR)/testcmd.mod $(BUILD_DIR)/testdecb.decb $(BUILD_DIR)/cat.mod $(BUILD_DIR)/sh.mod
@@ -47,6 +52,7 @@ GOLF_CMDS   := gecho gcat gdir gdump gsh gsh2 gtest gexpr gtrue gfalse gseektest
 CMDS_GOLF_9 := $(patsubst %,$(REPO_DIR)/cmds/%.9.decb,$(GOLF_CMDS))
 CMDS_GOLF_K := $(patsubst %,$(REPO_DIR)/cmds/%.k.decb,$(GOLF_CMDS))
 CMDS_GOLF_Z := $(patsubst %,$(REPO_DIR)/cmds/%.z.decb,$(GOLF_CMDS))
+CMDS_GOLF_5 := $(patsubst %,$(REPO_DIR)/cmds/%.5.decb,$(GOLF_CMDS))
 GOLF_CMDS_C := gecho gcat gdir gdump gsh gtrue gfalse gseektest clif
 CMDS_GOLF_C := $(patsubst %,$(REPO_DIR)/cmds/%.c.decb,$(GOLF_CMDS_C))
 
@@ -61,12 +67,13 @@ M6809_SRCS  := $(wildcard $(REPO_DIR)/kernel/m6809/*.golf) $(REPO_DIR)/kernel/m6
 M68K_SRCS   := $(wildcard $(REPO_DIR)/kernel/m68k/*.golf) $(REPO_DIR)/kernel/m68k/trap_m68k.s
 Z80_SRCS    := $(wildcard $(REPO_DIR)/kernel/z80/*.golf) $(REPO_DIR)/kernel/z80/cstart_z80.asm $(REPO_DIR)/kernel/z80/trap_z80.asm
 C1802_SRCS  := $(wildcard $(REPO_DIR)/kernel/c/*.golf) $(REPO_DIR)/kernel/c/par4vmc.asm
+M6502_SRCS  := $(wildcard $(REPO_DIR)/kernel/m6502/*.golf) $(REPO_DIR)/kernel/m6502/cstart_m6502.asm $(REPO_DIR)/kernel/m6502/trap_m6502.asm
 
 .PHONY: all vms tools kernels cmds disk test test-interactive test-z80 test-quick clean
 
 all: $(BUILD_DIR) vms kernels cmds disk
 
-tools: $(MINIGOLF) $(ASM68K) $(ASM6809) $(ASMZ80) $(ASM1802) $(PAR4ASM) $(PAR4BUNDLE)
+tools: $(MINIGOLF) $(ASM68K) $(ASM6809) $(ASMZ80) $(ASM1802) $(ASM6502) $(PAR4ASM) $(PAR4BUNDLE)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -87,6 +94,9 @@ $(ASMZ80): | $(BUILD_DIR)
 $(ASM1802): | $(BUILD_DIR)
 	cd $(MINIGOLF_DIR) && $(GO) build -o $(ASM1802) ./cmd/asm1802
 
+$(ASM6502): | $(BUILD_DIR)
+	cd $(MINIGOLF_DIR) && $(GO) build -o $(ASM6502) ./cmd/asm6502
+
 $(PAR4ASM): | $(BUILD_DIR)
 	cd $(MINIGOLF_DIR) && $(GO) build -o $(PAR4ASM) ./cmd/par4asm
 
@@ -94,7 +104,7 @@ $(PAR4BUNDLE): $(shell find $(REPO_DIR)/cmd/par4bundle -type f -name '*.go') | $
 	$(GO) build -o $(PAR4BUNDLE) ./cmd/par4bundle
 
 # --- Emulators ---
-vms: $(VM_6809) $(VM_68K) $(VM_Z80) $(VM_1802)
+vms: $(VM_6809) $(VM_68K) $(VM_Z80) $(VM_1802) $(VM_6502)
 
 $(VM_6809): $(shell find $(REPO_DIR)/cmd/gep9 $(REPO_DIR)/gep9 -type f -name '*.go') | $(BUILD_DIR)
 	$(GO) build -o $@ ./cmd/gep9
@@ -108,8 +118,11 @@ $(VM_Z80): $(shell find $(REPO_DIR)/cmd/gepz $(REPO_DIR)/gepz -type f -name '*.g
 $(VM_1802): $(shell find $(REPO_DIR)/cmd/gepc $(REPO_DIR)/gepc -type f -name '*.go') | $(BUILD_DIR)
 	$(GO) build -o $@ ./cmd/gepc
 
+$(VM_6502): $(shell find $(REPO_DIR)/cmd/gep5 $(REPO_DIR)/gep5 -type f -name '*.go') | $(BUILD_DIR)
+	$(GO) build -o $@ ./cmd/gep5
+
 # --- Kernels & Drivers ---
-kernels: $(KERNEL_6809) $(KERNEL_68K) $(KERNEL_Z80) $(KERNEL_1802) $(RBF_6809) $(RBF_68K) $(RBF_Z80) $(RBF_1802) $(PROCFS_6809) $(PROCFS_68K) $(PROCFS_Z80) $(PROCFS_1802)
+kernels: $(KERNEL_6809) $(KERNEL_68K) $(KERNEL_Z80) $(KERNEL_1802) $(KERNEL_6502) $(RBF_6809) $(RBF_68K) $(RBF_Z80) $(RBF_1802) $(RBF_6502) $(PROCFS_6809) $(PROCFS_68K) $(PROCFS_Z80) $(PROCFS_1802) $(PROCFS_6502)
 
 # M6809 Kernel
 $(BUILD_DIR)/kernel_6809.asm: $(COMMON_SRCS) $(KLIB_SRCS) $(wildcard $(REPO_DIR)/kernel/m6809/*.golf) $(MINIGOLF) | $(BUILD_DIR)
@@ -304,11 +317,58 @@ $(BUILD_DIR)/procfs_1802.p4p: $(BUILD_DIR)/procfs_1802.p4s $(PAR4ASM) | $(BUILD_
 $(BUILD_DIR)/procfs_1802.decb: $(BUILD_DIR)/procfs_1802.p4p $(BUILD_DIR)/par4vmc.bin $(PAR4BUNDLE) | $(BUILD_DIR)
 	$(PAR4BUNDLE) -vm $(BUILD_DIR)/par4vmc.bin -p4p $< -entry 0x0020 -base 0x2000 -o $@
 
+# M6502 Kernel (Task 0)
+$(BUILD_DIR)/kernel_6502.asm: $(COMMON_SRCS) $(KLIB_SRCS) $(wildcard $(REPO_DIR)/kernel/m6502/*.golf) $(MINIGOLF) | $(BUILD_DIR)
+	$(MINIGOLF) -m=6502 \
+		-I $(REPO_DIR)/kernel/m6502 \
+		-I $(REPO_DIR)/kernel/common \
+		-I $(REPO_DIR)/kernel/klib \
+		-o $@ \
+		$(REPO_DIR)/kernel/common/main.golf
+
+$(BUILD_DIR)/full_6502.asm: $(REPO_DIR)/kernel/m6502/cstart_m6502.asm $(BUILD_DIR)/kernel_6502.asm $(REPO_DIR)/kernel/m6502/trap_m6502.asm | $(BUILD_DIR)
+	cat $(REPO_DIR)/kernel/m6502/cstart_m6502.asm $(BUILD_DIR)/kernel_6502.asm $(REPO_DIR)/kernel/m6502/trap_m6502.asm > $@
+
+$(BUILD_DIR)/kernel_6502.decb: $(BUILD_DIR)/full_6502.asm $(ASM6502) | $(BUILD_DIR)
+	$(ASM6502) -l $(BUILD_DIR)/kernel_6502.list -o $@ $<
+
+# M6502 RBF Driver (Task 1)
+$(BUILD_DIR)/rbf_6502.asm: $(REPO_DIR)/drivers/rbf/main.golf $(COMMON_SRCS) $(MINIGOLF) | $(BUILD_DIR)
+	$(MINIGOLF) -m=6502 \
+		-global_var_offset 512 \
+		-I $(REPO_DIR)/kernel/m6502 \
+		-I $(REPO_DIR)/kernel/common \
+		-I $(REPO_DIR)/kernel/klib \
+		-o $@ \
+		$<
+
+$(BUILD_DIR)/full_rbf_6502.asm: $(BUILD_DIR)/rbf_6502.asm $(REPO_DIR)/drivers/rbf/cstart_rbf_m6502.asm | $(BUILD_DIR)
+	cat $(BUILD_DIR)/rbf_6502.asm $(REPO_DIR)/drivers/rbf/cstart_rbf_m6502.asm > $@
+
+$(BUILD_DIR)/rbf_6502.decb: $(BUILD_DIR)/full_rbf_6502.asm $(ASM6502) | $(BUILD_DIR)
+	$(ASM6502) -l $(BUILD_DIR)/rbf_6502.list -o $@ $<
+
+# M6502 PROCFS Driver (Task 2)
+$(BUILD_DIR)/procfs_6502.asm: $(REPO_DIR)/drivers/procfs/main.golf $(COMMON_SRCS) $(MINIGOLF) | $(BUILD_DIR)
+	$(MINIGOLF) -m=6502 \
+		-global_var_offset 512 \
+		-I $(REPO_DIR)/kernel/m6502 \
+		-I $(REPO_DIR)/kernel/common \
+		-I $(REPO_DIR)/kernel/klib \
+		-o $@ \
+		$<
+
+$(BUILD_DIR)/full_procfs_6502.asm: $(BUILD_DIR)/procfs_6502.asm $(REPO_DIR)/drivers/procfs/cstart_procfs_m6502.asm | $(BUILD_DIR)
+	cat $(BUILD_DIR)/procfs_6502.asm $(REPO_DIR)/drivers/procfs/cstart_procfs_m6502.asm > $@
+
+$(BUILD_DIR)/procfs_6502.decb: $(BUILD_DIR)/full_procfs_6502.asm $(ASM6502) | $(BUILD_DIR)
+	$(ASM6502) -l $(BUILD_DIR)/procfs_6502.list -o $@ $<
+
 # --- Userland Commands ---
-cmds: $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(CMDS_GOLF_Z) $(CMDS_GOLF_C)
+cmds: $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(CMDS_GOLF_Z) $(CMDS_GOLF_C) $(CMDS_GOLF_5)
 
 # MiniGolf Userland Commands
-$(REPO_DIR)/cmds/%.9.decb $(REPO_DIR)/cmds/%.k.decb $(REPO_DIR)/cmds/%.z.decb: $(REPO_DIR)/cmds/%.golf $(REPO_DIR)/cmds/lib/sys.golf $(REPO_DIR)/cmds/lib/cstart_6809.asm $(REPO_DIR)/cmds/lib/cstart_68k.s $(REPO_DIR)/cmds/lib/cstart_z80.asm $(BUILD_CMD_SH) $(MINIGOLF) $(ASM68K) $(ASM6809) $(ASMZ80) $(PAR4ASM) $(PAR4BUNDLE) $(BUILD_DIR)/par4vmc.bin | $(BUILD_DIR)
+$(REPO_DIR)/cmds/%.9.decb $(REPO_DIR)/cmds/%.k.decb $(REPO_DIR)/cmds/%.z.decb $(REPO_DIR)/cmds/%.5.decb: $(REPO_DIR)/cmds/%.golf $(REPO_DIR)/cmds/lib/sys.golf $(REPO_DIR)/cmds/lib/cstart_6809.asm $(REPO_DIR)/cmds/lib/cstart_68k.s $(REPO_DIR)/cmds/lib/cstart_z80.asm $(REPO_DIR)/cmds/lib/cstart_6502.asm $(BUILD_CMD_SH) $(MINIGOLF) $(ASM68K) $(ASM6809) $(ASMZ80) $(ASM6502) $(PAR4ASM) $(PAR4BUNDLE) $(BUILD_DIR)/par4vmc.bin | $(BUILD_DIR)
 	$(BUILD_CMD_SH) $<
 
 $(CMDS_GOLF_C): $(REPO_DIR)/cmds/%.c.decb: $(REPO_DIR)/cmds/%.golf $(BUILD_CMD_SH) $(MINIGOLF) $(PAR4ASM) $(PAR4BUNDLE) $(BUILD_DIR)/par4vmc.bin | $(BUILD_DIR)
@@ -373,7 +433,7 @@ $(BUILD_DIR)/shz.decb: $(REPO_DIR)/cmds/shz.asm $(ASMZ80) | $(BUILD_DIR)
 # --- OS-9 Disk Images ---
 disk: $(DISK_IMAGE) $(TEST_DISK)
 
-$(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(CMDS_GOLF_Z) $(CMDS_GOLF_C) $(REPO_DIR)/cmds/os9-6809-level1.zip | $(BUILD_DIR)
+$(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(CMDS_GOLF_Z) $(CMDS_GOLF_C) $(CMDS_GOLF_5) $(REPO_DIR)/cmds/os9-6809-level1.zip | $(BUILD_DIR)
 	rm -f $@ $(TEST_DISK)
 	$(OS9) format -e -n'HATVAN' -l'40000' $@
 	$(OS9) makdir $@,Cmds9
@@ -475,6 +535,28 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtrue.c.decb $@,CmdsC/TRUE
 	$(OS9) copy -r $(REPO_DIR)/cmds/gfalse.c.decb $@,CmdsC/FALSE
 	$(OS9) copy -r $(REPO_DIR)/cmds/clif.c.decb $@,CmdsC/CLIF
+	$(OS9) makdir $@,Cmds5
+	$(OS9) copy -r $(REPO_DIR)/cmds/gsh.5.decb $@,Cmds5/SH
+	$(OS9) copy -r $(REPO_DIR)/cmds/gecho.5.decb $@,Cmds5/ECHO
+	$(OS9) copy -r $(REPO_DIR)/cmds/gcat.5.decb $@,Cmds5/CAT
+	$(OS9) copy -r $(REPO_DIR)/cmds/gdir.5.decb $@,Cmds5/DIR
+	$(OS9) copy -r $(REPO_DIR)/cmds/gdump.5.decb $@,Cmds5/DUMP
+	$(OS9) copy -r $(REPO_DIR)/cmds/gecho.5.decb $@,Cmds5/GECHO
+	$(OS9) copy -r $(REPO_DIR)/cmds/gcat.5.decb $@,Cmds5/GCAT
+	$(OS9) copy -r $(REPO_DIR)/cmds/gdir.5.decb $@,Cmds5/GDIR
+	$(OS9) copy -r $(REPO_DIR)/cmds/gdump.5.decb $@,Cmds5/GDUMP
+	$(OS9) copy -r $(REPO_DIR)/cmds/gsh.5.decb $@,Cmds5/GSH
+	$(OS9) copy -r $(REPO_DIR)/cmds/gsh2.5.decb $@,Cmds5/GSH2
+	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.5.decb $@,Cmds5/GTEST
+	$(OS9) copy -r $(REPO_DIR)/cmds/gexpr.5.decb $@,Cmds5/GEXPR
+	$(OS9) copy -r $(REPO_DIR)/cmds/gtest.5.decb $@,Cmds5/TEST
+	$(OS9) copy -r $(REPO_DIR)/cmds/gexpr.5.decb $@,Cmds5/EXPR
+	$(OS9) copy -r $(REPO_DIR)/cmds/gtrue.5.decb $@,Cmds5/GTRUE
+	$(OS9) copy -r $(REPO_DIR)/cmds/gfalse.5.decb $@,Cmds5/GFALSE
+	$(OS9) copy -r $(REPO_DIR)/cmds/gtrue.5.decb $@,Cmds5/TRUE
+	$(OS9) copy -r $(REPO_DIR)/cmds/gfalse.5.decb $@,Cmds5/FALSE
+	$(OS9) copy -r $(REPO_DIR)/cmds/gseektest.5.decb $@,Cmds5/GSEEKTEST
+	$(OS9) copy -r $(REPO_DIR)/cmds/clif.5.decb $@,Cmds5/CLIF
 	$(OS9) copy -r $(REPO_DIR)/testdata/test_expr.sh $@,test_expr.sh
 	$(OS9) copy -r $(REPO_DIR)/testdata/test_while.sh $@,test_while.sh
 	$(OS9) copy -r $(REPO_DIR)/testdata/triangle.sh $@,triangle.sh
@@ -488,6 +570,11 @@ test: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_68K) -disk0=$(DISK_IMAGE) -input="exit\n" $(KERNEL_68K)
 	$(VM_Z80) -disk0=$(DISK_IMAGE) -input="exit\n" $(KERNEL_Z80)
 	$(VM_1802) -tick-hz=0 -disk0=$(DISK_IMAGE) -task1=$(RBF_1802) -task2=$(PROCFS_1802) -input="exit\n" $(KERNEL_1802)
+	$(VM_6502) -disk0=$(DISK_IMAGE) -task1=$(RBF_6502) -task2=$(PROCFS_6502) -input="exit\n" $(KERNEL_6502)
+
+test-6502: $(BUILD_DIR) vms kernels cmds disk
+	$(GO) test -count=1 ./gep5/...
+	$(VM_6502) -disk0=$(DISK_IMAGE) -task1=$(RBF_6502) -task2=$(PROCFS_6502) -input="dir\ndir e\nGECHO hello from 6502\nGCAT /proc/i\nGSEEKTEST\ngsh test_expr.sh\ngsh test_while.sh\ngsh triangle.sh\nexit\n" $(KERNEL_6502)
 
 test-interactive: $(BUILD_DIR) vms kernels cmds disk
 	$(VM_6809) --disk0=$(DISK_IMAGE) --input="help\npwd\npwx\nECHO hello from 6809 userspace\nECHO redirection works on 6809 > /d0/redir9.txt\nCAT /d0/redir9.txt\nGECHO hello from gecho 6809\nGCAT /d0/redir9.txt\nGDIR\nGDUMP /Cmds9/ECHO\nGSEEKTEST\nSH\nhelp\nECHO nested shell 6809\nCAT /nonexistent\nECHO background 6809 &\nCAT /proc/p\nexit\nCAT /nonexistent\nexit\n" $(KERNEL_6809)
@@ -506,4 +593,4 @@ test-quick:
 clean:
 	@mkdir -p $(BUILD_DIR)
 	find $(BUILD_DIR) -mindepth 1 -delete 2>/dev/null || rm -rf $(BUILD_DIR)/*
-	rm -f $(REPO_DIR)/cmds/*.9.decb $(REPO_DIR)/cmds/*.k.decb $(REPO_DIR)/cmds/*.z.decb $(REPO_DIR)/cmds/*.c.decb
+	rm -f $(REPO_DIR)/cmds/*.9.decb $(REPO_DIR)/cmds/*.k.decb $(REPO_DIR)/cmds/*.z.decb $(REPO_DIR)/cmds/*.c.decb $(REPO_DIR)/cmds/*.5.decb
