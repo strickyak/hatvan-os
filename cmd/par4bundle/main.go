@@ -43,7 +43,9 @@ func writeChunk(w io.Writer, tag byte, length uint16, addr uint16, data []byte) 
 }
 
 func main() {
-	vmFlag := flag.String("vm", "", "Path to 1802 VM binary (par4vmc.bin/decb)")
+	vmFlag := flag.String("vm", "", "Path to VM binary (par4vmc.bin/par4vmz.bin)")
+	vmBaseFlag := flag.String("vm-base", "0x0000", "VM binary load address when raw (default 0x0000)")
+	archFlag := flag.String("arch", "c", "Hatvan architecture char for 0xFD magic header (default 'c')")
 	p4pFlag := flag.String("p4p", "", "Path to Par4 bytecode binary (*.p4p)")
 	outFlag := flag.String("o", "", "Output DECB binary (*.decb)")
 	entryFlag := flag.String("entry", "0x0000", "Execution entry address (hex or dec)")
@@ -53,7 +55,13 @@ func main() {
 	flag.Parse()
 
 	if *p4pFlag == "" || *outFlag == "" {
-		fmt.Fprintf(os.Stderr, "Usage: par4bundle -p4p <prog.p4p> [-vm <par4vmc.bin>] [-p4s <kernel.p4s>] -o <out.decb> [-entry 0x0000] [-base 0x2000]\n")
+		fmt.Fprintf(os.Stderr, "Usage: par4bundle -p4p <prog.p4p> [-vm <par4vm.bin>] [-vm-base 0x0000] [-arch c] [-p4s <kernel.p4s>] -o <out.decb> [-entry 0x0000] [-base 0x2000]\n")
+		os.Exit(1)
+	}
+
+	vmBaseAddr, err := parseHexOrDec(*vmBaseFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Invalid vm-base address: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -82,14 +90,18 @@ func main() {
 	}
 	defer outFile.Close()
 
-	// 1. Write Hatvan Executable Magic marker: Tag 0xFD, length 0, addr = ('x' << 8) | 'c'
-	magicAddr := (uint16('x') << 8) | uint16('c')
+	// 1. Write Hatvan Executable Magic marker: Tag 0xFD, length 0, addr = ('x' << 8) | arch
+	archChar := byte('c')
+	if len(*archFlag) > 0 {
+		archChar = (*archFlag)[0]
+	}
+	magicAddr := (uint16('x') << 8) | uint16(archChar)
 	if err := writeChunk(outFile, 0xFD, 0, magicAddr, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing magic: %v\n", err)
 		os.Exit(1)
 	}
 
-	// 2. If VM binary specified, load and write as Block 0 (addr 0x0000)
+	// 2. If VM binary specified, load and write as Block 0
 	if *vmFlag != "" {
 		vmData, err := os.ReadFile(*vmFlag)
 		if err != nil {
@@ -133,13 +145,13 @@ func main() {
 					os.Exit(1)
 				}
 			} else {
-				if err := writeChunk(outFile, 0x00, uint16(len(vmData)), 0x0000, vmData); err != nil {
+				if err := writeChunk(outFile, 0x00, uint16(len(vmData)), vmBaseAddr, vmData); err != nil {
 					fmt.Fprintf(os.Stderr, "Error writing VM chunk: %v\n", err)
 					os.Exit(1)
 				}
 			}
 		} else {
-			if err := writeChunk(outFile, 0x00, uint16(len(vmData)), 0x0000, vmData); err != nil {
+			if err := writeChunk(outFile, 0x00, uint16(len(vmData)), vmBaseAddr, vmData); err != nil {
 				fmt.Fprintf(os.Stderr, "Error writing VM chunk: %v\n", err)
 				os.Exit(1)
 			}

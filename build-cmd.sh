@@ -92,6 +92,11 @@ if [ ! -x "$PAR4BUNDLE" ]; then
     echo "==> Building par4bundle..."
     (cd "$REPO_DIR" && go build -o "$PAR4BUNDLE" ./cmd/par4bundle)
 fi
+PAR4VMZ="$BUILD_DIR/par4vmz.bin"
+if [ ! -f "$PAR4VMZ" ] || [ "$CMDS_DIR/lib/par4vmz.asm" -nt "$PAR4VMZ" ]; then
+    echo "==> Assembling par4vmz.bin..."
+    "$ASMZ80" -format raw -l "$BUILD_DIR/par4vmz.list" -o "$PAR4VMZ" "$CMDS_DIR/lib/par4vmz.asm"
+fi
 
 SREC2DECB="$REPO_DIR/scripts/srec2decb.py"
 
@@ -185,20 +190,22 @@ for TARGET in $TARGETS; do
     cp -f "$BUILD_DIR/$BASE.k.decb" "$DIR/$BASE.k.decb"
 
     # --- Zilog Z80 Target (*.z.decb) ---
-    echo "  [Z80]  Compiling with MiniGolf..."
-    "$MINIGOLF" -m=z80 \
-        $MANAGED_FLAG_Z $OPT_FLAGS_Z \
-        -I "$CMDS_DIR/lib" \
-        -I "$REPO_DIR/kernel/common" \
-        -o "$BUILD_DIR/$BASE.z.asm" \
-        "$SRC"
+    if [ "$BASE" != "gsh2" ]; then
+        echo "  [Z80]  Compiling with MiniGolf..."
+        "$MINIGOLF" -m=z80 \
+            $MANAGED_FLAG_Z $OPT_FLAGS_Z \
+            -I "$CMDS_DIR/lib" \
+            -I "$REPO_DIR/kernel/common" \
+            -o "$BUILD_DIR/$BASE.z.asm" \
+            "$SRC"
 
-    cat "$CMDS_DIR/lib/cstart_z80.asm" "$BUILD_DIR/$BASE.z.asm" > "$BUILD_DIR/full_$BASE.z.asm"
-    echo "    end start" >> "$BUILD_DIR/full_$BASE.z.asm"
+        cat "$CMDS_DIR/lib/cstart_z80.asm" "$BUILD_DIR/$BASE.z.asm" > "$BUILD_DIR/full_$BASE.z.asm"
+        echo "    end start" >> "$BUILD_DIR/full_$BASE.z.asm"
 
-    echo "  [Z80]  Assembling with asmz80..."
-    "$ASMZ80" -l "$BUILD_DIR/$BASE.z.list" -o "$BUILD_DIR/$BASE.z.decb" "$BUILD_DIR/full_$BASE.z.asm"
-    cp -f "$BUILD_DIR/$BASE.z.decb" "$DIR/$BASE.z.decb"
+        echo "  [Z80]  Assembling with asmz80..."
+        "$ASMZ80" -l "$BUILD_DIR/$BASE.z.list" -o "$BUILD_DIR/$BASE.z.decb" "$BUILD_DIR/full_$BASE.z.asm"
+        cp -f "$BUILD_DIR/$BASE.z.decb" "$DIR/$BASE.z.decb"
+    fi
 
     # --- MOS 6502 Target (*.5.decb) ---
     echo "  [6502] Compiling with MiniGolf..."
@@ -252,6 +259,15 @@ for TARGET in $TARGETS; do
             -o "$BUILD_DIR/$BASE.c.decb" \
             -entry 0x0020 -base 0x2000
         cp -f "$BUILD_DIR/$BASE.c.decb" "$DIR/$BASE.c.decb"
+
+        if [ "$BASE" = "gsh2" ]; then
+            echo "  [Z80]  Bundling Par4 bytecode with par4vmz.bin..."
+            "$PAR4BUNDLE" -arch z -vm "$BUILD_DIR/par4vmz.bin" -vm-base 0x0500 \
+                -p4p "$BUILD_DIR/$BASE.c.p4p" \
+                -o "$BUILD_DIR/$BASE.z.decb" \
+                -entry 0x0500 -base 0x2000
+            cp -f "$BUILD_DIR/$BASE.z.decb" "$DIR/$BASE.z.decb"
+        fi
 
         SIZE_C=$(wc -c < "$DIR/$BASE.c.decb" | tr -d ' ')
         C_MSG=", and $DIR/$BASE.c.decb ($SIZE_C bytes)"

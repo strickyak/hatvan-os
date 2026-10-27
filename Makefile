@@ -281,6 +281,10 @@ $(BUILD_DIR)/procfs_z80.decb: $(BUILD_DIR)/full_procfs_z80.asm $(ASMZ80) | $(BUI
 $(BUILD_DIR)/par4vmc.bin: $(REPO_DIR)/kernel/c/par4vmc.asm $(ASM1802) | $(BUILD_DIR)
 	$(ASM1802) -format raw -l $(BUILD_DIR)/par4vmc.list -o $@ $<
 
+# Z80 Userland Par4 VM Runtime
+$(BUILD_DIR)/par4vmz.bin: $(REPO_DIR)/cmds/lib/par4vmz.asm $(ASMZ80) | $(BUILD_DIR)
+	$(ASMZ80) -format raw -l $(BUILD_DIR)/par4vmz.list -o $@ $<
+
 # 1802 Kernel (Task 0)
 $(BUILD_DIR)/kernel_1802.p4s: $(COMMON_SRCS) $(KLIB_SRCS) $(C1802_SRCS) $(MINIGOLF) | $(BUILD_DIR)
 	$(MINIGOLF) -m par4 \
@@ -431,10 +435,10 @@ $(BUILD_DIR)/procfs_8086.decb: $(BUILD_DIR)/full_procfs_8086.asm $(ASM8086) | $(
 cmds: $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K) $(CMDS_GOLF_Z) $(CMDS_GOLF_C) $(CMDS_GOLF_5) $(CMDS_GOLF_0)
 
 # MiniGolf Userland Commands
-$(REPO_DIR)/cmds/%.9.decb $(REPO_DIR)/cmds/%.k.decb $(REPO_DIR)/cmds/%.z.decb $(REPO_DIR)/cmds/%.5.decb $(REPO_DIR)/cmds/%.0.decb: $(REPO_DIR)/cmds/%.golf $(REPO_DIR)/cmds/lib/sys.golf $(REPO_DIR)/cmds/lib/cstart_6809.asm $(REPO_DIR)/cmds/lib/cstart_68k.s $(REPO_DIR)/cmds/lib/cstart_z80.asm $(REPO_DIR)/cmds/lib/cstart_6502.asm $(REPO_DIR)/cmds/lib/cstart_8086.asm $(BUILD_CMD_SH) $(MINIGOLF) $(ASM68K) $(ASM6809) $(ASMZ80) $(ASM6502) $(ASM8086) $(PAR4ASM) $(PAR4BUNDLE) $(BUILD_DIR)/par4vmc.bin | $(BUILD_DIR)
+$(REPO_DIR)/cmds/%.9.decb $(REPO_DIR)/cmds/%.k.decb $(REPO_DIR)/cmds/%.z.decb $(REPO_DIR)/cmds/%.5.decb $(REPO_DIR)/cmds/%.0.decb: $(REPO_DIR)/cmds/%.golf $(REPO_DIR)/cmds/lib/sys.golf $(REPO_DIR)/cmds/lib/cstart_6809.asm $(REPO_DIR)/cmds/lib/cstart_68k.s $(REPO_DIR)/cmds/lib/cstart_z80.asm $(REPO_DIR)/cmds/lib/par4vmz.asm $(REPO_DIR)/cmds/lib/cstart_6502.asm $(REPO_DIR)/cmds/lib/cstart_8086.asm $(BUILD_CMD_SH) $(MINIGOLF) $(ASM68K) $(ASM6809) $(ASMZ80) $(ASM6502) $(ASM8086) $(PAR4ASM) $(PAR4BUNDLE) $(BUILD_DIR)/par4vmc.bin $(BUILD_DIR)/par4vmz.bin | $(BUILD_DIR)
 	$(BUILD_CMD_SH) $<
 
-$(CMDS_GOLF_C): $(REPO_DIR)/cmds/%.c.decb: $(REPO_DIR)/cmds/%.golf $(BUILD_CMD_SH) $(MINIGOLF) $(PAR4ASM) $(PAR4BUNDLE) $(BUILD_DIR)/par4vmc.bin | $(BUILD_DIR)
+$(CMDS_GOLF_C): $(REPO_DIR)/cmds/%.c.decb: $(REPO_DIR)/cmds/%.golf $(BUILD_CMD_SH) $(MINIGOLF) $(PAR4ASM) $(PAR4BUNDLE) $(BUILD_DIR)/par4vmc.bin $(BUILD_DIR)/par4vmz.bin | $(BUILD_DIR)
 	$(BUILD_CMD_SH) $<
 
 $(BUILD_DIR)/echo.mod: $(REPO_DIR)/cmds/echo.asm | $(BUILD_DIR)
