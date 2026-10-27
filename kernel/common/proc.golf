@@ -9,8 +9,8 @@ import "path"
 import "loader"
 import "tables"
 
-const MAX_PROCS = tables.MAX_PROCS
-const PROC_MAX_PATHS = tables.PROC_MAX_PATHS
+const MAX_PROCS = 16
+const PROC_MAX_PATHS = 16
 
 const PROC_FREE = 0
 const PROC_READY = 1
@@ -75,7 +75,7 @@ func ProcInit() {
 
 	// Process 0 is Task 0 (Kernel)
 	tables.Shared.ProcTable[0].State = PROC_RUNNING
-	if hal.ARCH == '9' || hal.ARCH == 'z' || hal.ARCH == '5' {
+	if hal.ARCH == '9' || hal.ARCH == 'z' || hal.ARCH == '5' || hal.ARCH == '0' {
 		tables.Shared.ProcTable[0].SavedSP = 0x2000
 	}
 	klib.strcpy(&tables.Shared.ProcTable[0].CmdName[0], (*byte)("[hatvan-kernel]"))
@@ -83,7 +83,7 @@ func ProcInit() {
 	initDriverProc(1, (*byte)("[RBF]"))
 	if hal.ARCH == '9' || hal.ARCH == 'z' {
 		hal.InitRBF(0x4000)
-	} else if hal.ARCH == '5' {
+	} else if hal.ARCH == '5' || hal.ARCH == '0' {
 		hal.InitRBF(0x0200)
 	} else {
 		hal.InitRBF(0x00001000)
@@ -92,7 +92,7 @@ func ProcInit() {
 	initDriverProc(2, (*byte)("[PROCFS]"))
 	if hal.ARCH == '9' || hal.ARCH == 'z' {
 		hal.InitProcfs(0x4000)
-	} else if hal.ARCH == '5' {
+	} else if hal.ARCH == '5' || hal.ARCH == '0' {
 		hal.InitProcfs(0x0200)
 	} else {
 		hal.InitProcfs(0x00001000)
@@ -109,7 +109,7 @@ func initDriverProc(pid byte, name *byte) {
 	p.State = PROC_WAITING
 	p.ParentPID = 0
 	p.TaskID = pid
-	if hal.ARCH == '9' || hal.ARCH == 'z' || hal.ARCH == '5' {
+	if hal.ARCH == '9' || hal.ARCH == 'z' || hal.ARCH == '5' || hal.ARCH == '0' {
 		p.SavedSP = 0x3F00
 	} else {
 		p.SavedSP = 0x0007FE00

@@ -199,6 +199,8 @@ func formatInfo() word {
 		bufAppendStr(buf, &pos, (*byte)("CDP1802\n"))
 	} else if hal.ARCH == '5' {
 		bufAppendStr(buf, &pos, (*byte)("M6502\n"))
+	} else if hal.ARCH == '0' {
+		bufAppendStr(buf, &pos, (*byte)("I8086\n"))
 	} else {
 		bufAppendByte(buf, &pos, hal.ARCH)
 		bufAppendByte(buf, &pos, '\n')
