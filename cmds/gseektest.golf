@@ -2,9 +2,128 @@ package main
 
 import "sys"
 
-var readBuf [16]byte
+var readBuf [32]byte
+var argBuf [16]byte
+
+func strEq(a *byte, b *byte) bool {
+	pa := word(a)
+	pb := word(b)
+	for {
+		ca := peekb(pa)
+		cb := peekb(pb)
+		if ca != cb {
+			return false
+		}
+		if ca == 0 {
+			return true
+		}
+		pa++
+		pb++
+	}
+}
+
+func runChildEnvTest() {
+	if !sys.GetEnv((*byte)("FOO"), &readBuf[0], 32) || !strEq(&readBuf[0], (*byte)("baz")) {
+		sys.Println((*byte)("ENV:CHILD:INHERIT_FOO:FAIL"))
+		sys.Exit(10)
+	}
+	if !sys.GetEnv((*byte)("HELLO"), &readBuf[0], 32) || !strEq(&readBuf[0], (*byte)("world")) {
+		sys.Println((*byte)("ENV:CHILD:INHERIT_HELLO:FAIL"))
+		sys.Exit(11)
+	}
+	if sys.SetEnv((*byte)("FOO"), (*byte)("childval")) != 0 {
+		sys.Println((*byte)("ENV:CHILD:SET_FOO:FAIL"))
+		sys.Exit(12)
+	}
+	if sys.SetEnv((*byte)("HELLO"), (*byte)("")) != 0 {
+		sys.Println((*byte)("ENV:CHILD:DEL_HELLO:FAIL"))
+		sys.Exit(13)
+	}
+	if !sys.GetEnv((*byte)("FOO"), &readBuf[0], 32) || !strEq(&readBuf[0], (*byte)("childval")) {
+		sys.Println((*byte)("ENV:CHILD:GET_FOO:FAIL"))
+		sys.Exit(14)
+	}
+	if sys.GetEnv((*byte)("HELLO"), &readBuf[0], 32) {
+		sys.Println((*byte)("ENV:CHILD:GONE_HELLO:FAIL"))
+		sys.Exit(15)
+	}
+	sys.Exit(0)
+}
+
+func runEnvTest() {
+	if sys.SetEnv((*byte)("FOO"), (*byte)("bar")) != 0 {
+		sys.Println((*byte)("ENV:SET1:FAIL"))
+		sys.Exit(20)
+	}
+	if sys.SetEnv((*byte)("HELLO"), (*byte)("world")) != 0 {
+		sys.Println((*byte)("ENV:SET2:FAIL"))
+		sys.Exit(21)
+	}
+	if !sys.GetEnv((*byte)("FOO"), &readBuf[0], 32) || !strEq(&readBuf[0], (*byte)("bar")) {
+		sys.Println((*byte)("ENV:GET1:FAIL"))
+		sys.Exit(22)
+	}
+	if !sys.GetEnv((*byte)("HELLO"), &readBuf[0], 32) || !strEq(&readBuf[0], (*byte)("world")) {
+		sys.Println((*byte)("ENV:GET2:FAIL"))
+		sys.Exit(23)
+	}
+
+	// Replace FOO=baz
+	if sys.SetEnv((*byte)("FOO"), (*byte)("baz")) != 0 {
+		sys.Println((*byte)("ENV:REPLACE:FAIL"))
+		sys.Exit(24)
+	}
+	if !sys.GetEnv((*byte)("FOO"), &readBuf[0], 32) || !strEq(&readBuf[0], (*byte)("baz")) {
+		sys.Println((*byte)("ENV:GET_REPLACED:FAIL"))
+		sys.Exit(25)
+	}
+
+	// Spawn child process and verify inheritance + isolation
+	st := sys.Spawn((*byte)("GSEEKTEST"), (*byte)("child\r"), 6)
+	if st != 0 {
+		sys.Println((*byte)("ENV:CHILD:FAIL"))
+		sys.Exit(26)
+	}
+
+	// Verify parent environment is unchanged after child modified its own environment
+	if !sys.GetEnv((*byte)("FOO"), &readBuf[0], 32) || !strEq(&readBuf[0], (*byte)("baz")) {
+		sys.Println((*byte)("ENV:PARENT_FOO:FAIL"))
+		sys.Exit(27)
+	}
+	if !sys.GetEnv((*byte)("HELLO"), &readBuf[0], 32) || !strEq(&readBuf[0], (*byte)("world")) {
+		sys.Println((*byte)("ENV:PARENT_HELLO:FAIL"))
+		sys.Exit(28)
+	}
+
+	// Remove FOO= and HELLO=
+	if sys.SetEnv((*byte)("FOO"), (*byte)("")) != 0 {
+		sys.Println((*byte)("ENV:DEL_FOO:FAIL"))
+		sys.Exit(29)
+	}
+	if sys.GetEnv((*byte)("FOO"), &readBuf[0], 32) {
+		sys.Println((*byte)("ENV:DEL_FOO_CHECK:FAIL"))
+		sys.Exit(30)
+	}
+	if !sys.GetEnv((*byte)("HELLO"), &readBuf[0], 32) || !strEq(&readBuf[0], (*byte)("world")) {
+		sys.Println((*byte)("ENV:STILL_HELLO:FAIL"))
+		sys.Exit(31)
+	}
+	if sys.SetEnv((*byte)("HELLO"), (*byte)("")) != 0 {
+		sys.Println((*byte)("ENV:DEL_HELLO:FAIL"))
+		sys.Exit(32)
+	}
+	if sys.GetEnv((*byte)("HELLO"), &readBuf[0], 32) {
+		sys.Println((*byte)("ENV:DEL_HELLO_CHECK:FAIL"))
+		sys.Exit(33)
+	}
+}
 
 func main() {
+	if sys.CopyArg(&argBuf[0], 16) > 0 && argBuf[0] == 'c' {
+		runChildEnvTest()
+		return
+	}
+
 	filePath := (*byte)("/d0/triangle.sh")
 
 	// 1. Open existing file for reading
@@ -60,6 +179,7 @@ func main() {
 	}
 
 	sys.Close(fd)
+	runEnvTest()
 	sys.Println((*byte)("SEEK:ALL:OK"))
 	sys.Exit(0)
 }

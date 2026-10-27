@@ -223,12 +223,15 @@ trap_nmi:
     ld   a, (call_num)
     ld   l, a
     ld   h, 0
-    push hl
+    push hl         ; Save call_num across potential child F$Exit
+    push hl         ; Arg 1: callNum
     call f_syscall__Dispatch
     pop  bc
 
-    ; Check if process exited: call_num == 0x06 (F$Exit)
-    ld   a, (call_num)
+    ; Restore this task's call_num and check if process exited: call_num == 0x06 (F$Exit)
+    pop  bc
+    ld   a, c
+    ld   (call_num), a
     cp   0x06
     jp   z, .process_exited
 

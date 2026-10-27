@@ -138,10 +138,15 @@ func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word
 		return 0
 	}
 	if devType == dev.DEV_PROC {
-		if (mode & MODE_WRITE) != 0 {
+		perr := procfs_ipc.Open(dev.ParsedRemPath, task, mode)
+		if perr != 0 {
 			PathFree(pathId)
-			return E_BMODE
+			return perr
 		}
+		pd.Drive = task
+		pd.FDLSN = word(procfs_ipc.OpenedTag)
+		pd.FileSize = procfs_ipc.ResFileSize
+		pd.FilePos = 0
 		AllocatedPathId = pathId
 		return 0
 	}
@@ -151,13 +156,10 @@ func SysOpen(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word
 
 // SysCreate creates or opens a file for writing and returns errCode (0 on success, sets AllocatedPathId)
 func SysCreate(task byte, pathStr *byte, mode byte, defaultDrive byte, cwdLSN word, cxdLSN word) byte {
-	// For devices (/term, /log, /null, /0../3), create is equivalent to open write
+	// For devices (/term, /log, /null, /proc, /0../3), create is equivalent to open write
 	devType := dev.ParsePathDevice(pathStr, defaultDrive)
-	if devType == dev.DEV_TERM || devType == dev.DEV_LOG || devType == dev.DEV_NULL || devType == dev.DEV_DUP {
+	if devType == dev.DEV_TERM || devType == dev.DEV_LOG || devType == dev.DEV_NULL || devType == dev.DEV_DUP || devType == dev.DEV_PROC {
 		return SysOpen(task, pathStr, mode|MODE_WRITE, defaultDrive, cwdLSN, cxdLSN)
-	}
-	if devType == dev.DEV_PROC {
-		return E_BMODE
 	}
 
 	err := rbf_ipc.CreateFile(pathStr, defaultDrive, cwdLSN, cxdLSN, mode)
@@ -219,7 +221,7 @@ func readProc(pd *tables.PathDesc, task byte, ubuf *byte, count word) byte {
 	if pd.FilePos+toRead > pd.FileSize {
 		toRead = pd.FileSize - pd.FilePos
 	}
-	err := procfs_ipc.Read(pd.FilePos, task, word(ubuf), toRead)
+	err := procfs_ipc.Read(byte(pd.FDLSN), pd.Drive, pd.FilePos, task, word(ubuf), toRead)
 	if err != 0 {
 		TransferredBytes = 0
 		return err
@@ -331,6 +333,19 @@ func SysWrite(pathId byte, task byte, ubuf *byte, count word) byte {
 	}
 	if pd.DevType == dev.DEV_NULL {
 		TransferredBytes = count
+		return 0
+	}
+	if pd.DevType == dev.DEV_PROC {
+		if pd.FDLSN != 'e' {
+			return E_BMODE
+		}
+		err := procfs_ipc.Write(pd.Drive, task, word(ubuf), count)
+		if err != 0 {
+			TransferredBytes = 0
+			return err
+		}
+		pd.FileSize = procfs_ipc.ResFileSize
+		TransferredBytes = procfs_ipc.TransferredBytes
 		return 0
 	}
 

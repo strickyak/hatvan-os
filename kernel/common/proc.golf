@@ -215,14 +215,6 @@ func ProcOpen(pid byte, pathStr *byte, mode byte) byte {
 	}
 	pathId := path.AllocatedPathId
 
-	if path.GetPath(pathId).DevType == dev.DEV_PROC {
-		perr := ProcfsOpen(pathId, pathStr)
-		if perr != 0 {
-			path.SysClose(pathId)
-			return perr
-		}
-	}
-
 	p.Paths[slot] = pathId
 	AssignedSlot = slot
 	return 0
@@ -347,6 +339,7 @@ var ForkedChildPID byte
 
 func finishChildSetup(childProc *tables.Process, entryPC word, binSize word, paramStr *byte, paramLen word) {
 	childProc.LineMode = loader.LastLoadedIsOS9
+	procfs_ipc.CopyEnv(CurrentPID, childProc.PID)
 	childProc.SavedSP = hal.SetupChildTask(childProc.TaskID, childProc.LineMode, entryPC, binSize, paramStr, paramLen)
 	childProc.CodeStart = hal.ChildCodeStart
 	childProc.SavedPC = entryPC
@@ -539,45 +532,6 @@ func SysChgDir(pathStr *byte, mode byte) byte {
 		updateProcPath(&p.CwdPath[0], pathStr, rbf_ipc.ResDrive)
 	}
 
-	return 0
-}
-
-// ==================== /proc Filesystem ====================
-
-var procComp [16]byte
-
-// ProcfsOpen dispatches /proc subpaths via Task 2 IPC
-func ProcfsOpen(pathId byte, pathStr *byte) byte {
-	devType := dev.ParsePathDevice(pathStr, 0)
-	remPath := dev.ParsedRemPath
-	if devType != dev.DEV_PROC {
-		return path.E_PNNF
-	}
-
-	p := word(remPath)
-	for peekb(p) == '/' {
-		p++
-	}
-
-	idx := word(0)
-	for idx < 15 {
-		c := peekb(p + idx)
-		if c == 0 || c == ' ' || c == '\r' || c == '\n' || c == '/' {
-			break
-		}
-		procComp[idx] = c
-		idx++
-	}
-	procComp[idx] = 0
-
-	err := procfs_ipc.Open(&procComp[0], CurrentPID)
-	if err != 0 {
-		return err
-	}
-
-	pd := path.GetPath(pathId)
-	pd.FileSize = procfs_ipc.ResFileSize
-	pd.FilePos = 0
 	return 0
 }
 

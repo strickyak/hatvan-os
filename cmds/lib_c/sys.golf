@@ -141,7 +141,7 @@ func SysChgDir(path *byte, mode byte) byte {
 }
 
 func SysSeek(path byte, pos word) byte {
-	res_A, res_B, res_Y, err := hatvan_trap(word(path), 0, 0, pos, 0, 0x88)
+	res_A, res_B, res_Y, err := hatvan_trap(word(path), 0, 0, 0, pos, 0x88)
 	if err != 0 {
 		LastErr = byte(res_A)
 		return 0xFF
@@ -293,3 +293,102 @@ func CopyArg(dst *byte, maxLen word) word {
 	pokeb(d+cnt, 0)
 	return cnt
 }
+
+var envLineBuf [256]byte
+
+// SetEnv sets or removes an environment variable in /proc/e.
+// If val is empty ("" or nil), key is removed ("key=").
+// Returns 0 on success, or an OS-9 error code on failure.
+func SetEnv(key *byte, val *byte) byte {
+	fd := Open((*byte)("/proc/e"), MODE_WRITE)
+	if fd == 0xFF {
+		return LastErr
+	}
+	pos := word(0)
+	kp := word(key)
+	for pos < 250 {
+		c := peekb(kp)
+		if c == 0 || c == '=' || c == '\r' || c == '\n' {
+			break
+		}
+		envLineBuf[pos] = c
+		pos++
+		kp++
+	}
+	envLineBuf[pos] = '='
+	pos++
+	if val != (*byte)(0) {
+		vp := word(val)
+		for pos < 254 {
+			c := peekb(vp)
+			if c == 0 || c == '\r' || c == '\n' {
+				break
+			}
+			envLineBuf[pos] = c
+			pos++
+			vp++
+		}
+	}
+	envLineBuf[pos] = '\n'
+	pos++
+	envLineBuf[pos] = 0
+	n := WritLn(fd, &envLineBuf[0], pos)
+	err := byte(0)
+	if n == 0 {
+		err = LastErr
+		if err == 0 {
+			err = 1
+		}
+	}
+	Close(fd)
+	return err
+}
+
+// GetEnv looks up key in /proc/e and copies its value into valBuf (up to maxLen-1 bytes, NUL-terminated).
+// Returns true if found, false otherwise.
+func GetEnv(key *byte, valBuf *byte, maxLen word) bool {
+	if maxLen > 0 {
+		pokeb(word(valBuf), 0)
+	}
+	fd := Open((*byte)("/proc/e"), MODE_READ)
+	if fd == 0xFF {
+		return false
+	}
+	klen := StrLen(key)
+	kp := word(key)
+	for {
+		n := ReadLn(fd, &envLineBuf[0], 255)
+		if n == 0 {
+			break
+		}
+		if n > klen && envLineBuf[klen] == '=' {
+			match := true
+			for i := word(0); i < klen; i++ {
+				if envLineBuf[i] != peekb(kp+i) {
+					match = false
+					break
+				}
+			}
+			if match {
+				vStart := klen + 1
+				outPos := word(0)
+				for vStart+outPos < n && outPos+1 < maxLen {
+					c := envLineBuf[vStart+outPos]
+					if c == '\r' || c == '\n' || c == 0 {
+						break
+					}
+					pokeb(word(valBuf)+outPos, c)
+					outPos++
+				}
+				if maxLen > 0 {
+					pokeb(word(valBuf)+outPos, 0)
+				}
+				Close(fd)
+				return true
+			}
+		}
+	}
+	Close(fd)
+	return false
+}
+

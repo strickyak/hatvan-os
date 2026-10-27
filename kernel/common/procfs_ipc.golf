@@ -7,6 +7,8 @@ import "tables"
 const PROCFS_CMD_NOP = 0
 const PROCFS_CMD_OPEN = 1
 const PROCFS_CMD_READ = 2
+const PROCFS_CMD_WRITE = 3
+const PROCFS_CMD_COPY_ENV = 4
 
 // Mailbox layout at $0080 in Task 2 RAM
 const MB_CMD = 0
@@ -17,9 +19,10 @@ const MB_TARGET_ADDR = 4  // 4 bytes: 4..7
 const MB_FILE_POS = 8     // 4 bytes: 8..11
 const MB_COUNT = 12       // 2 bytes: 12..13
 const MB_PROC_ADDR = 16   // 4 bytes: 16..19 (Task 0 ProcTable address)
-const MB_PROC_SIZE = 20   // 2 bytes: 20..21 (Task 0 ProcTable size)
-const MB_PATH_STR = 24    // 32 bytes: 24..55 (subpath, e.g. "p")
-const MB_OUT_SIZE = 56    // 4 bytes: 56..59 (FileSize or BytesRead)
+const MB_PROC_SIZE = 20   // 2 bytes: 20..21 (Task 0 ProcTable size / updated FileSize)
+const MB_MODE = 22        // 1 byte: 22 (open mode or file tag)
+const MB_PATH_STR = 24    // 32 bytes: 24..55 (subpath, e.g. "p", "i", "e")
+const MB_OUT_SIZE = 56    // 4 bytes: 56..59 (FileSize or BytesRead/Written)
 
 var mb [64]byte
 
@@ -39,6 +42,10 @@ func writeW16(idx word, val word) {
 	mb[idx+1] = byte(val)
 }
 
+func readW16(idx word) word {
+	return (word(mb[idx]) << 8) | word(mb[idx+1])
+}
+
 func readW32(idx word) word {
 	b0 := word(mb[idx])
 	b1 := word(mb[idx+1])
@@ -49,6 +56,30 @@ func readW32(idx word) word {
 		res = (b0 << 24) | (b1 << 16) | res
 	}
 	return res
+}
+
+func clearMB() {
+	for i := word(0); i < 64; i++ {
+		mb[i] = 0
+	}
+}
+
+func copySubpath(remPath *byte) byte {
+	p := word(remPath)
+	for peekb(p) == '/' {
+		p++
+	}
+	idx := word(0)
+	for idx < 15 {
+		c := peekb(p + idx)
+		if c == 0 || c == ' ' || c == '\r' || c == '\n' || c == '/' {
+			break
+		}
+		mb[MB_PATH_STR+idx] = c
+		idx++
+	}
+	mb[MB_PATH_STR+idx] = 0
+	return mb[MB_PATH_STR]
 }
 
 func Call() byte {
@@ -64,31 +95,22 @@ func Call() byte {
 	return mb[MB_STATUS]
 }
 
+var OpenedTag byte
 var ResFileSize word
 var TransferredBytes word
 
-// Open asks Task 2 to resolve and format subpath (e.g. "p").
-// Sets ResFileSize. Returns errCode (0 on success).
-func Open(subpath *byte, curPID byte) byte {
-	for i := word(0); i < 64; i++ {
-		mb[i] = 0
-	}
+// Open asks Task 2 to resolve and format subpath (e.g. "p", "i", "e").
+// Sets OpenedTag and ResFileSize. Returns errCode (0 on success).
+func Open(remPath *byte, curPID byte, mode byte) byte {
+	clearMB()
 	mb[MB_CMD] = PROCFS_CMD_OPEN
 	mb[MB_CURRENT_PID] = curPID
+	mb[MB_MODE] = mode
 	procTableAddr := word(&tables.Shared.ProcTable[0])
 	procTableSize := word(sizeof[tables.Process]() * tables.MAX_PROCS)
 	writeW32(MB_PROC_ADDR, procTableAddr)
 	writeW16(MB_PROC_SIZE, procTableSize)
-
-	p := word(subpath)
-	for i := word(0); i < 31; i++ {
-		c := peekb(p + i)
-		mb[MB_PATH_STR+i] = c
-		if c == 0 {
-			break
-		}
-	}
-	mb[MB_PATH_STR+31] = 0
+	OpenedTag = copySubpath(remPath)
 
 	st := Call()
 	if st != 0 {
@@ -102,11 +124,11 @@ func Open(subpath *byte, curPID byte) byte {
 
 // Read requests Task 2 to read count bytes at filePos into targetTask at targetAddr.
 // Sets TransferredBytes. Returns errCode (0 on success).
-func Read(filePos word, targetTask byte, targetAddr word, count word) byte {
-	for i := word(0); i < 64; i++ {
-		mb[i] = 0
-	}
+func Read(fileTag byte, curPID byte, filePos word, targetTask byte, targetAddr word, count word) byte {
+	clearMB()
 	mb[MB_CMD] = PROCFS_CMD_READ
+	mb[MB_MODE] = fileTag
+	mb[MB_CURRENT_PID] = curPID
 	mb[MB_TARGET_TASK] = targetTask
 	writeW32(MB_TARGET_ADDR, targetAddr)
 	writeW32(MB_FILE_POS, filePos)
@@ -115,4 +137,29 @@ func Read(filePos word, targetTask byte, targetAddr word, count word) byte {
 	st := Call()
 	TransferredBytes = readW32(MB_OUT_SIZE)
 	return st
+}
+
+// Write requests Task 2 to write count bytes from srcTask:srcAddr into curPID's /proc/e environment.
+// Sets TransferredBytes and ResFileSize. Returns errCode (0 on success).
+func Write(curPID byte, srcTask byte, srcAddr word, count word) byte {
+	clearMB()
+	mb[MB_CMD] = PROCFS_CMD_WRITE
+	mb[MB_CURRENT_PID] = curPID
+	mb[MB_TARGET_TASK] = srcTask
+	writeW32(MB_TARGET_ADDR, srcAddr)
+	writeW16(MB_COUNT, count)
+
+	st := Call()
+	TransferredBytes = readW32(MB_OUT_SIZE)
+	ResFileSize = readW16(MB_PROC_SIZE)
+	return st
+}
+
+// CopyEnv asks Task 2 to copy the environment from parentPID to childPID on fork.
+func CopyEnv(parentPID byte, childPID byte) byte {
+	clearMB()
+	mb[MB_CMD] = PROCFS_CMD_COPY_ENV
+	mb[MB_CURRENT_PID] = parentPID
+	mb[MB_TARGET_TASK] = childPID
+	return Call()
 }

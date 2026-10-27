@@ -4,7 +4,9 @@ import "hal"
 import "klib"
 import "tables"
 
-const MAX_PROCS = tables.MAX_PROCS
+const MAX_PROCS = 16
+const ENV_MAX = 256
+const ENV_BUF_SIZE = MAX_PROCS * ENV_MAX
 
 const PROC_FREE = 0
 const PROC_READY = 1
@@ -15,6 +17,8 @@ const PROC_ZOMBIE = 4
 const PROCFS_CMD_NOP = 0
 const PROCFS_CMD_OPEN = 1
 const PROCFS_CMD_READ = 2
+const PROCFS_CMD_WRITE = 3
+const PROCFS_CMD_COPY_ENV = 4
 
 // Mailbox layout at $0080 in Task 2 RAM
 const MB_CMD = 0x0080
@@ -25,12 +29,22 @@ const MB_TARGET_ADDR = 0x0084 // 4 bytes: 0x0084..0x0087
 const MB_FILE_POS = 0x0088    // 4 bytes: 0x0088..0x008B
 const MB_COUNT = 0x008C       // 2 bytes: 0x008C..0x008D
 const MB_PROC_ADDR = 0x0090   // 4 bytes: 0x0090..0x0093 (Task 0 ProcTable address)
-const MB_PROC_SIZE = 0x0094   // 2 bytes: 0x0094..0x0095 (Task 0 ProcTable size)
-const MB_PATH_STR = 0x0098    // 32 bytes: 0x0098..0x00B7 (subpath, e.g. "p")
-const MB_OUT_SIZE = 0x00B8    // 4 bytes: 0x00B8..0x00BB (FileSize or BytesRead)
+const MB_PROC_SIZE = 0x0094   // 2 bytes: 0x0094..0x0095 (Task 0 ProcTable size / updated FileSize)
+const MB_MODE = 0x0096        // 1 byte:  0x0096 (open mode or file tag)
+const MB_PATH_STR = 0x0098    // 32 bytes: 0x0098..0x00B7 (subpath, e.g. "p", "i", "e")
+const MB_OUT_SIZE = 0x00B8    // 4 bytes: 0x00B8..0x00BB (FileSize or BytesRead/Written)
 
 var procfsBuf [2048]byte
 var procfsSize word
+var bufTag byte
+var bufPID byte
+
+var Env [ENV_BUF_SIZE]byte
+var envWriteBuf [ENV_MAX]byte
+
+func envBase(pid byte) word {
+	return word(&Env[0]) + word(pid)*ENV_MAX
+}
 
 func readW16(addr word) word {
 	hi := word(peekb(addr))
@@ -209,6 +223,230 @@ func formatInfo() word {
 	return pos
 }
 
+func formatEnv(curPID byte) word {
+	buf := &procfsBuf[0]
+	pos := word(0)
+	if curPID >= MAX_PROCS {
+		pokeb(word(buf), 0)
+		return 0
+	}
+
+	term := byte('\n')
+	if tables.Shared.ProcTable[curPID].LineMode == 1 {
+		term = '\r'
+	}
+
+	base := envBase(curPID)
+	off := word(0)
+	for off < ENV_MAX && peekb(base+off) != 0 {
+		for off < ENV_MAX {
+			c := peekb(base + off)
+			off++
+			if c == 0 {
+				break
+			}
+			bufAppendByte(buf, &pos, c)
+		}
+		bufAppendByte(buf, &pos, '=')
+		for off < ENV_MAX {
+			c := peekb(base + off)
+			off++
+			if c == 0 {
+				break
+			}
+			bufAppendByte(buf, &pos, c)
+		}
+		bufAppendByte(buf, &pos, term)
+	}
+
+	pokeb(word(buf)+pos, 0)
+	return pos
+}
+
+func envSetOrRemove(pid byte, keyPtr word, keyLen word, valPtr word, valLen word) byte {
+	if pid >= MAX_PROCS {
+		return 224 // E_PROCUNDEF
+	}
+	if keyLen == 0 {
+		return 214 // E_BMODE
+	}
+
+	base := envBase(pid)
+	matchFound := false
+	matchStart := word(0)
+	matchEnd := word(0)
+	pos := word(0)
+
+	for pos < ENV_MAX && peekb(base+pos) != 0 {
+		entryStart := pos
+		kStart := pos
+		for pos < ENV_MAX && peekb(base+pos) != 0 {
+			pos++
+		}
+		kLen := pos - kStart
+		if pos < ENV_MAX {
+			pos++
+		}
+		for pos < ENV_MAX && peekb(base+pos) != 0 {
+			pos++
+		}
+		if pos < ENV_MAX {
+			pos++
+		}
+		entryEnd := pos
+
+		if !matchFound && kLen == keyLen {
+			same := true
+			for i := word(0); i < keyLen; i++ {
+				if peekb(base+kStart+i) != peekb(keyPtr+i) {
+					same = false
+					break
+				}
+			}
+			if same {
+				matchFound = true
+				matchStart = entryStart
+				matchEnd = entryEnd
+			}
+		}
+	}
+
+	endPos := pos
+
+	// "Key=" removes Key from Env
+	if valLen == 0 {
+		if !matchFound {
+			return 0
+		}
+		oldLen := matchEnd - matchStart
+		i := matchEnd
+		for i <= endPos {
+			pokeb(base+i-oldLen, peekb(base+i))
+			i++
+		}
+		newEnd := endPos - oldLen
+		pokeb(base+newEnd, 0)
+		if newEnd == 0 {
+			pokeb(base+1, 0)
+		}
+		return 0
+	}
+
+	newLen := keyLen + 1 + valLen + 1
+	if matchFound {
+		oldLen := matchEnd - matchStart
+		newEnd := endPos - oldLen + newLen
+		if newEnd+1 > ENV_MAX {
+			return 207 // E_MEMFUL
+		}
+		if newLen < oldLen {
+			diff := oldLen - newLen
+			i := matchEnd
+			for i <= endPos {
+				pokeb(base+i-diff, peekb(base+i))
+				i++
+			}
+		} else if newLen > oldLen {
+			diff := newLen - oldLen
+			i := endPos + 1
+			for i > matchEnd {
+				i--
+				pokeb(base+i+diff, peekb(base+i))
+			}
+		}
+		for i := word(0); i < keyLen; i++ {
+			pokeb(base+matchStart+i, peekb(keyPtr+i))
+		}
+		pokeb(base+matchStart+keyLen, 0)
+		vDst := base + matchStart + keyLen + 1
+		for i := word(0); i < valLen; i++ {
+			pokeb(vDst+i, peekb(valPtr+i))
+		}
+		pokeb(vDst+valLen, 0)
+		pokeb(base+newEnd, 0)
+		return 0
+	}
+
+	// Append new Key=Value at endPos
+	newEnd := endPos + newLen
+	if newEnd+1 > ENV_MAX {
+		return 207 // E_MEMFUL
+	}
+	for i := word(0); i < keyLen; i++ {
+		pokeb(base+endPos+i, peekb(keyPtr+i))
+	}
+	pokeb(base+endPos+keyLen, 0)
+	vDst := base + endPos + keyLen + 1
+	for i := word(0); i < valLen; i++ {
+		pokeb(vDst+i, peekb(valPtr+i))
+	}
+	pokeb(vDst+valLen, 0)
+	pokeb(base+newEnd, 0)
+	return 0
+}
+
+func envWrite(pid byte, bufPtr word, count word) byte {
+	off := word(0)
+	for off < count {
+		for off < count {
+			c := peekb(bufPtr + off)
+			if c != '\r' && c != '\n' && c != 0 {
+				break
+			}
+			off++
+		}
+		if off >= count {
+			break
+		}
+		lineStart := off
+		for off < count {
+			c := peekb(bufPtr + off)
+			if c == '\r' || c == '\n' || c == 0 {
+				break
+			}
+			off++
+		}
+		lineLen := off - lineStart
+		eqOff := word(0)
+		foundEq := false
+		for eqOff < lineLen {
+			if peekb(bufPtr+lineStart+eqOff) == '=' {
+				foundEq = true
+				break
+			}
+			eqOff++
+		}
+		if !foundEq || eqOff == 0 {
+			return 214 // E_BMODE
+		}
+		keyPtr := bufPtr + lineStart
+		keyLen := eqOff
+		valPtr := bufPtr + lineStart + eqOff + 1
+		valLen := lineLen - (eqOff + 1)
+		err := envSetOrRemove(pid, keyPtr, keyLen, valPtr, valLen)
+		if err != 0 {
+			return err
+		}
+	}
+	return 0
+}
+
+func ensureFormatted(tag byte, curPID byte) {
+	if tag == 'e' && (bufTag != 'e' || bufPID != curPID) {
+		procfsSize = formatEnv(curPID)
+		bufTag = 'e'
+		bufPID = curPID
+	} else if tag == 'i' && bufTag != 'i' {
+		procfsSize = formatInfo()
+		bufTag = 'i'
+		bufPID = 0
+	} else if tag == 'p' && (bufTag != 'p' || bufPID != curPID) {
+		procfsSize = formatProcesses(curPID)
+		bufTag = 'p'
+		bufPID = curPID
+	}
+}
+
 func dispatch() {
 	cmd := peekb(MB_CMD)
 
@@ -219,18 +457,40 @@ func dispatch() {
 
 	if cmd == PROCFS_CMD_OPEN {
 		subpath := word(MB_PATH_STR)
+		mode := peekb(MB_MODE)
+		curPID := peekb(MB_CURRENT_PID)
 		c0 := peekb(subpath)
 		c1 := peekb(subpath + 1)
 		if c0 == 'p' && c1 == 0 {
-			curPID := peekb(MB_CURRENT_PID)
-			// Read ProcTable directly from shared memory (no DMA copy required!)
+			if (mode & 2) != 0 {
+				pokeb(MB_STATUS, 214) // E_BMODE
+				writeW32(MB_OUT_SIZE, 0)
+				return
+			}
 			procfsSize = formatProcesses(curPID)
+			bufTag = 'p'
+			bufPID = curPID
 			writeW32(MB_OUT_SIZE, procfsSize)
 			pokeb(MB_STATUS, 0)
 			return
 		}
 		if c0 == 'i' && c1 == 0 {
+			if (mode & 2) != 0 {
+				pokeb(MB_STATUS, 214) // E_BMODE
+				writeW32(MB_OUT_SIZE, 0)
+				return
+			}
 			procfsSize = formatInfo()
+			bufTag = 'i'
+			bufPID = 0
+			writeW32(MB_OUT_SIZE, procfsSize)
+			pokeb(MB_STATUS, 0)
+			return
+		}
+		if c0 == 'e' && c1 == 0 {
+			procfsSize = formatEnv(curPID)
+			bufTag = 'e'
+			bufPID = curPID
 			writeW32(MB_OUT_SIZE, procfsSize)
 			pokeb(MB_STATUS, 0)
 			return
@@ -241,10 +501,14 @@ func dispatch() {
 	}
 
 	if cmd == PROCFS_CMD_READ {
+		tag := peekb(MB_MODE)
+		curPID := peekb(MB_CURRENT_PID)
 		filePos := readW32(MB_FILE_POS)
 		count := readW16(MB_COUNT)
 		targetTask := peekb(MB_TARGET_TASK)
 		targetAddr := readW32(MB_TARGET_ADDR)
+
+		ensureFormatted(tag, curPID)
 
 		if filePos >= procfsSize {
 			pokeb(MB_STATUS, 211) // E_EOF
@@ -257,11 +521,61 @@ func dispatch() {
 			toRead = procfsSize - filePos
 		}
 
-		// Option A: DMA copy formatted chunk directly into targetTask memory
 		srcAddr := word(&procfsBuf[0]) + filePos
 		hal.DMACopy(2, srcAddr, targetTask, targetAddr, toRead)
 
 		writeW32(MB_OUT_SIZE, toRead)
+		pokeb(MB_STATUS, 0)
+		return
+	}
+
+	if cmd == PROCFS_CMD_WRITE {
+		curPID := peekb(MB_CURRENT_PID)
+		srcTask := peekb(MB_TARGET_TASK)
+		srcAddr := readW32(MB_TARGET_ADDR)
+		count := readW16(MB_COUNT)
+
+		if count == 0 {
+			procfsSize = formatEnv(curPID)
+			bufTag = 'e'
+			bufPID = curPID
+			writeW16(MB_PROC_SIZE, procfsSize)
+			writeW32(MB_OUT_SIZE, 0)
+			pokeb(MB_STATUS, 0)
+			return
+		}
+		if count > ENV_MAX {
+			writeW32(MB_OUT_SIZE, 0)
+			pokeb(MB_STATUS, 207) // E_MEMFUL
+			return
+		}
+
+		hal.DMACopy(srcTask, srcAddr, 2, word(&envWriteBuf[0]), count)
+		err := envWrite(curPID, word(&envWriteBuf[0]), count)
+		if err != 0 {
+			writeW32(MB_OUT_SIZE, 0)
+			pokeb(MB_STATUS, err)
+			return
+		}
+
+		procfsSize = formatEnv(curPID)
+		bufTag = 'e'
+		bufPID = curPID
+		writeW16(MB_PROC_SIZE, procfsSize)
+		writeW32(MB_OUT_SIZE, count)
+		pokeb(MB_STATUS, 0)
+		return
+	}
+
+	if cmd == PROCFS_CMD_COPY_ENV {
+		parentPID := peekb(MB_CURRENT_PID)
+		childPID := peekb(MB_TARGET_TASK)
+		if parentPID < MAX_PROCS && childPID < MAX_PROCS && parentPID != childPID {
+			klib.memcpy((*byte)(envBase(childPID)), (*byte)(envBase(parentPID)), ENV_MAX)
+			if bufTag == 'e' && bufPID == childPID {
+				bufTag = 0
+			}
+		}
 		pokeb(MB_STATUS, 0)
 		return
 	}
@@ -271,6 +585,7 @@ func dispatch() {
 
 func main() {
 	tables.Init()
+	klib.memset(&Env[0], 0, ENV_BUF_SIZE)
 	for {
 		hal.Sleep()
 		dispatch()
