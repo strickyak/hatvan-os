@@ -59,7 +59,7 @@ CMDS_GOLF_K := $(patsubst %,$(REPO_DIR)/cmds/%.k.decb,$(GOLF_CMDS))
 CMDS_GOLF_Z := $(patsubst %,$(REPO_DIR)/cmds/%.z.decb,$(GOLF_CMDS))
 CMDS_GOLF_5 := $(patsubst %,$(REPO_DIR)/cmds/%.5.decb,$(GOLF_CMDS))
 CMDS_GOLF_0 := $(patsubst %,$(REPO_DIR)/cmds/%.0.decb,$(GOLF_CMDS))
-GOLF_CMDS_C := gecho gcat gdir gdump gsh gtrue gfalse gseektest clif
+GOLF_CMDS_C := gecho gcat gdir gdump gsh gsh2 gtrue gfalse gseektest clif
 CMDS_GOLF_C := $(patsubst %,$(REPO_DIR)/cmds/%.c.decb,$(GOLF_CMDS_C))
 
 # Disk Images
@@ -592,6 +592,7 @@ $(DISK_IMAGE): $(CMDS_6809) $(CMDS_68K) $(CMDS_Z80) $(CMDS_GOLF_9) $(CMDS_GOLF_K
 	$(OS9) copy -r $(REPO_DIR)/cmds/gdir.c.decb $@,CmdsC/GDIR
 	$(OS9) copy -r $(REPO_DIR)/cmds/gdump.c.decb $@,CmdsC/GDUMP
 	$(OS9) copy -r $(REPO_DIR)/cmds/gsh.c.decb $@,CmdsC/GSH
+	$(OS9) copy -r $(REPO_DIR)/cmds/gsh2.c.decb $@,CmdsC/GSH2
 	$(OS9) copy -r $(REPO_DIR)/cmds/gtrue.c.decb $@,CmdsC/GTRUE
 	$(OS9) copy -r $(REPO_DIR)/cmds/gfalse.c.decb $@,CmdsC/GFALSE
 	$(OS9) copy -r $(REPO_DIR)/cmds/gseektest.c.decb $@,CmdsC/GSEEKTEST

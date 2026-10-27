@@ -595,62 +595,35 @@ _do_load_local:
     BR      .L_lld_loop
 .L_lld_done:
     LDN     RA
-    PLO RA                           ; RA.0 = target slot size
+    SMI     1
+    BZ      .L_load_byte
+    LDN     RA
+    SHR                         ; D = size >> 1 (word count)
+    PLO     RB
+.L_lld_words:
+    LDA     RF
+    PHI     RA
+    LDA     RF
+    PLO     RA
+    DEC     R6
     GLO     RA
-    SMI 1
-    BZ .L_load_byte
-    GLO     RA
-    SMI 2
-    BZ .L_load_word
-    ; Slice (6 bytes = 3 words): push [ptr, cap, len] onto R6
-    LDA     RF
-    PHI RA
-    LDA RF
-    PLO RA
+    STR     R6
     DEC     R6
-    GLO RA
-    STR R6
-    DEC R6
-    GHI RA
-    STR R6
-    LDA     RF
-    PHI RA
-    LDA RF
-    PLO RA
-    DEC     R6
-    GLO RA
-    STR R6
-    DEC R6
-    GHI RA
-    STR R6
-    LDA     RF
-    PHI RA
-    LDN RF
-    PLO RA
-    DEC     R6
-    GLO RA
-    STR R6
-    DEC R6
-    GHI RA
-    STR R6
+    GHI     RA
+    STR     R6
+    DEC     RB
+    GLO     RB
+    BNZ     .L_lld_words
     LOAD    RC, $0100
-    LOAD RD, $0200
+    LOAD    RD, $0200
     SEP     R3
 .L_load_byte:
     LDN     RF
-    PLO RA
-    LDI 0
-    PHI RA
+    PLO     RA
+    LDI     0
+    PHI     RA
     LOAD    RC, $0100
-    LOAD RD, $0200
-    BR      .L_push_ra
-.L_load_word:
-    LDA     RF
-    PHI RA
-    LDN RF
-    PLO RA
-    LOAD    RC, $0100
-    LOAD RD, $0200
+    LOAD    RD, $0200
     BR      .L_push_ra
 
 Op_STORE_LOCAL_0:
@@ -695,65 +668,40 @@ _do_store_local:
     BR      .L_sld_loop
 .L_sld_done:
     LDN     RA
-    PLO RA
-    GLO     RA
-    SMI 1
-    BZ .L_store_byte
-    GLO     RA
-    SMI 2
-    BZ .L_store_word
-    ; Slice: pop 3 words into RF[0..5]:
+    SMI     1
+    BZ      .L_store_byte
+    LDN     RA                  ; D = size (even, >= 2)
+    STR     R2
+    GLO     RF
+    ADD
+    PLO     RF
+    GHI     RF
+    ADCI    0
+    PHI     RF                  ; RF = addr + size
+    LDN     RA
+    SHR                         ; D = size >> 1 (word count)
+    PLO     RB
+.L_sld_words:
     LDA     R6
-    PHI RA
-    LDA R6
-    PLO RA
-    GHI     RA
-    STR RF
-    INC RF
-    GLO RA
-    STR RF
-    INC RF
+    PHI     RA
     LDA     R6
-    PHI RA
-    LDA R6
-    PLO RA
+    DEC     RF
+    STR     RF
+    DEC     RF
     GHI     RA
-    STR RF
-    INC RF
-    GLO RA
-    STR RF
-    INC RF
-    LDA     R6
-    PHI RA
-    LDA R6
-    PLO RA
-    GHI     RA
-    STR RF
-    INC RF
-    GLO RA
-    STR RF
+    STR     RF
+    DEC     RB
+    GLO     RB
+    BNZ     .L_sld_words
     LOAD    RC, $0100
-    LOAD RD, $0200
+    LOAD    RD, $0200
     SEP     R3
 .L_store_byte:
     INC     R6                  ; skip high byte of stack word
     LDA     R6                  ; D = low byte
     STR     RF
     LOAD    RC, $0100
-    LOAD RD, $0200
-    SEP     R3
-.L_store_word:
-    LDA     R6
-    PHI RA
-    LDA R6
-    PLO RA
-    GHI     RA
-    STR RF
-    INC RF
-    GLO RA
-    STR RF
-    LOAD    RC, $0100
-    LOAD RD, $0200
+    LOAD    RD, $0200
     SEP     R3
 
 Op_ADDR_OF_LOCAL:
@@ -880,17 +828,28 @@ Op_LOAD_GLOBAL:
     DEC     RB
     BR      .L_lglob_loop
 .L_lglob_done:
-    LDA     RA                  ; D = high byte of size, RA++
-    BNZ     .L_lglob_word       ; if high byte != 0, size >= 256 -> word
+    INC     RA                  ; skip high byte of size
     LDN     RA                  ; D = low byte of size
     SMI     1
     BZ      .L_lglob_byte
-.L_lglob_word:
+    LDN     RA
+    SHR                         ; D = size >> 1 (word count)
+    PLO     RB
+.L_lglob_words:
     LDA     RF
     PHI     RA
-    LDN     RF
+    LDA     RF
     PLO     RA
-    BR      .L_push_ra
+    DEC     R6
+    GLO     RA
+    STR     R6
+    DEC     R6
+    GHI     RA
+    STR     R6
+    DEC     RB
+    GLO     RB
+    BNZ     .L_lglob_words
+    SEP     R3
 .L_lglob_byte:
     LDN     RF
     PLO     RA
@@ -933,17 +892,33 @@ Op_STORE_GLOBAL:
     DEC     RB
     BR      .L_sglob_loop
 .L_sglob_done:
-    LDA     RA                  ; D = high byte of size, RA++
-    BNZ     .L_sglob_word       ; if high byte != 0, size >= 256 -> word
+    INC     RA                  ; skip high byte of size
     LDN     RA                  ; D = low byte of size
     SMI     1
     BZ      .L_sglob_byte
-.L_sglob_word:
+    LDN     RA                  ; D = size (even, >= 2)
+    STR     R2
+    GLO     RF
+    ADD
+    PLO     RF
+    GHI     RF
+    ADCI    0
+    PHI     RF                  ; RF = addr + size
+    LDN     RA
+    SHR                         ; D = size >> 1 (word count)
+    PLO     RB
+.L_sglob_words:
     LDA     R6
-    STR     RF
-    INC     RF
+    PHI     RA
     LDA     R6
+    DEC     RF
     STR     RF
+    DEC     RF
+    GHI     RA
+    STR     RF
+    DEC     RB
+    GLO     RB
+    BNZ     .L_sglob_words
     SEP     R3
 .L_sglob_byte:
     INC     R6
@@ -1876,58 +1851,35 @@ _do_call_rb:
     BR      .L_arg_res_loop
 .L_arg_res_done:
     LDN     RA
-    PLO     RA                  ; RA.0 = slot size
-    GLO     RA
     SMI     1
     BZ      .L_arg_byte
-    GLO     RA
-    SMI     2
-    BZ      .L_arg_word
-    ; Slice: pop 3 words into RF[0..5]:
+    LDN     RA                  ; D = slot size (even, >= 2)
+    STR     R2
+    GLO     RF
+    ADD
+    PLO     RF
+    GHI     RF
+    ADCI    0
+    PHI     RF                  ; RF = addr + size
+    LDN     RA
+    SHR                         ; D = size >> 1 (word count)
+    PLO     RB
+.L_arg_words:
     LDA     R6
     PHI     RA
     LDA     R6
-    PLO     RA
+    DEC     RF
+    STR     RF
+    DEC     RF
     GHI     RA
     STR     RF
-    INC     RF
-    GLO     RA
-    STR     RF
-    INC     RF
-    LDA     R6
-    PHI     RA
-    LDA     R6
-    PLO     RA
-    GHI     RA
-    STR     RF
-    INC     RF
-    GLO     RA
-    STR     RF
-    INC     RF
-    LDA     R6
-    PHI     RA
-    LDA     R6
-    PLO     RA
-    GHI     RA
-    STR     RF
-    INC     RF
-    GLO     RA
-    STR     RF
+    DEC     RB
+    GLO     RB
+    BNZ     .L_arg_words
     BR      .L_pop_args_loop
 .L_arg_byte:
     INC     R6
     LDA     R6
-    STR     RF
-    BR      .L_pop_args_loop
-.L_arg_word:
-    LDA     R6
-    PHI     RA
-    LDA     R6
-    PLO     RA
-    GHI     RA
-    STR     RF
-    INC     RF
-    GLO     RA
     STR     RF
     BR      .L_pop_args_loop
 
@@ -2054,9 +2006,9 @@ Op_SLICE_SUB:
     LDA R6
     PLO RF                           ; RF = old cap
     LDA     R6
-    PHI R5
+    PHI RD
     LDA R6
-    PLO R5                           ; R5 = old ptr (wait! save old R5 on stack!)
+    PLO RD                           ; RD = old ptr (preserve R5 = VM PC!)
     ; Compute new len = end - start:
     GLO     RA
     STR R2
@@ -2082,20 +2034,20 @@ Op_SLICE_SUB:
     ; Compute new ptr = old ptr + start:
     GLO     RA
     STR R2
-    GLO R5
+    GLO RD
     ADD
-    PLO R5
+    PLO RD
     GHI RA
     STR R2
-    GHI R5
+    GHI RD
     ADC
-    PHI R5
-    ; Push new slice [ptr (R5), cap (RF), len (R0)]:
+    PHI RD
+    ; Push new slice [ptr (RD), cap (RF), len (R0)]:
     DEC     R6
-    GLO R5
+    GLO RD
     STR R6
     DEC R6
-    GHI R5
+    GHI RD
     STR R6
     DEC     R6
     GLO RF
@@ -2109,13 +2061,77 @@ Op_SLICE_SUB:
     DEC R6
     GHI R0
     STR R6
+    LOAD    RD, $0200
     SEP     R3
 
 Op_STR_CMP:
-    ; Pop slice2 (ptr, cap, len) and slice1 (ptr, cap, len)
-    ; Push 0 if equal, 1 or -1 if different
-    ; Simplified: return 0 if equal
-    SEP     R3
+    ; Pop slice2 (bPtr, bCap, bLen) and slice1 (aPtr, aCap, aLen)
+    ; Push 0 if a == b, $FFFF (-1) if a < b, $0001 (+1) if a > b
+    LDA     R6
+    PHI     RB
+    LDA     R6
+    PLO     RB                  ; RB = bLen
+    INC     R6
+    INC     R6                  ; skip bCap
+    LDA     R6
+    PHI     RD
+    LDA     R6
+    PLO     RD                  ; RD = bPtr
+    LDA     R6
+    PHI     RA
+    LDA     R6
+    PLO     RA                  ; RA = aLen
+    INC     R6
+    INC     R6                  ; skip aCap
+    LDA     R6
+    PHI     RF
+    LDA     R6
+    PLO     RF                  ; RF = aPtr
+.L_strcmp_loop:
+    GLO     RA
+    BNZ     .L_strcmp_a_nonempty
+    GHI     RA
+    BNZ     .L_strcmp_a_nonempty
+    ; aLen == 0: check bLen
+    GLO     RB
+    BNZ     .L_strcmp_lt
+    GHI     RB
+    BNZ     .L_strcmp_lt
+    ; Both aLen == 0 and bLen == 0 -> equal (0)
+    LDI     0
+    PLO     RA
+    PHI     RA
+    LOAD    RD, $0200
+    BR      .L_push_ra
+.L_strcmp_a_nonempty:
+    GLO     RB
+    BNZ     .L_strcmp_both_nonempty
+    GHI     RB
+    BZ      .L_strcmp_gt
+.L_strcmp_both_nonempty:
+    LDA     RD                  ; D = *bPtr, RD++
+    STR     R2                  ; M(R2) = *bPtr
+    LDA     RF                  ; D = *aPtr, RF++
+    SM                          ; D = *aPtr - *bPtr, DF=1 if *aPtr >= *bPtr
+    BZ      .L_strcmp_next
+    BDF     .L_strcmp_gt
+.L_strcmp_lt:
+    LDI     $FF
+    PLO     RA
+    PHI     RA
+    LOAD    RD, $0200
+    BR      .L_push_ra
+.L_strcmp_gt:
+    LDI     1
+    PLO     RA
+    LDI     0
+    PHI     RA
+    LOAD    RD, $0200
+    BR      .L_push_ra
+.L_strcmp_next:
+    DEC     RA
+    DEC     RB
+    BR      .L_strcmp_loop
 
 ; ── Hatvan OS Primitives ──────────────────────────────────────────────────────
 
