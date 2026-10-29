@@ -72,7 +72,7 @@ KLIB_SRCS   := $(wildcard $(REPO_DIR)/kernel/klib/*.golf)
 M6809_SRCS  := $(wildcard $(REPO_DIR)/kernel/m6809/*.golf) $(REPO_DIR)/kernel/m6809/cstart_m6809.asm $(REPO_DIR)/kernel/m6809/trap_m6809.asm $(REPO_DIR)/kernel/m6809/vectors_m6809.asm
 M68K_SRCS   := $(wildcard $(REPO_DIR)/kernel/m68k/*.golf) $(REPO_DIR)/kernel/m68k/trap_m68k.s
 Z80_SRCS    := $(wildcard $(REPO_DIR)/kernel/z80/*.golf) $(REPO_DIR)/kernel/z80/cstart_z80.asm $(REPO_DIR)/kernel/z80/trap_z80.asm
-C1802_SRCS  := $(wildcard $(REPO_DIR)/kernel/c/*.golf) $(REPO_DIR)/kernel/c/par4vmc.asm
+C1802_SRCS  := $(wildcard $(REPO_DIR)/kernel/cosmac1802/*.golf) $(REPO_DIR)/kernel/cosmac1802/par4vmc.asm
 M6502_SRCS  := $(wildcard $(REPO_DIR)/kernel/m6502/*.golf) $(REPO_DIR)/kernel/m6502/cstart_m6502.asm $(REPO_DIR)/kernel/m6502/trap_m6502.asm
 I8086_SRCS  := $(wildcard $(REPO_DIR)/kernel/i8086/*.golf) $(REPO_DIR)/kernel/i8086/cstart_i8086.asm $(REPO_DIR)/kernel/i8086/trap_i8086.asm
 
@@ -278,7 +278,7 @@ $(BUILD_DIR)/procfs_z80.decb: $(BUILD_DIR)/full_procfs_z80.asm $(ASMZ80) | $(BUI
 	$(ASMZ80) -l $(BUILD_DIR)/procfs_z80.list -o $@ $<
 
 # 1802 Par4 VM Runtime
-$(BUILD_DIR)/par4vmc.bin: $(REPO_DIR)/kernel/c/par4vmc.asm $(ASM1802) | $(BUILD_DIR)
+$(BUILD_DIR)/par4vmc.bin: $(REPO_DIR)/kernel/cosmac1802/par4vmc.asm $(ASM1802) | $(BUILD_DIR)
 	$(ASM1802) -format raw -l $(BUILD_DIR)/par4vmc.list -o $@ $<
 
 # Z80 Userland Par4 VM Runtime
@@ -289,7 +289,7 @@ $(BUILD_DIR)/par4vmz.bin: $(REPO_DIR)/cmds/lib/par4vmz.asm $(ASMZ80) | $(BUILD_D
 $(BUILD_DIR)/kernel_1802.p4s: $(COMMON_SRCS) $(KLIB_SRCS) $(C1802_SRCS) $(MINIGOLF) | $(BUILD_DIR)
 	$(MINIGOLF) -m par4 \
 		-I $(MINIGOLF_DIR)/par4-lib \
-		-I $(REPO_DIR)/kernel/c \
+		-I $(REPO_DIR)/kernel/cosmac1802 \
 		-I $(REPO_DIR)/kernel/common \
 		-I $(REPO_DIR)/kernel/klib \
 		-o $@ \
@@ -306,7 +306,7 @@ $(BUILD_DIR)/kernel_1802.decb: $(BUILD_DIR)/kernel_1802.p4p $(BUILD_DIR)/par4vmc
 $(BUILD_DIR)/rbf_1802.p4s: $(REPO_DIR)/drivers/rbf/main.golf $(COMMON_SRCS) $(C1802_SRCS) $(MINIGOLF) | $(BUILD_DIR)
 	$(MINIGOLF) -m par4 \
 		-I $(MINIGOLF_DIR)/par4-lib \
-		-I $(REPO_DIR)/kernel/c \
+		-I $(REPO_DIR)/kernel/cosmac1802 \
 		-I $(REPO_DIR)/kernel/common \
 		-I $(REPO_DIR)/kernel/klib \
 		-o $@ \
@@ -322,7 +322,7 @@ $(BUILD_DIR)/rbf_1802.decb: $(BUILD_DIR)/rbf_1802.p4p $(BUILD_DIR)/par4vmc.bin $
 $(BUILD_DIR)/procfs_1802.p4s: $(REPO_DIR)/drivers/procfs/main.golf $(COMMON_SRCS) $(C1802_SRCS) $(MINIGOLF) | $(BUILD_DIR)
 	$(MINIGOLF) -m par4 \
 		-I $(MINIGOLF_DIR)/par4-lib \
-		-I $(REPO_DIR)/kernel/c \
+		-I $(REPO_DIR)/kernel/cosmac1802 \
 		-I $(REPO_DIR)/kernel/common \
 		-I $(REPO_DIR)/kernel/klib \
 		-o $@ \
